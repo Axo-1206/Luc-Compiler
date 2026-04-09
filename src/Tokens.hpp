@@ -1,6 +1,6 @@
 /**
  * @file Tokens.hpp
- * @project LUC Compiler
+ * 
  * @responsibility Data structures for the Lexer's output and the Parser's input.
  *
  * @fundamental This file is used by every stage of the compiler.
@@ -112,7 +112,7 @@ enum class TokenType {
 
     // Reference & FFI
     AMPERSAND, // &         - reference type: &T  (safe, managed)
-    AT,        // @         - raw pointer sigil (extern/FFI only): @T
+    AT,        // @         - reserved for future feature
 
     // Type operators
     PIPE,     // |         - union type: int | string

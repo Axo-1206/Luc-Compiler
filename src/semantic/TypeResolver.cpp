@@ -175,10 +175,10 @@ void TypeResolver::visit(RefTypeAST& node) {
 // marked top-level external binding functions interfacing directly with FFI boundaries.
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(PtrTypeAST& node) {
-    // Standard rule: C pointers '@T' purely valid in FFI boundary scenarios.
+    // Standard rule: C pointers '*T' purely valid in FFI boundary scenarios.
     if (!insideExtern_) {
         dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                  "raw pointers (@T) are only allowed inside extern declarations");
+                  "raw pointers (*T) are only allowed inside extern declarations");
         resolved_ = nullptr;
         return;
     }

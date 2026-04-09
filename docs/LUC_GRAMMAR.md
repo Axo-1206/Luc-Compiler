@@ -158,8 +158,8 @@ union_type      := type '|' type { '|' type }
 -- Reference   (&T)
 ref_type        := '&' type
 
--- Raw pointer (@T) — extern / FFI only
-ptr_type        := '@' type
+-- Raw pointer (*T) — extern / FFI only
+ptr_type        := '*' type
 
 -- Array types — three distinct kinds:
 --
@@ -699,7 +699,7 @@ type_alias_rhs  := primitive_type                  -- type ID          = int
                                                    -- type ByteBuf  = []byte
                                                    -- type VertBuf  = [*]Vertex
                  | ref_type                        -- type IntRef      = &int
-                 | ptr_type                        -- type RawBuf      = @uint8   (FFI only)
+                 | ptr_type                        -- type RawBuf      = *uint8   (FFI only)
                  | func_type                       -- type Callback    = (event Event) bool
                                                    -- type Handler     = (req Request) Response?
                                                    -- type Transform<T> = (value T) T
@@ -1210,10 +1210,10 @@ conversion functions. This makes them valid pipeline steps:
 x  -> string -> io.printl  -- variable x converted to string, then printed
 ```
 
-Unsafe bit reinterpret uses `@` prefix — FFI / Vulkan only:
+Unsafe bit reinterpret uses `*` prefix — FFI / Vulkan only:
 
 ```luc
-bits -> @float             -- reinterpret uint32 bits as float32, no computation
+bits -> *float             -- reinterpret uint32 bits as float32, no computation
 ```
 
 ### User-defined type conversion
@@ -1238,10 +1238,10 @@ let absF    Fahrenheit = Fahrenheit(abs)            -- dispatches to from Fahren
 boiling -> Fahrenheit -> io.printl
 ```
 
-Unsafe bit reinterpret of user types uses `@` prefix — FFI / Vulkan structs only:
+Unsafe bit reinterpret of user types uses `*` prefix — FFI / Vulkan structs only:
 
 ```luc
-rawBytes -> @GpuVertex    -- reinterpret raw memory as GpuVertex, no conversion
+rawBytes -> *GpuVertex    -- reinterpret raw memory as GpuVertex, no conversion
 ```
 
 ### Usage forms
@@ -2497,7 +2497,7 @@ pub_mod         := 'pub'
 ```
 extern_mod      := 'extern'
                    -- declares an external C / Vulkan symbol; body is omitted
-                   -- raw pointer type @T is only valid inside extern declarations
+                   -- raw pointer type *T is only valid inside extern declarations
 ```
 
 ## Choice and Fallback Operators

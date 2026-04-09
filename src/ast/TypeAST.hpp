@@ -1,9 +1,13 @@
 /**
  * @file TypeAST.hpp
- * @project LUC Compiler
+ *
  * @responsibility Defines the syntactic representation of types (Primitive, Union, Array, Pointer).
  * 
  * @hierarchy BaseAST -> TypeAST -> [Concrete Nodes]
+ *
+ * @related_files 
+ *   - src/parser/ParserType.cpp (The primary producer)
+ * 
  * @note These represent types AS WRITTEN in source. The semantic pass later resolves 
  *       these into actual Type objects.
  */
@@ -38,7 +42,7 @@
 //   SliceTypeAST          — []T    fat-pointer view, no ownership
 //   DynamicArrayTypeAST   — [*]T   heap-owned, growable
 //   RefTypeAST            — &T     safe managed reference
-//   PtrTypeAST            — @T     raw pointer, extern/FFI only
+//   PtrTypeAST            — *T     raw pointer, extern/FFI only
 //   FuncTypeAST           — (params) return?   first-class function type
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -301,11 +305,11 @@ struct RefTypeAST : TypeAST {
 // ─────────────────────────────────────────────────────────────────────────────
 // PtrTypeAST
 //
-// A raw, unmanaged pointer. Only valid inside extern declarations — using @T
+// A raw, unmanaged pointer. Only valid inside extern declarations — using *T
 // outside of an extern context is a semantic error.
 //
-//   @uint8    →  PtrTypeAST { inner = PrimitiveTypeAST(Uint8) }
-//   @VkInstance → PtrTypeAST { inner = NamedTypeAST("VkInstance") }
+//   *uint8    →  PtrTypeAST { inner = PrimitiveTypeAST(Uint8) }
+//   *VkInstance → PtrTypeAST { inner = NamedTypeAST("VkInstance") }
 //
 // The semantic pass enforces the extern-only restriction by checking that
 // every PtrTypeAST appears only inside an ExternDeclAST subtree.

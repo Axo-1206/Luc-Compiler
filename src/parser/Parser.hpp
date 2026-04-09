@@ -207,7 +207,7 @@ class Parser {
     // &T — safe managed reference.
     TypePtr parseRefType();
 
-    // @T — raw pointer, only valid inside extern declarations.
+    // *T — raw pointer, only valid inside extern declarations.
     // The semantic pass enforces the extern-only restriction; the parser
     // produces PtrTypeAST regardless of context.
     TypePtr parsePtrType();
@@ -245,7 +245,7 @@ class Parser {
     // '=' body Distinguishes a function from a variable by lookahead after the
     // name:
     //   function → next meaningful token after name (and optional generics) is '('
-    //   variable → type keyword, named type, '[', '&', '@', or '?'
+    //   variable → type keyword, named type, '[', '&', '*', or '?'
     std::unique_ptr<FuncDeclAST> parseFuncDecl(DeclKeyword kw, Visibility vis);
 
     // Parse one parameter group '(' [ param_list ] ')'.
@@ -390,7 +390,7 @@ class Parser {
     ExprPtr parseIfExpr();
 
     // Type conversion: IDENTIFIER '(' expr ')'  where IDENTIFIER is a type name
-    // or '@' IDENTIFIER '(' expr ')' for unsafe bit reinterpret.
+    // or '*' IDENTIFIER '(' expr ')' for unsafe bit reinterpret.
     ExprPtr parseTypeConvExpr(bool isUnsafe, TypePtr targetType);
 
     // Range: expr '..' expr  — used in for loops, match patterns, slice indexing.
@@ -535,7 +535,7 @@ class Parser {
     // ─────────────────────────────────────────────────────────────────────────
 
     // True when the current position looks like the start of a type annotation:
-    // a primitive keyword, IDENTIFIER, '[', '&', '@', or '(' followed by a
+    // a primitive keyword, IDENTIFIER, '[', '&', '*', or '(' followed by a
     // parameter-list-then-')' shape (function type).
     bool looksLikeType() const;
 

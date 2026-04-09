@@ -372,7 +372,7 @@ bool Parser::looksLikeType() const {
     // Composite type starters
     case TokenType::LBRACKET:  // array types: [], [N], [*]
     case TokenType::AMPERSAND: // reference &T
-    case TokenType::AT:        // raw pointer @T
+    case TokenType::MUL:       // raw pointer *T
         return true;
 
     // Named type: bare IDENTIFIER used as a type name.

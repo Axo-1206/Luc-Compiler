@@ -544,7 +544,7 @@ ExprPtr Parser::parsePrimaryExpr() {
                 case TokenType::IDENTIFIER:
                 case TokenType::LBRACKET:
                 case TokenType::AMPERSAND:
-                case TokenType::AT:
+                case TokenType::MUL:
                 case TokenType::LPAREN:
                     return true;
                 default:
@@ -587,7 +587,7 @@ ExprPtr Parser::parsePrimaryExpr() {
                 case TokenType::IDENTIFIER:
                 case TokenType::LBRACKET:
                 case TokenType::AMPERSAND:
-                case TokenType::AT:
+                case TokenType::MUL:
                 case TokenType::VARIADIC:
                     return true;
                 default:
@@ -606,16 +606,16 @@ ExprPtr Parser::parsePrimaryExpr() {
         return inner;
     }
 
-    // ── '@' unsafe type conversion  @T(expr) ──────────────────────────────────
-    if (check(TokenType::AT)) {
-        advance(); // consume '@'
+    // ── '*' unsafe type conversion  *T(expr) ──────────────────────────────────
+    if (check(TokenType::MUL)) {
+        advance(); // consume '*'
         TypePtr targetType = parseBaseType();
         if (!targetType) {
-            errorAt(DiagCode::E2005, "expected type after '@' in unsafe conversion");
+            errorAt(DiagCode::E2005, "expected type after '*' in unsafe conversion");
             return nullptr;
         }
         if (!check(TokenType::LPAREN)) {
-            errorAt(DiagCode::E2001, "expected '(' after type in unsafe conversion '@T(expr)'");
+            errorAt(DiagCode::E2001, "expected '(' after type in unsafe conversion '*T(expr)'");
             return nullptr;
         }
         return parseTypeConvExpr(/*isUnsafe=*/true, std::move(targetType));
@@ -1137,7 +1137,7 @@ ExprPtr Parser::parseIfExpr() {
 //
 // Grammar:
 //   type_conv := type_name '(' expr ')'     -- safe conversion
-//              | '@' type_name '(' expr ')' -- unsafe bit reinterpret
+//              | '*' type_name '(' expr ')' -- unsafe bit reinterpret
 //
 // Called after the target type has already been parsed.
 // ─────────────────────────────────────────────────────────────────────────────

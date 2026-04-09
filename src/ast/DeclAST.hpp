@@ -611,8 +611,8 @@ struct TypeAliasDeclAST : DeclAST {
 // ExternDeclAST
 //
 // An external C / Vulkan symbol declaration — body is absent.
-//   extern let malloc (size uint64) @uint8
-//   extern let vkCreateInstance (pInfo @VkInstanceCreateInfo ...) uint32
+//   extern let malloc (size uint64) *uint8
+//   extern let vkCreateInstance (pInfo *VkInstanceCreateInfo ...) uint32
 //
 // The `extern` modifier signals to codegen that no body will be generated —
 // the linker resolves the symbol from a C/Vulkan library.

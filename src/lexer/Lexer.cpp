@@ -569,7 +569,7 @@ Token Lexer::getNextToken() {
 
 	// ── FFI ────────────────────────────────────────────────────────────────────
 	case '@':
-		return makeToken(TokenType::AT, "@"); // raw pointer sigil
+		return makeToken(TokenType::AT, "@"); // reserved for future feature
 
 	// ── Delimiters ─────────────────────────────────────────────────────────────
 	case ',':

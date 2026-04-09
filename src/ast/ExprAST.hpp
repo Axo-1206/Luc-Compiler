@@ -82,7 +82,7 @@
 //
 //   Other
 //     RangeExprAST            — 0..10 / 0..<10  (for loops, match patterns, slice indexing)
-//     TypeConvExprAST         — float(x)  safe conversion  |  @float(x)  unsafe bit reinterpret
+//     TypeConvExprAST         — float(x)  safe conversion  |  *float(x)  unsafe bit reinterpret
 //
 //   Match infrastructure  (not ExprAST — BaseAST directly)
 //     MatchArmAST             — pattern_list [guard] -> expr [, expr]
@@ -890,15 +890,15 @@ struct RangeExprAST : ExprAST {
 //   int(direction) — enum → underlying integer
 //
 // Unsafe bit reinterpret (isUnsafe = true):
-//   @float(bits)   — reinterpret uint32 bits as float32, no arithmetic
-//   @GpuVertex(raw)— reinterpret raw memory as GpuVertex struct
+//   *float(bits)   — reinterpret uint32 bits as float32, no arithmetic
+//   *GpuVertex(raw)— reinterpret raw memory as GpuVertex struct
 //
 // targetType — the type being converted to (TypeAST node).
 // expr — the expression whose value is being converted.
 //
 // The semantic pass enforces:
 //   - safe: only valid conversion paths are allowed (primitive widening, enum→int)
-//   - unsafe (@): only valid inside extern declaration subtrees
+//   - unsafe (*): only valid inside extern declaration subtrees
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct TypeConvExprAST : ExprAST {
@@ -906,7 +906,7 @@ struct TypeConvExprAST : ExprAST {
 
     TypePtr  targetType;   // the type to convert to
     ExprPtr  expr;         // the value being converted
-    bool     isUnsafe;     // true → @T(expr) bit reinterpret
+    bool     isUnsafe;     // true → *T(expr) bit reinterpret
 
     TypeConvExprAST(TypePtr t, ExprPtr e, bool unsafe = false)
         : ExprAST(ASTKind::TypeConvExpr),

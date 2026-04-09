@@ -346,7 +346,7 @@ private:
     void visit(TypeConvExprAST& node) override {
         walk(node.expr.get());
         // A safe type conversion of a const expression is itself const.
-        // Unsafe (@T) conversions reference raw memory — not const.
+        // Unsafe (*T) conversions reference raw memory — not const.
         node.isConst = !node.isUnsafe && node.expr && node.expr->isConst;
     }
 

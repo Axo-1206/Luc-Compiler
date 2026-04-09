@@ -33,7 +33,7 @@
 //          ├─ parseNamedType()     — IDENTIFIER [ '<' generic_args '>' ]
 //          ├─ parseArrayType()     — '[' ...  →  fixed / slice / dynamic
 //          ├─ parseRefType()       — '&' T
-//          ├─ parsePtrType()       — '@' T
+//          ├─ parsePtrType()       — '*' T
 //          └─ parseFuncType()      — '(' params ')' [ ret ] [ '?' ]
 //
 //   wrapNullable(inner)       — wraps any TypePtr in NullableTypeAST when '?' follows
@@ -144,8 +144,8 @@ TypePtr Parser::parseBaseType() {
     case TokenType::AMPERSAND:
         return parseRefType();
 
-    // ── Raw pointer  @T  (extern/FFI only) ────────────────────────────────
-    case TokenType::AT:
+    // ── Raw pointer  *T  (extern/FFI only) ────────────────────────────────
+    case TokenType::MUL:
         return parsePtrType();
 
     // ── Function type  '(' params ')' [ ret ] ─────────────────────────────
@@ -423,7 +423,7 @@ TypePtr Parser::parseRefType() {
 // ─────────────────────────────────────────────────────────────────────────────
 // parsePtrType
 //
-// Grammar:  ptr_type := '@' type   (extern / FFI only)
+// Grammar:  ptr_type := '*' type   (extern / FFI only)
 //
 // The semantic pass enforces the extern-only restriction.  The parser produces
 // PtrTypeAST regardless of context so it can continue and report all errors.
@@ -431,11 +431,11 @@ TypePtr Parser::parseRefType() {
 
 TypePtr Parser::parsePtrType() {
     SourceLocation loc = currentLoc();
-    consume(TokenType::AT, DiagCode::E2001, "expected '@'");
+    consume(TokenType::MUL, DiagCode::E2001, "expected '*'");
 
     TypePtr inner = parseBaseType(); // same reasoning as parseRefType
     if (!inner) {
-        errorAt(DiagCode::E2005, "expected type after '@'");
+        errorAt(DiagCode::E2005, "expected type after '*'");
         return nullptr;
     }
 

@@ -396,7 +396,7 @@ void checkFromDecl(FromDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
 // checkExternDecl
 //
 // Rules enforced:
-//   - All param and return types resolved with insideExtern_ = true so @T is accepted.
+//   - All param and return types resolved with insideExtern_ = true so *T is accepted.
 // ─────────────────────────────────────────────────────────────────────────────
 void checkExternDecl(ExternDeclAST& node, TypeResolver& resolver, DiagnosticEngine& /*dc*/) {
     resolver.setInsideExtern(true);

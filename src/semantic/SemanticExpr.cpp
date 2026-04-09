@@ -1193,7 +1193,7 @@ static TypeAST* checkArrayLiteralExpr(ArrayLiteralExprAST& node, SymbolTable& sy
 
 // ─────────────────────────────────────────────────────────────────────────────
 // checkTypeConvExpr
-// float(x) — safe conversion; @float(x) — unsafe bit reinterpret (extern only).
+// float(x) — safe conversion; *float(x) — unsafe bit reinterpret (extern only).
 // ─────────────────────────────────────────────────────────────────────────────
 static TypeAST* checkTypeConvExpr(TypeConvExprAST& node, SymbolTable& symbols,
                                    TypeResolver& resolver, DiagnosticEngine& dc,
@@ -1201,7 +1201,7 @@ static TypeAST* checkTypeConvExpr(TypeConvExprAST& node, SymbolTable& symbols,
                                    int& parallelDepth, bool insideExtern) {
     if (node.isUnsafe && !insideExtern) {
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                 "unsafe type reinterpret '@' is only valid inside extern declarations");
+                 "unsafe type reinterpret '*' is only valid inside extern declarations");
     }
     checkExpr(node.expr.get(), symbols, resolver, dc,
               asyncDepth, loopDepth, parallelDepth, insideExtern);
