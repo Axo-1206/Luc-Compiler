@@ -324,16 +324,48 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
         }
     }
 
-    // Callable check.
-    if (calleeType && !TypeChecker::isCallable(calleeType)) {
-        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                 "expression is not callable");
-        return nullptr;
-    }
-
-    // Extract return type from FuncTypeAST.
+    // Extract return type and check params.
     TypeAST* returnType = nullptr;
-    if (calleeType && calleeType->isa<FuncTypeAST>()) {
+    
+    // 1. Direct function call: callee is an identifier resolving to a Func/Method symbol.
+    Symbol* calleeSym = nullptr;
+    if (node.callee->isa<IdentifierExprAST>()) {
+        calleeSym = symbols.lookup(node.callee->as<IdentifierExprAST>()->name);
+    }
+    
+    if (calleeSym && (calleeSym->kind == SymbolKind::Func || calleeSym->kind == SymbolKind::Method) && calleeSym->decl) {
+        auto* funcDecl = static_cast<FuncDeclAST*>(calleeSym->decl);
+        returnType = funcDecl->returnType.get();
+        // Return type is already wrapped to what it evaluates, but we may need to resolve:
+        // Although SemanticCollector stored and resolver resolved it, it's just `returnType`.
+        
+        // Flatten param groups to check args
+        std::vector<TypeAST*> flatParams;
+        for (auto& group : funcDecl->paramGroups) {
+            for (auto& param : group) {
+                flatParams.push_back(param->type.get());
+            }
+        }
+        
+        if (node.args.size() != flatParams.size()) {
+            dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
+                     "wrong number of arguments: expected " +
+                     std::to_string(flatParams.size()) + ", got " +
+                     std::to_string(node.args.size()));
+        }
+        
+        size_t limit = std::min(node.args.size(), flatParams.size());
+        for (size_t i = 0; i < limit; ++i) {
+            TypeAST* argType = static_cast<TypeAST*>(node.args[i]->resolvedType);
+            TypeAST* paramType = flatParams[i];
+            if (argType && paramType && !TypeChecker::isAssignable(argType, paramType)) {
+                dc.error(DiagnosticCategory::Semantic, node.args[i]->loc, DiagCode::E3002,
+                         "argument " + std::to_string(i + 1) + " type mismatch");
+            }
+        }
+    } 
+    // 2. Indirect call: callee evaluates to a FuncTypeAST (e.g. variable holding a closure).
+    else if (calleeType && calleeType->isa<FuncTypeAST>()) {
         auto* ft = calleeType->as<FuncTypeAST>();
         returnType = ft->returnType.get();
 
@@ -355,6 +387,12 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                          "argument " + std::to_string(i + 1) + " type mismatch");
             }
         }
+    } 
+    // 3. Not callable.
+    else {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                 "expression is not callable");
+        return nullptr;
     }
 
     node.resolvedType = returnType;

@@ -77,6 +77,18 @@ void TypeResolver::visit(NamedTypeAST& node) {
         return;
     }
     
+    // Transparently unwrap TypeAlias types.
+    if (sym->kind == SymbolKind::TypeAlias) {
+        // Resolve the underlying target type referenced by the alias.
+        TypeAST* resolvedAlias = resolveType(sym->type);
+        if (resolvedAlias) {
+            resolved_ = resolvedAlias;
+        } else {
+            resolved_ = nullptr;
+        }
+        return;
+    }
+
     // Drill down recursively into generic sub-arguments (<int, string>) ensuring their types exist.
     for (auto& arg : node.genericArgs) {
         resolveType(arg.get());
