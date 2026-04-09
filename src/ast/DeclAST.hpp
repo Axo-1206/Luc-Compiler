@@ -490,32 +490,47 @@ struct MethodDeclAST : BaseAST {
 using MethodDeclPtr = std::unique_ptr<MethodDeclAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FromEntryAST
+//
+// A single conversion entry inside a from block.
+//   celsius (c Celsius) Fahrenheit = { ... }
+//
+// Grammar: IDENTIFIER '(' IDENTIFIER type ')' IDENTIFIER '=' func_body
+// ─────────────────────────────────────────────────────────────────────────────
+struct FromEntryAST : BaseAST {
+    static constexpr ASTKind staticKind = ASTKind::FromEntry;
+
+    std::string name;           // "celsius"
+    std::string srcParamName;   // "c"
+    TypePtr     srcParamType;   // Celsius
+    std::string returnTypeName; // "Fahrenheit"
+    StmtPtr     body;           // BlockStmtAST
+    FuncBodyKind bodyKind = FuncBodyKind::Block;
+
+    FromEntryAST() : BaseAST(ASTKind::FromEntry) {}
+
+    void accept(ASTVisitor& v) override { v.visit(*this); }
+};
+
+using FromEntryPtr = std::unique_ptr<FromEntryAST>;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // FromDeclAST
 //
-// A top-level type conversion declaration.
-//   from (c Celsius) Fahrenheit = { return Fahrenheit { value = c.value * 9/5 + 32 } }
-//   pub from (c Celsius) Fahrenheit = { ... }
-//   export from (c Celsius) Fahrenheit = { ... }
-//
-// Enables TypeName(expr) call syntax at use sites:
-//   let f Fahrenheit = Fahrenheit(boiling)   ← calls this from declaration
+// A top-level type conversion block.
+//   export from Fahrenheit {
+//       celsius (c Celsius) Fahrenheit = { ... }
+//   }
 //
 // Multiple from declarations are allowed, each with a different source parameter type.
-// The semantic pass checks for duplicates.
-//
-// srcParamName — the name of the source parameter ("c" in the example)
-// srcParamType — the source type ("Celsius")
-// returnTypeName — the target type ("Fahrenheit")
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct FromDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::FromDecl;
 
     Visibility visibility = Visibility::Private;
-    std::string srcParamName;   // "c"
-    TypePtr srcParamType;       // Celsius
-    std::string returnTypeName; // "Fahrenheit"
-    StmtPtr body;               // BlockStmtAST
+    std::string targetTypeName; // "Fahrenheit"
+    std::vector<FromEntryPtr> entries;
 
     FromDeclAST() : DeclAST(ASTKind::FromDecl) {}
 

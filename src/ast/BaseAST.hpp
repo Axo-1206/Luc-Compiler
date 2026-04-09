@@ -81,6 +81,7 @@ enum class ASTKind : uint16_t {
     TraitDecl,
     MethodDecl,
     FromDecl,
+    FromEntry,
     ImplDecl,
     TypeAliasDecl,
     ExternDecl,
@@ -165,6 +166,7 @@ struct TraitMethodAST;
 struct TraitDeclAST;
 struct MethodDeclAST;
 struct FromDeclAST;         // from [method definition] - use for type convertion
+struct FromEntryAST;        // entry inside the from block
 struct ImplDeclAST;
 struct TypeAliasDeclAST;
 struct ExternDeclAST;
@@ -290,6 +292,8 @@ struct SourceLocation {
 //
 // Usage:
 //   node->accept(myVisitor);   // dispatches to the correct visit() override
+//
+// Reference: docs/LUC_SEMANTIC.md for more details
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct ASTVisitor {
@@ -323,6 +327,7 @@ struct ASTVisitor {
     virtual void visit(ImplDeclAST&)        {}
     virtual void visit(MethodDeclAST&)      {}
     virtual void visit(FromDeclAST&)        {}
+    virtual void visit(FromEntryAST&)       {}
     virtual void visit(TypeAliasDeclAST&)   {}
     virtual void visit(ParamAST&)           {}
     virtual void visit(GenericParamAST&)    {}

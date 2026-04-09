@@ -176,8 +176,11 @@ enum class TokenType {
     BINARY_LITERAL,     // 0b1010
 
     // ─── Meta ─────────────────────────────────────────────────────────────────
-    DOC_COMMENT, // /-- ... --/  - documentation comment, attached to next declaration
-    UNKNOWN,     // any unrecognised character — surfaces as an error in the parser
+    DOC_COMMENT,  // /-- ... --/  - block documentation comment, attached to next declaration
+    LINE_COMMENT, // -- text      - single-line comment; emitted (not discarded) so the
+                  //                Parser can harvest stacked and trailing doc comments.
+                  //                The value holds the text after '--', trimmed of the leading space.
+    UNKNOWN,      // any unrecognised character — surfaces as an error in the parser
     EOF_TOKEN
 };
 

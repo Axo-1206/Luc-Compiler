@@ -40,12 +40,13 @@ luc/
 ├── .vscode/
 ├── build/
 ├── src/
+│   ├── main.cpp            # compiler entry point
 │   ├── Tokens.hpp          # all token definitions
 │   ├── lexer/
 │   │   ├── Lexer.hpp
 │   │   └── Lexer.cpp
 │   ├── ast/
-│   │   ├── BaseAST.hpp
+│   │   ├── BaseAST.hpp     # foundation + ASTVisitor
 │   │   ├── TypeAST.hpp
 │   │   ├── DeclAST.hpp
 │   │   ├── ExprAST.hpp
@@ -62,14 +63,24 @@ luc/
 │   │   ├── ParserDecl.cpp
 │   │   ├── ParserExpr.cpp
 │   │   └── ParserStmt.cpp
-│   ├── semantic/           # in progress
+│   ├── semantic/           # phase 1-4 implementation
+│   │   ├── SemanticAnalyzer.hpp/cpp  # driver
+│   │   ├── SymbolTable.hpp/cpp       # scope management
+│   │   ├── SemanticCollector.hpp/cpp # phase 1 & 2
+│   │   ├── SemanticDecl.cpp          # phase 3 (declarations)
+│   │   ├── SemanticExpr.cpp          # phase 3 (expressions)
+│   │   ├── SemanticStmt.cpp          # phase 3 (statements)
+│   │   ├── TypeResolver.hpp/cpp      # type resolution
+│   │   ├── TypeChecker.hpp/cpp       # type compatibility
+│   │   └── Annotator.cpp             # phase 4 (annotations)
 │   └── codegen/            # pending
 ├── docs/
-│   ├── LUC_ERROR.md                ← error library
-│   ├── LUC_IO.md                   ← io library
-│   ├── LUC_EXAMPLES.md             ← example code
-│   ├── LUC_GRAMMAR.md              ← syntax + grammar rules
-│   └── LUC_EXAMPLES.md             ← annotated code examples
+│   ├── LUC_PROJECT_OVERVIEW.md      ← identity + architecture (this file)
+│   ├── LUC_SEMANTIC.md              ← detailed semantic documentation
+│   ├── LUC_ERROR.md                 ← error library
+│   ├── LUC_IO.md                    ← io library
+│   ├── LUC_EXAMPLES.md              ← annotated code examples
+│   └── LUC_GRAMMAR.md               ← syntax + grammar rules
 ├── language_support/luc-syntax-highlighter/
 ├── tests/
 └── CMakeLists.txt
@@ -84,22 +95,22 @@ luc/
 Source (.luc)
     │
     ▼
-[ Lexer ]           ✅  Complete
+[ Lexer ]           
     │
     ▼
-[ AST ]             🔨  In progress
+[ AST ]             
     │
     ▼
-[ Parser ]          ✅  Grammar complete — implementation in progress
+[ Parser ]          
     │
     ▼
-[ Semantic ]        🔧  Setting up
+[ Semantic ]            
     │
     ▼
-[ IR / LLVM ]       ⏳  Pending
+[ IR / LLVM ]           
     │
     ▼
-[ JIT / Codegen ]   ⏳  Pending
+[ JIT / Codegen ]   
 ```
 
 ---

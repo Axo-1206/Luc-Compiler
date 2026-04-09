@@ -433,13 +433,68 @@ ExprPtr Parser::parsePrimaryExpr() {
     if (check(TokenType::AWAIT))
         return parseAwaitExpr();
 
-    // ── async anonymous function ───────────────────────────────────────────────
-    if (check(TokenType::ASYNC))
+    // ── async function body / async anonymous function ────────────────────────
+    // Two forms:
+    //   async { ... }             — block body form (no param list repeated)
+    //   async (params) ret { ... } — explicit anon func form
+    //
+    // Both map to AnonFuncExprAST with isAsync = true.
+    // The block body form has empty params and nullptr returnType — the outer
+    // FuncDeclAST already carries the signature; this node is just the body.
+    if (check(TokenType::ASYNC)) {
+        // Peek past 'async': if the very next meaningful token is '{', this is
+        // the short block-body form.  Otherwise it is the explicit anon func
+        // form that starts with '(' — delegate to parseAnonFuncExpr() which
+        // consumes the param group and optional return type itself.
+        TokenType afterAsync = peekNext().type;
+        if (afterAsync == TokenType::LBRACE) {
+            // async { ... }  — block body, no param repetition
+            SourceLocation asyncLoc = currentLoc();
+            advance(); // consume 'async'
+            ++asyncDepth_;
+
+            auto node = std::make_unique<AnonFuncExprAST>();
+            node->loc     = asyncLoc;
+            node->isAsync = true;
+            // paramGroups intentionally left empty (no groups) and returnType
+            // nullptr — the enclosing FuncDeclAST owns the real signature.
+            node->body = parseBlock();
+
+            --asyncDepth_;
+            return node;
+        }
+        // async (params) ret { ... } — fall through to parseAnonFuncExpr
         return parseAnonFuncExpr();
+    }
 
     // ── array literal ─────────────────────────────────────────────────────────
     if (check(TokenType::LBRACKET))
         return parseArrayLiteralExpr();
+
+    // ── bare block body  { stmts }  in expression position ───────────────────
+    // Handles two cases from the grammar:
+    //
+    //   func_body := block      — e.g.  let f (x int) int = { return x + 1 }
+    //                              or   f = { return 42 }   (reassignment)
+    //
+    // When the expression parser reaches a lone '{', it means the RHS of a
+    // function declaration or reassignment is a plain block body — not a struct
+    // literal (those are always preceded by IDENTIFIER) and not a block
+    // statement (those are parsed by parseStmt, never by parseExpr).
+    //
+    // We produce an AnonFuncExprAST with empty params and nullptr returnType.
+    // The enclosing FuncDeclAST already owns the real signature; this node
+    // carries only the body.  The semantic pass treats this form identically
+    // to the explicit anon-func form.
+    if (check(TokenType::LBRACE)) {
+        SourceLocation blockLoc = currentLoc();
+        auto node = std::make_unique<AnonFuncExprAST>();
+        node->loc     = blockLoc;
+        node->isAsync = false;
+        // params intentionally empty, returnType intentionally nullptr
+        node->body = parseBlock();
+        return node;
+    }
 
     // ── anonymous function (non-async) ────────────────────────────────────────
     // A '(' that is immediately followed by ')' or 'IDENTIFIER type' is an anon
@@ -899,8 +954,12 @@ ExprPtr Parser::parseStructLiteralExpr(std::string typeName, std::vector<TypePtr
 // ─────────────────────────────────────────────────────────────────────────────
 // parseAnonFuncExpr
 //
-// Grammar:
-//   anon_func := [ 'async' ] '(' [ param_list ] ')' [ return_type ] block
+// Grammar (updated to match func_decl — multiple param groups allowed):
+//   anon_func := [ 'async' ] param_group { param_group } [ return_type ] block
+//
+// Single-group:   (x int) int { return x * 2 }
+// Multi-group:    (a int) (b int) int { return a + b }
+// Async:          async (url string) string { return await httpGet(url) }
 // ─────────────────────────────────────────────────────────────────────────────
 
 ExprPtr Parser::parseAnonFuncExpr() {
@@ -913,9 +972,16 @@ ExprPtr Parser::parseAnonFuncExpr() {
     auto node = std::make_unique<AnonFuncExprAST>();
     node->loc = loc;
     node->isAsync = isAsync;
-    node->params = parseParamGroup();
 
-    // Optional return type
+    // Parse one or more parameter groups — same loop as parseFuncDecl.
+    // At least one '(' is guaranteed here because the caller already
+    // verified the current token is '(' (or 'async' followed by '(').
+    while (check(TokenType::LPAREN)) {
+        node->paramGroups.push_back(parseParamGroup());
+    }
+
+    // Optional return type — present if current token looks like a type
+    // but is not '{' (which would start the body).
     if (looksLikeType() && !check(TokenType::LBRACE)) {
         node->returnType = parseType();
     }

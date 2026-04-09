@@ -433,6 +433,8 @@ let handler ((req Request) Response)? = nil
 
 -- Async function
 let fetch (url string) string = async (url string) string { ... }
+
+let fetch (url string) string = async { ... }
 ```
 
 ## Struct Declaration

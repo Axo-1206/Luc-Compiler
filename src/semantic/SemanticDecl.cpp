@@ -343,43 +343,53 @@ void checkImplDecl(ImplDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
 void checkFromDecl(FromDeclAST& node, SymbolTable& symbols, TypeResolver& resolver,
                    DiagnosticEngine& dc, int& asyncDepth, int& loopDepth,
                    int& parallelDepth, bool insideExtern) {
- 
-    // 1. Resolve target type.
-    Symbol* targetSym = symbols.lookup(node.returnTypeName);
+
+    // 1. Resolve target type once for the whole block.
+    Symbol* targetSym = symbols.lookup(node.targetTypeName);
     if (!targetSym || (targetSym->kind != SymbolKind::Struct && targetSym->kind != SymbolKind::Enum)) {
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
-                 "from conversion: target '" + node.returnTypeName + "' is not a nominal type");
+                 "from block: target '" + node.targetTypeName + "' is not a nominal type");
         return;
     }
     TypeAST* targetType = targetSym->type;
- 
-    // 2. Resolve source parameter.
-    TypeAST* srcType = resolver.resolveType(node.srcParamType.get());
-    if (!srcType) return;
- 
-    // 3. New scope for the conversion body.
-    symbols.pushScope();
- 
-    Symbol ps;
-    ps.name       = node.srcParamName;
-    ps.kind       = SymbolKind::Param;
-    ps.declKw     = DeclKeyword::Let;
-    ps.visibility = Visibility::Private;
-    ps.type       = srcType;
-    ps.decl       = &node;
-    ps.isAsync    = false;
-    ps.loc        = node.loc;
-    symbols.declare(ps);
- 
-    // 4. Check the body. Expected return is the target type.
-    if (node.body) {
-        // from conversions implicitly return the target type at the end of their logic.
-        // The last expression in the block is typically assigned to the struct fields.
-        checkStmt(node.body.get(), symbols, resolver, dc, targetType,
-                  asyncDepth, loopDepth, parallelDepth, insideExtern);
+
+    // 2. Iterate and check each conversion entry.
+    for (auto& entry : node.entries) {
+        if (!entry) continue;
+
+        // Resolve source parameter type.
+        TypeAST* srcType = resolver.resolveType(entry->srcParamType.get());
+        if (!srcType) continue;
+
+        // Verify the explicit return type identifier in the entry matches targetName.
+        if (entry->returnTypeName != node.targetTypeName) {
+            dc.error(DiagnosticCategory::Semantic, entry->loc, DiagCode::E3002,
+                     "from conversion: return type '" + entry->returnTypeName +
+                     "' must match block target type '" + node.targetTypeName + "'");
+        }
+
+        // New scope for the conversion body.
+        symbols.pushScope();
+
+        Symbol ps;
+        ps.name       = entry->srcParamName;
+        ps.kind       = SymbolKind::Param;
+        ps.declKw     = DeclKeyword::Let;
+        ps.visibility = Visibility::Private;
+        ps.type       = srcType;
+        ps.decl       = entry.get();
+        ps.isAsync    = false;
+        ps.loc        = entry->loc;
+        symbols.declare(ps);
+
+        // Check the body. Expected return is the target type.
+        if (entry->body) {
+            checkStmt(entry->body.get(), symbols, resolver, dc, targetType,
+                      asyncDepth, loopDepth, parallelDepth, insideExtern);
+        }
+
+        symbols.popScope();
     }
- 
-    symbols.popScope();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

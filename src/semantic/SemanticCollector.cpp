@@ -240,20 +240,24 @@ void SemanticCollector::visit(ImplDeclAST& node) {
 // when a type conversion call is encountered in the parser.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(FromDeclAST& node) {
-    // Collect conversions into the target type's namespace.
-    // Use mangled name: TargetTypeName.from.ParamName
-    std::string mangledName = node.returnTypeName + ".from." + node.srcParamName;
- 
-    declareSymbol({
-        mangledName,
-        SymbolKind::Conversion,
-        DeclKeyword::Let,
-        node.visibility,
-        nullptr, // type will be resolved in Phase 2
-        &node,
-        false,
-        node.loc
-    });
+    // Collect each conversion entry from the block.
+    // Mangled name: TargetType.from.LabelName
+    for (auto& entry : node.entries) {
+        if (!entry) continue;
+
+        std::string mangledName = node.targetTypeName + ".from." + entry->name;
+
+        declareSymbol({
+            mangledName,
+            SymbolKind::Conversion,
+            DeclKeyword::Let,
+            node.visibility,
+            nullptr, // resolved in Phase 2
+            entry.get(),
+            false,
+            entry->loc
+        });
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -743,7 +743,7 @@ std::unique_ptr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
         }
 
         // Unrecognised token inside impl block
-        errorAt(DiagCode::E2002, "expected method declaration or 'from' declaration inside impl block");
+        errorAt(DiagCode::E2002, "expected method declaration inside impl block");
         synchronize();
     }
 
@@ -822,57 +822,93 @@ MethodDeclPtr Parser::parseMethodDecl() {
 // parseFromDecl
 //
 // Grammar:
-//   from_decl := 'from' '(' IDENTIFIER type ')' IDENTIFIER '=' func_body
+//   from_block      := [ visibility_mod ] 'from' IDENTIFIER '{' from_entry* '}'
+//
+//   from_entry      := IDENTIFIER '(' IDENTIFIER type ')' IDENTIFIER '=' func_body
+//                      -- name (label)   source param    return type (must match target)
 //
 // Examples:
-//   from (c Celsius) Fahrenheit = { return Fahrenheit { value = c.value * 9/5 + 32 } }
+//   export from Fahrenheit {
+//       celsius (c Celsius) Fahrenheit = { ... }
+//       kelvin  (k Kelvin)  Fahrenheit = { ... }
+//   }
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::unique_ptr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
     SourceLocation loc = currentLoc();
     consume(TokenType::FROM, "expected 'from'");
 
-    auto fd  = std::make_unique<FromDeclAST>();
-    fd->loc  = loc;
-    fd->visibility = vis;
-
-    consume(TokenType::LPAREN, "expected '(' after 'from'");
-
-    // Source parameter: IDENTIFIER type
     if (!check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected source parameter name in 'from' declaration");
-    } else {
-        fd->srcParamName = advance().value;
-    }
-
-    fd->srcParamType = parseType();
-    if (!fd->srcParamType) {
-        errorAt(DiagCode::E2005, "expected source parameter type in 'from' declaration");
-    }
-
-    consume(TokenType::RPAREN, "expected ')' after source parameter in 'from' declaration");
-
-    // Return type name — must be an IDENTIFIER
-    if (!check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected return type name after ')' in 'from' declaration");
-    } else {
-        fd->returnTypeName = advance().value;
-    }
-
-    if (!check(TokenType::ASSIGN)) {
-        errorAt(DiagCode::E2001, "expected '=' before body in 'from' declaration");
+        errorAt(DiagCode::E2003, "expected target struct name after 'from'");
         return nullptr;
     }
+    std::string targetName = advance().value;
 
-    FuncBodyKind bodyKind = FuncBodyKind::Block;
-    bool isAsync = false;
-    fd->body = parseFuncBody(bodyKind, isAsync);
+    auto node = std::make_unique<FromDeclAST>();
+    node->loc = loc;
+    node->visibility = vis;
+    node->targetTypeName = targetName;
 
-    if (isAsync) {
-        errorAt(DiagCode::E2006, "'from' conversion bodies cannot be async");
+    consume(TokenType::LBRACE, "expected '{' after target name '" + targetName + "'");
+
+    while (!check(TokenType::RBRACE) && !isAtEnd()) {
+        match(TokenType::SEMICOLON); // optional separator
+        match(TokenType::COMMA);     // optional separator
+        if (check(TokenType::RBRACE))
+            break;
+
+        SourceLocation entryLoc = currentLoc();
+
+        if (!check(TokenType::IDENTIFIER)) {
+            errorAt(DiagCode::E2003, "expected conversion name (label)");
+            synchronize();
+            continue;
+        }
+
+        auto entry = std::make_unique<FromEntryAST>();
+        entry->loc  = entryLoc;
+        entry->name = advance().value;
+
+        consume(TokenType::LPAREN, "expected '(' starting conversion parameter list");
+
+        if (!check(TokenType::IDENTIFIER)) {
+            errorAt(DiagCode::E2003, "expected source parameter name");
+        } else {
+            entry->srcParamName = advance().value;
+        }
+
+        entry->srcParamType = parseType();
+        if (!entry->srcParamType) {
+            errorAt(DiagCode::E2005, "expected source parameter type");
+        }
+
+        consume(TokenType::RPAREN, "expected ')' to close parameter list");
+
+        if (!check(TokenType::IDENTIFIER)) {
+            errorAt(DiagCode::E2003, "expected target type name after ')'");
+        } else {
+            entry->returnTypeName = advance().value;
+            // The return type should match the block targetName — semantic pass will verify this.
+        }
+
+        if (!check(TokenType::ASSIGN)) {
+            errorAt(DiagCode::E2001, "expected '=' before body for conversion '" + entry->name + "'");
+            synchronize();
+            continue;
+        }
+
+        bool isAsync = false;
+        entry->body = parseFuncBody(entry->bodyKind, isAsync);
+
+        if (isAsync) {
+            errorAt(DiagCode::E2006, "conversion bodies cannot be async");
+        }
+
+        node->entries.push_back(std::move(entry));
     }
 
-    return fd;
+    consume(TokenType::RBRACE, "expected '}' to close from block");
+    return node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

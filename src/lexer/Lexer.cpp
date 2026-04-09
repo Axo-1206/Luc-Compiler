@@ -138,9 +138,10 @@ void Lexer::skipWhitespace() {
 		advance();
 		}
 		// Single-line comment: --
+		// Break out so getNextToken can emit a LINE_COMMENT token.
+		// This allows the Parser to harvest stacked and trailing doc comments.
 		else if (c == '-' && peekNext() == '-') {
-		while (!isAtEnd() && peek() != '\n')
-			advance();
+			break;
 		}
 		// Block comment: /- ... -/
 		// Doc comment:   /-- ... --/
@@ -398,8 +399,30 @@ Token Lexer::readDocComment() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main token scanner
+// Line comment reader  -- text
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Called from getNextToken after the first '-' of '--' has been consumed and
+// the next char is confirmed to be '-'. Consumes the second '-', strips the
+// optional leading space, and collects the rest of the line as the value.
+// Does NOT consume the trailing newline — skipWhitespace will do that on the
+// next call so the Lexer's line counter stays correct.
+//
+Token Lexer::readLineComment() {
+	advance(); // consume the second '-'
+
+	// Strip a single optional leading space (the common "-- text" style).
+	if (peek() == ' ')
+		advance();
+
+	std::string text;
+	while (!isAtEnd() && peek() != '\n')
+		text += advance();
+
+	return makeToken(TokenType::LINE_COMMENT, text);
+}
+
+
 
 Token Lexer::getNextToken() {
 	skipWhitespace();
@@ -427,7 +450,7 @@ Token Lexer::getNextToken() {
 		auto it = keywords.find(ident);
 		if (it != keywords.end())
 			return makeToken(it->second, ident);
-				return makeToken(TokenType::IDENTIFIER, ident);
+		return makeToken(TokenType::IDENTIFIER, ident);
 	}
 
 	// ── Numbers ────────────────────────────────────────────────────────────────
@@ -447,11 +470,11 @@ Token Lexer::getNextToken() {
 	// ── Access ─────────────────────────────────────────────────────────────────
 	case '.':
 		if (match('?'))
-		return makeToken(TokenType::DOT_QUESTION, ".?"); // nullable chain
+		    return makeToken(TokenType::DOT_QUESTION, ".?"); // nullable chain
 		if (match('.')) {
-		if (match('.'))
-			return makeToken(TokenType::VARIADIC, "..."); // variadic
-		return makeToken(TokenType::RANGE, "..");       // range
+		    if (match('.'))
+		        return makeToken(TokenType::VARIADIC, "..."); // variadic
+		    return makeToken(TokenType::RANGE, "..");       // range
 		}
 		return makeToken(TokenType::DOT, ".");
 
@@ -461,71 +484,74 @@ Token Lexer::getNextToken() {
 	// ── Nullable ───────────────────────────────────────────────────────────────
 	case '?':
 		if (match('?'))
-		return makeToken(TokenType::QUESTION_QUESTION, "??"); // null coalescing
+		    return makeToken(TokenType::QUESTION_QUESTION, "??"); // null coalescing
 		return makeToken(TokenType::QUESTION, "?");             // nullable suffix
 
 	// ── Assignment & Comparison ────────────────────────────────────────────────
 	case '=':
 		if (match('='))
-		return makeToken(TokenType::EQUAL_EQUAL, "==");
-		return makeToken(TokenType::ASSIGN, "=");
+		    return makeToken(TokenType::EQUAL_EQUAL, "==");
+        return makeToken(TokenType::ASSIGN, "=");
 
 	case '!':
 		if (match('='))
-		return makeToken(TokenType::NOT_EQUAL, "!=");
+		    return makeToken(TokenType::NOT_EQUAL, "!=");
 		return makeToken(TokenType::BANG, "!"); // pipeline argument pack annotation
 
 	case '<':
 		if (match('<'))
-		return makeToken(TokenType::SHL, "<<");
+		    return makeToken(TokenType::SHL, "<<");
 		if (match('='))
-		return makeToken(TokenType::LESS_EQUAL, "<=");
-			return makeToken(TokenType::LESS, "<");
+		    return makeToken(TokenType::LESS_EQUAL, "<=");
+        return makeToken(TokenType::LESS, "<");
 
 	case '>':
 		if (match('>'))
-		return makeToken(TokenType::SHR, ">>");
+		    return makeToken(TokenType::SHR, ">>");
 		if (match('='))
-		return makeToken(TokenType::GREATER_EQUAL, ">=");
-			return makeToken(TokenType::GREATER, ">");
+		    return makeToken(TokenType::GREATER_EQUAL, ">=");
+        return makeToken(TokenType::GREATER, ">");
 
 	// ── Math ───────────────────────────────────────────────────────────────────
 	case '+':
 		if (match('>'))
-		return makeToken(TokenType::COMPOSE, "+>"); // function composition
+		    return makeToken(TokenType::COMPOSE, "+>"); // function composition
 		if (match('='))
-		return makeToken(TokenType::PLUS_ASSIGN, "+=");
-			return makeToken(TokenType::PLUS, "+");
+		    return makeToken(TokenType::PLUS_ASSIGN, "+=");
+        return makeToken(TokenType::PLUS, "+");
 
 	case '-':
+		// Check for line comment BEFORE checking for -= and ->
+		if (peek() == '-')
+			return readLineComment(); // -- line comment
 		if (match('='))
-		return makeToken(TokenType::MINUS_ASSIGN, "-=");
+		    return makeToken(TokenType::MINUS_ASSIGN, "-=");
 		if (match('>'))
-		return makeToken(TokenType::ARROW, "->"); // pipeline
-			return makeToken(TokenType::MINUS, "-");
+		    return makeToken(TokenType::ARROW, "->"); // pipeline
+		return makeToken(TokenType::MINUS, "-");
 
 	case '*':
 		if (match('='))
-		return makeToken(TokenType::MUL_ASSIGN, "*=");
+		    return makeToken(TokenType::MUL_ASSIGN, "*=");
 		return makeToken(TokenType::MUL, "*");
 
 	case '/':
 		// /-- doc comment — must check before /= and bare DIV
 		// At this point '/' is already consumed; peek() is the next char.
 		if (peek() == '-' && pos + 1 < src.size() && src[pos + 1] == '-')
-		return readDocComment();
+		    return readDocComment();
 		if (match('='))
-		return makeToken(TokenType::DIV_ASSIGN, "/=");
-			return makeToken(TokenType::DIV, "/");
+		    return makeToken(TokenType::DIV_ASSIGN, "/=");
+		return makeToken(TokenType::DIV, "/");
 
 	case '%':
 		if (match('='))
-		return makeToken(TokenType::MOD_ASSIGN, "%=");
+		    return makeToken(TokenType::MOD_ASSIGN, "%=");
 		return makeToken(TokenType::MOD, "%");
 
 	case '^':
 		if (match('='))
-		return makeToken(TokenType::POW_ASSIGN, "^=");
+		    return makeToken(TokenType::POW_ASSIGN, "^=");
 		return makeToken(TokenType::POW, "^");
 
 	// ── Bitwise ────────────────────────────────────────────────────────────────
@@ -538,7 +564,7 @@ Token Lexer::getNextToken() {
 
 	case '~':
 		if (match('^'))
-		return makeToken(TokenType::BIT_XOR, "~^");
+		    return makeToken(TokenType::BIT_XOR, "~^");
 		return makeToken(TokenType::BIT_NOT, "~");
 
 	// ── FFI ────────────────────────────────────────────────────────────────────

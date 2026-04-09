@@ -48,3 +48,4 @@
 | 2026-03-31 | AST Node: use node kind to void dynamic_cast |
 | 2026-04-04 | General: adjust syntax and grammar |
 | 2026-04-05 | Parser: continue previous task |
+| 2026-04-07 | Semantic: complete semantic phase, reviewing and ready for codegen, also added document for semantic phase LUC_SEMANTIC.md in docs/LUC_SEMANTIC.md |

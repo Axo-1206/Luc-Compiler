@@ -38,6 +38,11 @@ void checkTopLevelDecl(DeclAST* decl, SymbolTable& symbols, TypeResolver& resolv
                        int& parallelDepth, bool insideExtern);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Forward declaration of Phase 4 dispatcher (defined in Annotator.cpp)
+// ─────────────────────────────────────────────────────────────────────────────
+void annotateAll(std::vector<ProgramAST*>& files, SymbolTable& symbols);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Constructor
 // ─────────────────────────────────────────────────────────────────────────────
 SemanticAnalyzer::SemanticAnalyzer(DiagnosticEngine& dc)
@@ -67,6 +72,7 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
 
     // Phase 3.5: Entry point detection
     // Validate that a 'main' function exists and has a valid signature.
+    // Required format: export imt main () int = { ... }
     Symbol* mainSym = symbols_->lookup("main");
     if (!mainSym) {
         // Points to the start of the first file for a missing entry point error.
@@ -76,6 +82,52 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
     } else if (mainSym->kind != SymbolKind::Func) {
         dc_.error(DiagnosticCategory::Semantic, mainSym->loc, DiagCode::E3007, 
                   "'main' must be a function");
+    } else {
+        auto* func = static_cast<FuncDeclAST*>(mainSym->decl);
+        
+        // 1. MUST be exported: export main ...
+        if (func->visibility != Visibility::Export) {
+            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                      "'main' function must be exported (use 'export imt main')");
+        }
+        
+        // 2. MUST be imt: imt main ...
+        if (func->keyword != DeclKeyword::Imt) {
+            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                      "'main' function must use 'imt' keyword");
+        }
+        
+        // 3. MUST have zero parameters: ()
+        bool hasParams = false;
+        for (const auto& group : func->paramGroups) {
+            if (!group.empty()) {
+                hasParams = true;
+                break;
+            }
+        }
+        if (hasParams) {
+            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                      "'main' function must have no parameters");
+        }
+        
+        // 4. MUST return int
+        bool returnsInt = false;
+        if (func->returnType && func->returnType->kind == ASTKind::PrimitiveType) {
+            auto* pt = static_cast<PrimitiveTypeAST*>(func->returnType.get());
+            if (pt->primitiveKind == PrimitiveKind::Int) {
+                returnsInt = true;
+            }
+        }
+        if (!returnsInt) {
+            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                      "'main' function must return 'int'");
+        }
+        
+        // 5. MUST NOT be async
+        if (func->isAsync) {
+            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                      "'main' function cannot be async");
+        }
     }
 
     annotate(files);
@@ -161,14 +213,13 @@ void SemanticAnalyzer::checkDecls(std::vector<ProgramAST*>& files) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // annotate  — Phase 4
-// Writes scopeDepth onto every declaration node that has a scope.
-// Full resolvedType / isConst annotation is done inline during Phase 3
-// (each check function writes node->resolvedType directly).
+// Invokes the Annotator visitor (Annotator.cpp) over every file in the package.
+// The Annotator stamps:
+//   isConst          — true for val-declared nodes and all literal expressions
+//   isBehaviorMember — reinforced on BehaviorAccessExprAST nodes
+// resolvedType and scopeDepth are left as-is; they were written inline during
+// Phase 3 by checkExpr and checkBlock respectively.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::annotate(std::vector<ProgramAST*>& files) {
-    // resolvedType is written directly by checkExpr in Phase 3.
-    // scopeDepth is written by checkBlock in SemanticStmt.
-    // This pass is currently a no-op; a future Annotator visitor may be added
-    // to post-process the tree for codegen convenience.
-    (void)files;
+    annotateAll(files, *symbols_);
 }

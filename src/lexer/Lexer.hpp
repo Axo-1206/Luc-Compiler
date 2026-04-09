@@ -59,6 +59,11 @@ private:
     Token readRawString();
     Token readChar();
 
+    // Reads a -- ... line comment. Called from getNextToken after the first '-'
+    // has been consumed and the next char is confirmed to be '-'. Emits a
+    // LINE_COMMENT token so the Parser can harvest stacked/trailing doc comments.
+    Token readLineComment();
+
     // Reads a /-- ... --/ doc comment. Called from getNextToken after '/' has
     // been consumed and the next two chars are confirmed to be '--'.
     Token readDocComment();

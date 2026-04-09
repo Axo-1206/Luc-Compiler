@@ -34,7 +34,14 @@ Parser::Parser(std::vector<Token> tokens, DiagnosticEngine &dc,
 // ─────────────────────────────────────────────────────────────────────────────
 
 const Token &Parser::peek() const {
-    return tokens_[pos_];
+    // Skip any LINE_COMMENT tokens at the current position — they are
+    // transparent to the grammar; only harvestDocComment() reads them directly.
+    std::size_t i = pos_;
+    while (i < tokens_.size() && tokens_[i].type == TokenType::LINE_COMMENT)
+        ++i;
+    if (i >= tokens_.size())
+        return tokens_.back(); // EOF_TOKEN
+    return tokens_[i];
 }
 
 const Token &Parser::peekNext() const {
@@ -42,16 +49,38 @@ const Token &Parser::peekNext() const {
 }
 
 const Token &Parser::peekAt(std::size_t offset) const {
-    std::size_t idx = pos_ + offset;
-    if (idx >= tokens_.size())
+    // Skip LINE_COMMENT tokens when computing the offset — they are invisible
+    // to the grammar.  We need to find the Nth non-comment token from pos_.
+    std::size_t found = 0;
+    std::size_t i = pos_;
+    // Start by skipping comments at pos_ itself (same as peek()).
+    while (i < tokens_.size() && tokens_[i].type == TokenType::LINE_COMMENT)
+        ++i;
+    // Now advance 'offset' more non-comment tokens.
+    while (offset > 0 && i < tokens_.size()) {
+        ++i;
+        while (i < tokens_.size() && tokens_[i].type == TokenType::LINE_COMMENT)
+            ++i;
+        --offset;
+    }
+    if (i >= tokens_.size())
         return tokens_.back(); // EOF_TOKEN
-    return tokens_[idx];
+    return tokens_[i];
 }
 
 Token Parser::advance() {
-    Token t = tokens_[pos_];
-    if (!isAtEnd())
+    // Find the current non-comment token index (same logic as peek()).
+    std::size_t i = pos_;
+    while (i < tokens_.size() && tokens_[i].type == TokenType::LINE_COMMENT)
+        ++i;
+
+    Token t = (i < tokens_.size()) ? tokens_[i] : tokens_.back();
+
+    // Move pos_ past i, then skip any trailing LINE_COMMENTs.
+    pos_ = (i < tokens_.size()) ? i + 1 : i;
+    while (!isAtEnd() && tokens_[pos_].type == TokenType::LINE_COMMENT)
         ++pos_;
+
     return t;
 }
 
@@ -128,6 +157,7 @@ void Parser::synchronize() {
     // fresh statement or declaration.  These are the same tokens that
     // looksLikeDeclStart() and looksLikeStmtStart() test — we duplicate the
     // check here to avoid the extra call overhead inside the hot loop.
+    advance(); // Ensure we move past the error-causing token first
     while (!isAtEnd()) {
         TokenType t = peek().type;
 
@@ -188,59 +218,123 @@ bool Parser::consumeExtern() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Doc comment harvesting
 //
-// Strategy: walk backwards through the already-consumed tokens starting at
-// pos_ - 1 (the token immediately before the current position).  The Lexer
-// strips line comments and block comments as whitespace, but DOC_COMMENT
-// tokens (/-- ... --/) are emitted into the stream.  Stacked -- comments
-// are also emitted as individual tokens by the Lexer only if they are
-// doc-comment candidates — see Lexer note: we rely on the lexer NOT
-// stripping them when they form a consecutive run ending on (decl_line - 1).
+// The Lexer now emits LINE_COMMENT tokens for every `--` line and DOC_COMMENT
+// tokens for every `/-- ... --/` block.  harvestDocComment() walks backward
+// through the already-seen token stream to find comments that belong to the
+// declaration at the current position, applying the grammar attachment rules:
 //
-// NOTE: The current Lexer.cpp strips single-line -- comments in
-// skipWhitespace(), so we cannot recover them from the token stream
-// retroactively.  harvestDocComment() therefore handles only the
-// DOC_COMMENT token form (/-- ... --/).  Stacked -- support requires a
-// Lexer change to emit them as DOC_COMMENT or a separate STACKED_DOC token;
-// that change is tracked as a future task. For now the function finds the
-// nearest DOC_COMMENT token immediately preceding the current position
-// (allowing only whitespace/other-DOC_COMMENT tokens between it and pos_).
+//   Rule 1 — Block doc  /-- ... --/
+//     A DOC_COMMENT token whose closing line is immediately before the
+//     declaration line (gap <= 1).  Wins over any stacked lines above it.
+//
+//   Rule 2 — Stacked line comments
+//     A consecutive run of LINE_COMMENT tokens ending on (declLine - 1).
+//     "Consecutive" means no non-comment tokens between them and no blank
+//     lines between the last comment and the declaration.
+//     Blank lines (line gaps > 1) break the run.
+//
+//   Rule 3 — Trailing line comment
+//     A single LINE_COMMENT token on the SAME line as the declaration.
+//     Only applies when there are no stacked comments immediately above.
+//
+//   Priority (highest to lowest):  Block > Stacked > Trailing
+//   If both Stacked and Trailing exist, stacked wins and trailing is ignored.
+//   If a blank line separates stacked comments from the declaration, none attach.
 // ─────────────────────────────────────────────────────────────────────────────
 std::optional<DocComment> Parser::harvestDocComment() {
-    // Walk backwards to find a DOC_COMMENT token whose line is exactly
-    // (current_token.line - N) for some small N, with no intervening
-    // non-comment, non-whitespace tokens.
-    //
-    // Because the Lexer compresses whitespace we check line adjacency instead
-    // of positional adjacency.
-
     if (pos_ == 0)
         return std::nullopt;
 
-    // Current token line — the declaration starts here.
     int declLine = peek().line;
 
-    // Scan backwards from pos_-1.
+    // ── Pass 1: scan backward, skip only LINE_COMMENT and DOC_COMMENT tokens.
+    // Stop at the first non-comment token.  Record what we find.
+
+    // Check for a trailing comment: a LINE_COMMENT on the same line.
+    // (We only take it as trailing if there is no stacked run above.)
+    std::optional<std::string> trailingText;
+    int trailingIdx = -1;
+
+    // Collect a stacked run: consecutive LINE_COMMENTs ending on declLine-1.
+    std::vector<std::string> stackedLines;
+    int stackedTopLine = -1; // line of the topmost comment in the run
+
+    // Check for a block doc comment immediately above.
+    std::optional<std::string> blockText;
+
     for (std::size_t i = pos_; i > 0;) {
         --i;
-        const Token &t = tokens_[i];
+        const Token& t = tokens_[i];
 
-        if (t.type == TokenType::DOC_COMMENT) {
-            // Accept only if the closing --/ is on the line immediately
-            // before the declaration (or on the same line for trailing form).
-            // We use a generous window of <= 2 lines to account for edge cases
-            // where the lexer's line tracking places the closing delimiter one
-            // line off.
-            if (declLine - t.line <= 2) {
-                return DocComment{t.value, DocCommentForm::Block};
+        if (t.type == TokenType::LINE_COMMENT) {
+            if (t.line == declLine) {
+                // Same line as the declaration → candidate for trailing.
+                if (trailingIdx < 0) {
+                    trailingText = t.value;
+                    trailingIdx  = static_cast<int>(i);
+                }
+                // Keep scanning — there may be stacked comments above too.
+                continue;
             }
-            // Found a doc comment but it's too far away — no attachment.
-            return std::nullopt;
+
+            // Comment above the declaration line.
+            if (stackedLines.empty()) {
+                // First comment we see above — it must be on declLine-1 to start a run.
+                if (declLine - t.line == 1) {
+                    stackedLines.push_back(t.value);
+                    stackedTopLine = t.line;
+                    continue;
+                } else {
+                    // Gap > 1 line: floating comment, no attachment.
+                    break;
+                }
+            } else {
+                // We already have a partial run. This next comment must be
+                // on the line immediately before the current top of the run.
+                if (stackedTopLine - t.line == 1) {
+                    stackedLines.push_back(t.value);
+                    stackedTopLine = t.line;
+                    continue;
+                } else {
+                    // Gap breaks the run; stop collecting.
+                    break;
+                }
+            }
         }
 
-        // Any non-doc-comment, non-whitespace token breaks the run.
-        // (Whitespace is stripped by the Lexer, so any token here is real.)
+        if (t.type == TokenType::DOC_COMMENT) {
+            // Block doc: accept if the closing line is immediately before declLine.
+            if (declLine - t.line <= 1) {
+                blockText = t.value;
+            }
+            break; // nothing above a block doc attaches.
+        }
+
+        // Any real token breaks the run.
         break;
     }
+
+    // ── Priority resolution ──────────────────────────────────────────────────
+
+    // Block doc wins over everything.
+    if (blockText)
+        return DocComment{*blockText, DocCommentForm::Block};
+
+    // Stacked run wins over trailing.
+    if (!stackedLines.empty()) {
+        // stackedLines[0] is the line nearest the declaration; reverse to get
+        // top-to-bottom order, then join with newlines.
+        std::string combined;
+        for (int i = static_cast<int>(stackedLines.size()) - 1; i >= 0; --i) {
+            if (!combined.empty()) combined += '\n';
+            combined += stackedLines[i];
+        }
+        return DocComment{combined, DocCommentForm::Stacked};
+    }
+
+    // Trailing comment (same line as declaration).
+    if (trailingText)
+        return DocComment{*trailingText, DocCommentForm::Trailing};
 
     return std::nullopt;
 }
@@ -325,6 +419,9 @@ bool Parser::looksLikeFuncDecl() const {
                 ++depth;
             else if (tokens_[i].type == TokenType::GREATER)
                 --depth;
+            // Add safety: generic params shouldn't cross these boundaries
+            else if (tokens_[i].type == TokenType::SEMICOLON || tokens_[i].type == TokenType::RBRACE) 
+                break;
             else if (tokens_[i].type == TokenType::EOF_TOKEN)
                 break;
             ++i;

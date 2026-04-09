@@ -365,6 +365,26 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
 // checkAssignExpr
 // Validates that the LHS is mutable (let variable or let-held field).
 // Compound operators are desugared: x += e → x = x + e, then checked.
+//
+// Special case — function body reassignment:
+//   f = { return 42 }
+//   f = async { return await doWork() }
+//
+// The RHS is an AnonFuncExprAST produced by parsePrimaryExpr when it sees a
+// bare '{' or 'async {' in expression position (the block-body form).  That
+// node carries empty params and nullptr returnType because the parser has no
+// access to the symbol table — the real signature lives on the FuncDeclAST
+// that was stored when 'f' was first declared.
+//
+// Detection: RHS is AnonFuncExprAST AND its params vector is empty AND its
+// returnType is nullptr.  In this case we look up the LHS symbol, recover the
+// FuncDeclAST's paramGroups and returnType, declare the params into scope, and
+// check the body with the correct expectedReturn — exactly what checkFuncDecl
+// does for the initial declaration.
+//
+// If the LHS symbol is not a Func (e.g. the user assigns a block to a plain
+// variable of function-type), we fall through to the generic checkExpr path
+// which handles AnonFuncExprAST normally via its own (possibly empty) params.
 // ─────────────────────────────────────────────────────────────────────────────
 static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                                  TypeResolver& resolver, DiagnosticEngine& dc,
@@ -372,6 +392,298 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                                  int& parallelDepth, bool insideExtern) {
     TypeAST* lhsType = checkExpr(node.lhs.get(), symbols, resolver, dc,
                                  asyncDepth, loopDepth, parallelDepth, insideExtern);
+
+    // ── Function body reassignment:  f = { ... }  or  f = async { ... } ──────
+    // Detect the block-body form: RHS is an AnonFuncExprAST with no params and
+    // no return type — the parser produces this when it sees a bare block in
+    // expression position.  We need to use the LHS FuncDeclAST's signature
+    // instead so that params are in scope and the return type is checked.
+    if (node.op == AssignOp::Assign &&
+        node.rhs->isa<AnonFuncExprAST>() &&
+        node.lhs->isa<IdentifierExprAST>()) {
+
+        auto* anonBody = node.rhs->as<AnonFuncExprAST>();
+        // Only treat as a block-body reassignment when the node has no
+        // params and no return type (i.e. it was produced from a bare '{').
+        if (anonBody->paramGroups.empty() && !anonBody->returnType) {
+            auto* ident = node.lhs->as<IdentifierExprAST>();
+            Symbol* sym = symbols.lookup(ident->name);
+
+            if (sym && sym->kind == SymbolKind::Func && sym->decl) {
+                // Verify the symbol is let-declared (reassignable).
+                if (sym->declKw != DeclKeyword::Let) {
+                    dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3004,
+                             "cannot reassign body of '" + ident->name +
+                             "': declared with " +
+                             (sym->declKw == DeclKeyword::Imt ? "imt" : "val"));
+                }
+
+                if (parallelDepth > 0) {
+                    dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                             "assignment to outer variable inside parallel scope is not allowed");
+                }
+
+                // Recover the real signature from the FuncDeclAST.
+                auto* funcDecl = static_cast<FuncDeclAST*>(sym->decl);
+
+                TypeAST* returnType = nullptr;
+                if (funcDecl->returnType) {
+                    returnType = resolver.resolveType(funcDecl->returnType.get());
+                }
+
+                // Honour the async flag from either the original declaration or
+                // the new body (= async { ... } sets isAsync on the AnonFuncExprAST).
+                bool bodyIsAsync = funcDecl->isAsync || anonBody->isAsync;
+                if (bodyIsAsync) asyncDepth++;
+
+                symbols.pushScope();
+
+                // Declare the function's parameters into the body scope.
+                for (auto& group : funcDecl->paramGroups) {
+                    for (auto& param : group) {
+                        TypeAST* pt = resolver.resolveType(param->type.get());
+                        if (!pt) continue;
+                        Symbol ps;
+                        ps.name       = param->name;
+                        ps.kind       = SymbolKind::Param;
+                        ps.declKw     = DeclKeyword::Let;
+                        ps.visibility = Visibility::Private;
+                        ps.type       = pt;
+                        ps.decl       = param.get();
+                        ps.isAsync    = false;
+                        ps.loc        = param->loc;
+                        if (!symbols.declare(ps)) {
+                            dc.error(DiagnosticCategory::Semantic, param->loc,
+                                     DiagCode::E3005,
+                                     "duplicate parameter name '" + param->name + "'");
+                        }
+                    }
+                }
+
+                // Check the body block with the recovered return type.
+                if (anonBody->body) {
+                    checkStmt(anonBody->body.get(), symbols, resolver, dc,
+                              returnType, asyncDepth, loopDepth,
+                              parallelDepth, insideExtern);
+                }
+
+                symbols.popScope();
+                if (bodyIsAsync) asyncDepth--;
+
+                node.resolvedType = lhsType;
+                return lhsType;
+            }
+        }
+    }
+
+    // ── Explicit anonymous function reassignment:  f = (x int) int { ... } ────
+    // The RHS is an AnonFuncExprAST with its own param groups and return type
+    // written explicitly by the programmer.  This covers both single-group and
+    // curried reassignment:
+    //
+    //   Single-group:
+    //     let f (x int) int = { return x }
+    //     f = (n int) int { return n * 2 }        -- valid: same signature
+    //     f = (n str) int { return 0 }            -- error: param type mismatch
+    //     f = (n int) str { return "" }           -- error: return type mismatch
+    //
+    //   Curried:
+    //     let add (a int) (b int) int = { return a + b }
+    //     add = (a int) (b int) int { return a * b }  -- valid: same groups
+    //     add = (a int) int { return a }              -- error: group count mismatch
+    //
+    // Rules:
+    //   - Group count must match exactly.
+    //   - Within each group, parameter count must match exactly.
+    //   - Each parameter's type must be assignable to the declared type
+    //     (positional — names are irrelevant, types must match).
+    //   - The variadic flag on each parameter must match exactly.
+    //   - The return type must be assignable to the declared return type;
+    //     both nullptr (void) also matches.
+    if (node.op == AssignOp::Assign &&
+        node.rhs->isa<AnonFuncExprAST>() &&
+        node.lhs->isa<IdentifierExprAST>()) {
+
+        auto* anonRhs = node.rhs->as<AnonFuncExprAST>();
+
+        // Only enter this branch when the anon func has an explicit signature —
+        // i.e. it is NOT the bare block-body form.  The bare block-body form
+        // (produced by a lone '{') has paramGroups.empty() AND nullptr returnType.
+        // An explicit signature has at least one group OR an explicit return type.
+        bool hasExplicitSignature = !anonRhs->paramGroups.empty() ||
+                                    anonRhs->returnType != nullptr;
+
+        if (hasExplicitSignature) {
+            auto* ident = node.lhs->as<IdentifierExprAST>();
+            Symbol* sym = symbols.lookup(ident->name);
+
+            if (sym && sym->kind == SymbolKind::Func && sym->decl) {
+                auto* funcDecl = static_cast<FuncDeclAST*>(sym->decl);
+                bool signatureOk = true;
+
+                // ── 1. Curry group count ──────────────────────────────────────
+                if (anonRhs->paramGroups.size() != funcDecl->paramGroups.size()) {
+                    dc.error(DiagnosticCategory::Semantic, anonRhs->loc,
+                             DiagCode::E3003,
+                             "anonymous function assigned to '" + ident->name +
+                             "' has " +
+                             std::to_string(anonRhs->paramGroups.size()) +
+                             " parameter group(s) but declaration has " +
+                             std::to_string(funcDecl->paramGroups.size()));
+                    signatureOk = false;
+                } else {
+                    // ── 2. Per-group, per-parameter check ─────────────────────
+                    for (size_t g = 0; g < funcDecl->paramGroups.size(); ++g) {
+                        const auto& declGroup = funcDecl->paramGroups[g];
+                        const auto& anonGroup = anonRhs->paramGroups[g];
+
+                        if (anonGroup.size() != declGroup.size()) {
+                            dc.error(DiagnosticCategory::Semantic, anonRhs->loc,
+                                     DiagCode::E3003,
+                                     "anonymous function assigned to '" + ident->name +
+                                     "': group " + std::to_string(g + 1) +
+                                     " has " + std::to_string(anonGroup.size()) +
+                                     " parameter(s) but declaration has " +
+                                     std::to_string(declGroup.size()));
+                            signatureOk = false;
+                            continue;
+                        }
+
+                        for (size_t i = 0; i < declGroup.size(); ++i) {
+                            const auto& declParam = declGroup[i];
+                            const auto& anonParam = anonGroup[i];
+
+                            // Variadic flag must match exactly.
+                            if (anonParam->isVariadic != declParam->isVariadic) {
+                                dc.error(DiagnosticCategory::Semantic, anonParam->loc,
+                                         DiagCode::E3002,
+                                         "group " + std::to_string(g + 1) +
+                                         " parameter " + std::to_string(i + 1) +
+                                         " of anonymous function assigned to '" +
+                                         ident->name + "': variadic mismatch");
+                                signatureOk = false;
+                                continue;
+                            }
+
+                            // Resolve both sides and check type compatibility.
+                            TypeAST* declType =
+                                resolver.resolveType(declParam->type.get());
+                            TypeAST* anonType =
+                                resolver.resolveType(anonParam->type.get());
+
+                            if (declType && anonType &&
+                                !TypeChecker::isAssignable(anonType, declType)) {
+                                dc.error(DiagnosticCategory::Semantic, anonParam->loc,
+                                         DiagCode::E3002,
+                                         "group " + std::to_string(g + 1) +
+                                         " parameter " + std::to_string(i + 1) +
+                                         " of anonymous function assigned to '" +
+                                         ident->name + "': type mismatch");
+                                signatureOk = false;
+                            }
+                        }
+                    }
+                }
+
+                // ── 3. Return type ────────────────────────────────────────────
+                // Both nullptr means void — valid match.
+                // One nullptr and one not — mismatch.
+                // Both non-nullptr — use isAssignable.
+                TypeAST* declReturn = funcDecl->returnType
+                                       ? resolver.resolveType(funcDecl->returnType.get())
+                                       : nullptr;
+                TypeAST* anonReturn = anonRhs->returnType
+                                       ? resolver.resolveType(anonRhs->returnType.get())
+                                       : nullptr;
+
+                bool returnMatches;
+                if (!declReturn && !anonReturn) {
+                    returnMatches = true;
+                } else if (!declReturn || !anonReturn) {
+                    returnMatches = false;
+                } else {
+                    returnMatches = TypeChecker::isAssignable(anonReturn, declReturn);
+                }
+
+                if (!returnMatches) {
+                    dc.error(DiagnosticCategory::Semantic, anonRhs->loc,
+                             DiagCode::E3002,
+                             "return type of anonymous function assigned to '" +
+                             ident->name + "' does not match declaration");
+                    signatureOk = false;
+                }
+
+                // ── 4. Mutability and parallel context ────────────────────────
+                if (sym->declKw != DeclKeyword::Let) {
+                    dc.error(DiagnosticCategory::Semantic, node.loc,
+                             DiagCode::E3004,
+                             "cannot reassign '" + ident->name +
+                             "': declared with " +
+                             (sym->declKw == DeclKeyword::Imt ? "imt" : "val"));
+                }
+
+                if (parallelDepth > 0) {
+                    dc.error(DiagnosticCategory::Semantic, node.loc,
+                             DiagCode::E3002,
+                             "assignment to outer variable inside parallel scope is not allowed");
+                }
+
+                // ── 5. Check the body ─────────────────────────────────────────
+                // Always check the body even when the signature mismatched, so
+                // internal errors surface in a single pass.  Use declReturn as
+                // the expected return type so return statements are validated
+                // against the declaration's intent.
+                if (anonRhs->isAsync) asyncDepth++;
+                symbols.pushScope();
+
+                // Declare params using the anon func's own param names (the
+                // programmer writes the new names for this body), but the declared
+                // types — so that the body is type-checked correctly.
+                // Skip if signatureOk is false (count mismatch would cause OOB).
+                if (signatureOk) {
+                    for (size_t g = 0; g < funcDecl->paramGroups.size(); ++g) {
+                        const auto& declGroup = funcDecl->paramGroups[g];
+                        const auto& anonGroup = anonRhs->paramGroups[g];
+                        for (size_t i = 0; i < declGroup.size(); ++i) {
+                            const auto& anonParam = anonGroup[i];
+                            TypeAST* pt =
+                                resolver.resolveType(declGroup[i]->type.get());
+                            if (!pt) continue;
+                            Symbol ps;
+                            ps.name       = anonParam->name; // use the new name
+                            ps.kind       = SymbolKind::Param;
+                            ps.declKw     = DeclKeyword::Let;
+                            ps.visibility = Visibility::Private;
+                            ps.type       = pt;
+                            ps.decl       = anonParam.get();
+                            ps.isAsync    = false;
+                            ps.loc        = anonParam->loc;
+                            if (!symbols.declare(ps)) {
+                                dc.error(DiagnosticCategory::Semantic, anonParam->loc,
+                                         DiagCode::E3005,
+                                         "duplicate parameter name '" +
+                                         anonParam->name + "'");
+                            }
+                        }
+                    }
+                }
+
+                if (anonRhs->body) {
+                    checkStmt(anonRhs->body.get(), symbols, resolver, dc,
+                              declReturn, asyncDepth, loopDepth,
+                              parallelDepth, insideExtern);
+                }
+
+                symbols.popScope();
+                if (anonRhs->isAsync) asyncDepth--;
+
+                node.resolvedType = lhsType;
+                return lhsType;
+            }
+        }
+    }
+
+    // ── General case ──────────────────────────────────────────────────────────
     TypeAST* rhsType = checkExpr(node.rhs.get(), symbols, resolver, dc,
                                  asyncDepth, loopDepth, parallelDepth, insideExtern);
 
@@ -563,6 +875,11 @@ static TypeAST* checkAwaitExpr(AwaitExprAST& node, SymbolTable& symbols,
 
 // ─────────────────────────────────────────────────────────────────────────────
 // checkAnonFuncExpr
+//
+// Mirrors checkFuncDecl: iterates over paramGroups (outer = curry groups,
+// inner = params within that group) so curried anonymous functions are fully
+// supported.  A bare-block AnonFuncExprAST (paramGroups.empty()) has no
+// params to declare — the enclosing FuncDeclAST already handled them.
 // ─────────────────────────────────────────────────────────────────────────────
 static TypeAST* checkAnonFuncExpr(AnonFuncExprAST& node, SymbolTable& symbols,
                                    TypeResolver& resolver, DiagnosticEngine& dc,
@@ -574,14 +891,26 @@ static TypeAST* checkAnonFuncExpr(AnonFuncExprAST& node, SymbolTable& symbols,
     if (node.isAsync) asyncDepth++;
     symbols.pushScope();
 
-    for (auto& param : node.params) {
-        TypeAST* pt = resolver.resolveType(param->type.get());
-        if (pt) {
-            Symbol ps;
-            ps.name = param->name; ps.kind = SymbolKind::Param;
-            ps.declKw = DeclKeyword::Let; ps.visibility = Visibility::Private;
-            ps.type = pt; ps.decl = param.get(); ps.isAsync = false; ps.loc = param->loc;
-            symbols.declare(ps);
+    // Declare every parameter from every curry group into the function scope.
+    for (auto& group : node.paramGroups) {
+        for (auto& param : group) {
+            TypeAST* pt = resolver.resolveType(param->type.get());
+            if (pt) {
+                Symbol ps;
+                ps.name       = param->name;
+                ps.kind       = SymbolKind::Param;
+                ps.declKw     = DeclKeyword::Let;
+                ps.visibility = Visibility::Private;
+                ps.type       = pt;
+                ps.decl       = param.get();
+                ps.isAsync    = false;
+                ps.loc        = param->loc;
+                if (!symbols.declare(ps)) {
+                    dc.error(DiagnosticCategory::Semantic, param->loc,
+                             DiagCode::E3005,
+                             "duplicate parameter name '" + param->name + "'");
+                }
+            }
         }
     }
 

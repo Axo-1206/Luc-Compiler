@@ -15,7 +15,7 @@
 
 #include "ast/BaseAST.hpp"
 #include "ast/DeclAST.hpp"
-#include "semantic/SymbolTable.hpp"
+#include "SymbolTable.hpp"
 
 class DiagnosticEngine;
 

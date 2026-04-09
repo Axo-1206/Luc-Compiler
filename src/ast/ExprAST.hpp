@@ -743,14 +743,31 @@ struct ComposeExprAST : ExprAST {
 // AnonFuncExprAST
 //
 // An anonymous function expression — a function value without a name.
+// Mirrors FuncDeclAST exactly in its signature shape so that curried anon
+// functions are first-class and can be assigned to curried let variables.
+//
+// Single-group (normal function):
 //   (x int) int { return x * 2 }
 //   async (url string) string { return await httpGet(url) }
 //   () { io.printl("done") }
 //
+// Multi-group (curried anonymous function):
+//   (a int) (b int) int { return a + b }
+//   (min int) (max int) (value int) int { ... }
+//
 // Used in:
 //   - Explicit function assignment:  let f (x int) int = (x int) int { ... }
+//   - Curried reassignment:          let add (a int)(b int) int = ...
+//                                    add = (a int)(b int) int { return a + b }
 //   - Pipeline steps:                f1(args) -> (result int) string { ... } -> io.printl
 //   - Inline callbacks:              nums -> array.filter((x int) bool { x > 3 })
+//
+// paramGroups — outer vector = curry groups (same layout as FuncDeclAST).
+//   Single group  → normal function, paramGroups.size() == 1.
+//   Multiple groups → curried function, paramGroups.size() > 1.
+//   Empty outer vector (paramGroups.empty()) is the bare block-body marker
+//   produced by the parser when it sees a plain '{' in expression position;
+//   the enclosing FuncDeclAST owns the real signature in that case.
 //
 // returnType is nullptr for void anonymous functions.
 // isAsync marks async anonymous functions.
@@ -760,10 +777,10 @@ struct ComposeExprAST : ExprAST {
 struct AnonFuncExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::AnonFuncExpr;
 
-    std::vector<ParamPtr>  params;
-    TypePtr                returnType;    // nullptr = void
-    StmtPtr                body;          // BlockStmtAST
-    bool                   isAsync = false;
+    std::vector<std::vector<ParamPtr>> paramGroups;  // outer = curry groups
+    TypePtr                            returnType;   // nullptr = void
+    StmtPtr                            body;         // BlockStmtAST
+    bool                               isAsync = false;
 
     AnonFuncExprAST() : ExprAST(ASTKind::AnonFuncExpr) {}
 
