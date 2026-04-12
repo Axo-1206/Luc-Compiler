@@ -428,7 +428,7 @@ struct BaseAST {
     // The semantic pass casts this to the correct TypeAST* after it resolves it.
     void*   resolvedType     = nullptr;  // TypeAST* — type of this node
     bool    isBehaviorMember = false;    // true → Type:method, never reassignable
-    bool    isConst          = false;    // true → value is compile-time constant
+    bool    isConst          = false;    // true → compile-time constant (const decl or literal)
     int     scopeDepth       = 0;        // 0 = file scope, +1 per nested block
 
     // ── Constructor ───────────────────────────────────────────────────────────

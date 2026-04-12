@@ -38,7 +38,7 @@ top_level_decl  := module_decl     -- optional re-export manifest (one per packa
                  | impl_decl        -- top-level only: same file and scope as struct
                  | from_decl        -- top-level only: type conversion entry point for a named struct
                  | var_decl
-                 | func_decl        -- shorthand: top-level let/imt/val with func type
+                 | func_decl        -- shorthand: top-level let/const with func type
 ```
 
 ### Entry Point (main)
@@ -46,9 +46,9 @@ top_level_decl  := module_decl     -- optional re-export manifest (one per packa
 The language uses a standard `main` function as the execution entry point. The parsing and AST do not treat `main` differently than other functions, but the semantic pass expects it to follow a specific signature. A typical systems-level `main` looks like this:
 
 ```luc
-export imt main () int { ... }
+export const main () int { ... }
 -- or with command-line arguments:
-export imt main (args []string) int { ... }
+export const main (args []string) int { ... }
 ```
 
 ## Module System
@@ -65,7 +65,7 @@ flat; nesting is not supported.
 | `pub` | **Package** | Visible to all files sharing the same `package` IDENTIFIER. |
 | `export` | **World** | Visible to external consumers of the package. |
 
-`pub` on a top-level declaration (`struct`, `trait`, `type`, `let`, `imt`, `val`, `enum`, `from`) makes it
+`pub` on a top-level declaration (`struct`, `trait`, `type`, `let`, `const`, `enum`, `from`) makes it
 accessible to other files in the same package. Without `pub`, a declaration is
 private to its file.
 
@@ -115,7 +115,7 @@ impl Vec2 {                            -- private helpers, file-only
     validate () bool = { ... }
 }
 
-imt PI float = 3.14159                 -- file-private, not pub
+const PI float = 3.14159                 -- file-private, not pub
 ```
 
 ```luc
@@ -189,8 +189,6 @@ let f (num int) int?            -- returns int? (nullable int)
 
 -- Nullable function: ? wraps the entire function type — note outer parens
 let f ((num int) int)?          -- the function itself is nullable
-
--- val forbids ? anywhere in the entire type tree — enforced at semantic time
 ```
 
 ## Value and Reference Semantics
@@ -254,7 +252,7 @@ explicit from the `&` in the field's type.
 ### Borrowed types — share without copying
 
 A borrowed reference `&T` gives access to a value owned elsewhere without
-copying it. The borrow does not affect the owner's lifetime. Using `imt` on
+copying it. The borrow does not affect the owner's lifetime. Using `const` on
 a borrowed reference produces a read-only view.
 
 ```luc
@@ -264,14 +262,14 @@ let a Player = Player { … }
 let ref &Player = a
 
 -- read-only shared reference — semantic pass rejects any field mutation through ref
-imt ref &Player = a
+const ref &Player = a
 ```
 
 | Declaration | Copies? | Field mutation allowed? | Who owns the data? |
 |---|---|---|---|
 | `let b Player = a` | ✅ deep copy | ✅ on `b`'s own fields | `b` owns its copy |
 | `let ref &Player = a` | ❌ shared | ✅ mutations visible through `a` | `a` owns it |
-| `imt ref &Player = a` | ❌ shared | ❌ read-only view | `a` owns it |
+| `const ref &Player = a` | ❌ shared | ❌ read-only view | `a` owns it |
 
 ### Circular references
 
@@ -333,7 +331,7 @@ above.
 ```
 var_decl        := decl_keyword IDENTIFIER type_ann [ '=' expr ]
 
-decl_keyword    := 'let' | 'imt' | 'val'
+decl_keyword    := 'let' | 'const'
 
 type_ann        := type                    -- bare type, no colon needed, always required
                    -- e.g.  let x int = 5
@@ -342,17 +340,30 @@ type_ann        := type                    -- bare type, no colon needed, always
 
 ### Declaration Semantics
 
-| Keyword | Reassignable | Mutable in place | Nil allowed |
-|---|---|---|---|
-| `let` | ✅ | ✅ | ✅ |
-| `imt` | ❌ | ❌ | ✅ |
-| `val` | ❌ | ❌ | ❌ (entire type tree) |
+| Keyword | Reassignable | Mutable in place | Value known at | Nil allowed |
+|---|---|---|---|---|
+| `let` | ✅ | ✅ | runtime | ✅ |
+| `const` | ❌ | ❌ | **compile time** | ❌ |
 
 `let` is the general-purpose variable — fully flexible, reassignable and mutable in place.
-`imt` (immutable) binds a name permanently to a value; neither the binding nor the
-value can change, but nil is still a valid initial value.
-`val` is the strictest form — nil is forbidden anywhere in its entire type tree,
-enforced at semantic time.
+`const` declares a compile-time constant. The initialiser must be a constant expression —
+a literal, another `const` name, an enum variant, or arithmetic over those. Function calls,
+struct literals, closures, and any runtime-computed value are rejected by the semantic pass.
+
+```luc
+-- valid const initialisers
+const MAX_VERTICES int   = 65536
+const PI           float = 3.14159
+const HALF_PI      float = PI / 2.0          -- arithmetic over consts: OK
+const NEG_PI       float = -PI                -- unary negation of a const: OK
+const STAGE        int   = ShaderStage.Vertex -- enum variant: OK
+const AS_FLOAT     float = float(MAX_VERTICES) -- safe type conversion: OK
+
+-- invalid const initialisers — semantic error
+const x int    = readInput()       -- ERROR: function call is not a compile-time constant
+const v Vec2   = Vec2 { x = 0.0 } -- ERROR: struct literal is not a compile-time constant
+const n int    = someLetVar        -- ERROR: let variable is not a compile-time constant
+```
 
 ## Functions
 
@@ -419,8 +430,8 @@ let f (num int) int = { return num + 1 }
 -- Reassignment — assign a new body to an existing let function variable
 f = { return 42 }
 
--- imt: body is permanently bound, cannot be reassigned
-imt f (num int) int = { return num + 1 }
+-- const: body is permanently bound, cannot be reassigned
+const f (num int) int = { return num + 1 }
 
 -- Explicit anonymous function (identical semantics, more verbose)
 let f (num int) int = (num int) int { return num + 1 }
@@ -475,7 +486,7 @@ Fields of a struct held by a `let` variable can be assigned directly:
 ```
 field_assign    := expr '.' IDENTIFIER '=' expr
                    -- only valid if the containing variable is 'let'
-                   -- imt and val fields are not reassignable
+                   -- const fields are not reassignable
 ```
 
 Examples:
@@ -603,7 +614,7 @@ is a named member with no data payload. Enums are stored as integers internally
 for ≤ 255 variants, `short` for more). The programmer never sees the integer
 representation.
 
-Enums are distinct from `imt` `const` declarations — see the note below.
+Enums are distinct from `const` declarations — see the note below.
 
 ```
 enum_decl       := [ 'pub' ] 'enum' IDENTIFIER '{' enum_variant { [','] enum_variant } '}'
@@ -621,9 +632,9 @@ enum_variant    := IDENTIFIER                      -- auto-assigned integer valu
 - Enum types are compatible with `match` and the `is` operator
 - `pub` makes the enum and all its variants visible to other files in the package
 
-### `imt` `const` vs `enum` — key difference
+### `const` vs `enum` — key difference
 
-| | `imt` `const` | `enum` |
+| | `const` | `enum` |
 |---|---|---|
 | Groups related values | ❌ individual declarations | ✅ all variants under one type |
 | Type safety | weak — `type ID = int` is just an alias | strong — `Direction` is its own type |
@@ -632,9 +643,9 @@ enum_variant    := IDENTIFIER                      -- auto-assigned integer valu
 | Use case | single named constant | closed set of named states or options |
 
 ```luc
--- imt constant — single named value, no grouping, no type enforcement
-imt MAX_VERTICES int = 65536
-imt PI           float = 3.14159
+-- const — single named value, no grouping, no type enforcement
+const MAX_VERTICES int = 65536
+const PI           float = 3.14159
 
 -- enum — closed set of named variants under a single type
 -- the compiler knows the complete set; match can be checked for exhaustiveness
@@ -868,7 +879,7 @@ pub trait Hashable {
 ## Impl Block
 
 Binds named behaviors to a struct type. Methods inside `impl` are **not variable
-declarations** — no `let`/`imt`/`val`. Visibility is controlled at the block
+declarations** — no `let`/`const`. Visibility is controlled at the block
 level — `pub impl` for public methods, bare `impl` for private. An impl block
 may optionally declare trait conformance with `: TraitName`.
 
@@ -1132,7 +1143,7 @@ you can branch before it, return early to skip remaining steps, or gate it on
 runtime state — anything you can do in a block applies:
 
 ```luc
-imt maxCalls int = 5
+const maxCalls int = 5
 let callCount int = 0
 
 let call (args any) = {
@@ -1734,8 +1745,8 @@ let nums [*]int = [1, 2, 3]
 nums[0] = 99          -- valid: nums is let, index is in bounds
 nums[1] += 5          -- compound assignment on array element: valid
 
-imt frozen [3]int = [1, 2, 3]
-frozen[0] = 99        -- ERROR: imt variable is not reassignable
+const frozen [3]int = [1, 2, 3]
+frozen[0] = 99        -- ERROR: const variable is not reassignable
 ```
 
 ### Built-in Methods
@@ -1888,8 +1899,8 @@ obj.name   += " Jr"         -- valid if name is a let-mutable string field
 ### LHS rules
 
 - The left-hand side must resolve to a `let` variable or a field of a struct
-  held by a `let` variable — `imt` and `val` are not reassignable, so compound
-  assignment on them is a semantic error
+  held by a `let` variable — `const` is not reassignable, so compound
+  assignment on it is a semantic error
 - The operator must be defined for the LHS type — `-=` on a `string` is a
   semantic error because `-` is not defined on strings
 
@@ -2441,9 +2452,9 @@ parallel for i in 0..particles.len() {
 
 -- parallel block: run independent tasks simultaneously
 parallel {
-    { imt textures = loadTextures(paths) }
-    { imt shaders  = compileShaders(sources) }
-    { imt meshes   = loadMeshes(files) }
+    { const textures = loadTextures(paths) }
+    { const shaders  = compileShaders(sources) }
+    { const meshes   = loadMeshes(files) }
 }
 -- all three complete before execution continues
 
@@ -2844,7 +2855,7 @@ let add (a int) (b int) int = { return a + b }
 
 ```
 pub extern package module use as impl trait type from
-let imt val struct enum
+let const struct enum
 async await parallel
 bool byte short int long ubyte ushort uint ulong
 int8 int16 int32 int64 uint8 uint16 uint32 uint64

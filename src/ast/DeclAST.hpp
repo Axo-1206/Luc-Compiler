@@ -40,10 +40,10 @@
 //   PackageDeclAST      — package foo
 //   UseDeclAST          — use math.vec2 [as m]
 //   ModuleDeclAST       — module math { use math.vec2 }
-//   VarDeclAST          — let / imt / val  name  type  [= expr]
+//   VarDeclAST          — let / const  name  type  [= expr]
 //   ParamAST            — name type  or  name ...type  (parameter of a function)
 //   GenericParamAST     — T  or  T : Trait  or  T : A + B 
-//   FuncDeclAST         — let/imt/val  name  [<generics>]  (group)+ [returnType]  = body
+//   FuncDeclAST         — let/const  name  [<generics>]  (group)+ [returnType]  = body
 //   StructDeclAST       — [Visibility] struct Name [<generics>] { fields }
 //   FieldDeclAST        — name type [= defaultExpr]
 //   EnumDeclAST         — [Visibility] enum Name { variants }
@@ -78,9 +78,8 @@ enum class Visibility {
 // ─────────────────────────────────────────────────────────────────────────────
 
 enum class DeclKeyword {
-    Let, // reassignable, mutable in place, nil allowed
-    Imt, // not reassignable, not mutable in place, nil allowed
-    Val, // not reassignable, not mutable in place, nil FORBIDDEN in type tree
+    Let,   // reassignable, mutable in place, nil allowed
+    Const, // not reassignable, not mutable in place, nil allowed
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,22 +151,22 @@ struct UseDeclAST : DeclAST {
 // ─────────────────────────────────────────────────────────────────────────────
 // VarDeclAST
 //
-// A variable declaration — let, imt, or val.
-//   let  count int     = 0
-//   imt  PI    float   = 3.14159
-//   val  MAX   int     = 65536
-//   let  name  string? = nil
+// A variable declaration — let or const.
+//   let   count int     = 0
+//   const PI    float   = 3.14159
+//   const MAX   int     = 65536
+//   let   name  string? = nil
 //
 // Type annotation is always required in Luc — type is never null here.
 // init is null when no initialiser was written (valid for let, invalid for
-// val — the semantic pass enforces that val always has an initialiser).
+// const — the semantic pass enforces that const always has an initialiser).
 // visibility tracks the visibility modifier when used at top level.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct VarDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::VarDecl;
 
-    DeclKeyword keyword; // Let / Imt / Val
+    DeclKeyword keyword; // Let / Const
     std::string name;
     TypePtr type;        // always present — annotation is required
     ExprPtr init;        // nullptr if no initialiser was written
@@ -236,9 +235,9 @@ using GenericParamPtr = std::unique_ptr<GenericParamAST>;
 // FuncDeclAST
 //
 // A function declaration — syntactic sugar for a variable holding a function.
-//   let add (a int) (b int) int    = { return a + b }
-//   imt greet (name string)        = { io.printl("hi " + name) }
-//   let fetch (url string) string  = async { return await httpGet(url) }
+//   let   add (a int) (b int) int    = { return a + b }
+//   const greet (name string)        = { io.printl("hi " + name) }
+//   let   fetch (url string) string  = async { return await httpGet(url) }
 //
 // paramGroups — multiple groups = curried function. Each group is a list of
 //   ParamAST. The semantic pass desugars multi-group functions into nested

@@ -49,7 +49,7 @@ void SemanticCollector::declareSymbol(const Symbol& sym) {
 // ─────────────────────────────────────────────────────────────────────────────
 // visit(VarDeclAST)  — Simple top-level global variable/constant registration
 //
-// Inserts the top-level let, imt, or val definition name into the global map.
+// Inserts the top-level let or const definition name into the global map.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(VarDeclAST& node) {
     declareSymbol({

@@ -32,7 +32,7 @@ struct Seconds { val int }
 struct Minutes { val int }
 
 from Minutes {
-    -- Allows conversion: Minutes.sec(seconds) or Minutes(seconds)
+    -- Allows conversion: Minutes(seconds)
     sec (s Seconds) Minutes = {
         return Minutes { val = s.val / 60 }
     }

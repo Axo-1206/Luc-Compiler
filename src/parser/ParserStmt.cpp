@@ -86,7 +86,7 @@ std::unique_ptr<BlockStmtAST> Parser::parseBlock()
 // parseStmt  — root statement dispatcher
 //
 // Dispatch priority (in order):
-//   1. Declaration keywords (let / imt / val) → local declaration
+//   1. Declaration keywords (let / const) → local declaration
 //   2. pub inside a block                     → error + skip
 //   3. Control-flow keywords                  → their specific parsers
 //   4. parallel                               → parallel for / parallel block
@@ -102,7 +102,7 @@ std::unique_ptr<BlockStmtAST> Parser::parseBlock()
 StmtPtr Parser::parseStmt()
 {
     // ── Local declarations ────────────────────────────────────────────────────
-    if (checkAny({ TokenType::LET, TokenType::IMT, TokenType::VAL })) {
+    if (checkAny({ TokenType::LET, TokenType::CONST })) {
         return parseLocalDecl();
     }
 
@@ -110,8 +110,8 @@ StmtPtr Parser::parseStmt()
     if (check(TokenType::PUB)) {
         errorAt(DiagCode::E2006, "'pub' is not valid inside a block — visibility modifiers are only allowed at top level");
         advance();   // consume 'pub' so we don't spin
-        // Try to recover: if the next token is let/imt/val, parse as local decl.
-        if (checkAny({ TokenType::LET, TokenType::IMT, TokenType::VAL })) {
+        // Try to recover: if the next token is let/const, parse as local decl.
+        if (checkAny({ TokenType::LET, TokenType::CONST })) {
             return parseLocalDecl();
         }
         return nullptr;
@@ -158,7 +158,7 @@ StmtPtr Parser::parseStmt()
 // ─────────────────────────────────────────────────────────────────────────────
 // parseLocalDecl
 //
-// Parses a let / imt / val declaration inside a block body.
+// Parses a let / const declaration inside a block body.
 // Produces either VarDeclAST or FuncDeclAST wrapped in DeclStmtAST.
 //
 // Key differences from top-level declarations:
@@ -178,9 +178,8 @@ std::unique_ptr<DeclStmtAST> Parser::parseLocalDecl()
     Token kwTok = advance();
     DeclKeyword kw;
     switch (kwTok.type) {
-        case TokenType::LET: kw = DeclKeyword::Let; break;
-        case TokenType::IMT: kw = DeclKeyword::Imt; break;
-        default:             kw = DeclKeyword::Val; break;
+        case TokenType::LET:   kw = DeclKeyword::Let;   break;
+        default:               kw = DeclKeyword::Const; break;
     }
 
     // Name must follow immediately.
@@ -578,7 +577,7 @@ std::unique_ptr<ReturnStmtAST> Parser::parseReturnStmt()
 
     // Tighter check: a return value starts an expression, not a new declaration.
     // Exclude the declaration keywords so 'return\nlet x = 5' is two statements.
-    if (hasValue && checkAny({ TokenType::LET, TokenType::IMT, TokenType::VAL })) {
+    if (hasValue && checkAny({ TokenType::LET, TokenType::CONST })) {
         hasValue = false;
     }
 

@@ -73,7 +73,14 @@ luc/
 │   │   ├── TypeResolver.hpp/cpp      # type resolution
 │   │   ├── TypeChecker.hpp/cpp       # type compatibility
 │   │   └── Annotator.cpp             # phase 4 (annotations)
-│   └── codegen/            # pending
+│   └── codegen/
+│       ├── CodeGen.hpp
+│       ├── CodeGen.cpp
+│       ├── CodeGenDecl.cpp
+│       ├── CodeGenExpr.cpp
+│       ├── CodeGenStmt.cpp
+│       ├── ValueEnv.hpp
+│       └── luc_runtime.c
 ├── docs/
 │   ├── LUC_PROJECT_OVERVIEW.md      ← identity + architecture (this file)
 │   ├── LUC_SEMANTIC.md              ← detailed semantic documentation
@@ -125,14 +132,13 @@ The semantic pass is the current focus. It must enforce:
 - [ ] Module import resolution (must resolve at semantic time)
 - [ ] Function signature checking
 - [ ] Rejection of class / inheritance constructs (hard language rule)
-- [ ] Nullable type enforcement (`val` forbids nil anywhere in type tree)
+- [ ] Nullable type enforcement (non-nullable types reject nil at semantic time)
 
 ---
 
 ## Variable Declaration Model
 
-| Keyword | Reassignable | Mutable in place | Nil allowed |
-|---|---|---|---|
-| `let` | ✅ | ✅ | ✅ |
-| `imt` | ❌ | ❌ | ✅ |
-| `val` | ❌ | ❌ | ❌ (entire type tree) |
+| Keyword | Reassignable | Mutable in place | Value known at | Nil allowed |
+|---|---|---|---|---|
+| `let` | ✅ | ✅ | runtime | ✅ |
+| `const` | ❌ | ❌ | **compile time** | ❌ |

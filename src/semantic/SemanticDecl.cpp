@@ -7,7 +7,7 @@
  *   types via TypeResolver, and enforces all declaration-level rules.
  *
  * @logic
- *   checkVarDecl   — resolves annotation type, enforces val/nil rules, checks init type
+ *   checkVarDecl   — resolves annotation type, enforces const/nil rules, checks init type
  *   checkFuncDecl  — resolves param + return types, pushes func scope, checks body
  *   checkStructDecl— resolves field types, checks no duplicate field names
  *   checkEnumDecl  — validates variant values are unique, assigns auto-increments
@@ -50,14 +50,80 @@ void checkStmt(StmtAST* node, SymbolTable& symbols, TypeResolver& resolver,
                bool insideExtern);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// isConstExpr  — Returns true when an expression is a compile-time constant
+//
+// Called during Phase 3 (before the Annotator runs in Phase 4), so we cannot
+// rely on node->isConst being set yet. Instead we inspect the expression shape
+// directly. The Annotator will later propagate isConst for codegen use; this
+// function is the semantic-pass gate that rejects illegal const initialisers.
+//
+// Accepted as compile-time constants:
+//   - All literals except nil  (42, 3.14, "hello", true, 0xFF, …)
+//   - Identifiers whose symbol was declared with 'const'
+//   - Enum variant access  (Direction.North — field access on an enum type)
+//   - Arithmetic over const operands  (PI * 2.0, MAX_VERTS - 1)
+//   - Unary negation of a const  (-PI)
+//   - Safe type conversion of a const  (float(42), int(MY_CONST))
+// ─────────────────────────────────────────────────────────────────────────────
+static bool isConstExpr(ExprAST* expr, SymbolTable& symbols) {
+    if (!expr) return false;
+
+    // Literals (except nil) are always compile-time constants.
+    if (expr->isa<LiteralExprAST>()) {
+        return expr->as<LiteralExprAST>()->kind != LiteralKind::Nil;
+    }
+
+    // An identifier is const if its symbol was declared const.
+    if (expr->isa<IdentifierExprAST>()) {
+        Symbol* sym = symbols.lookup(expr->as<IdentifierExprAST>()->name);
+        return sym && sym->declKw == DeclKeyword::Const;
+    }
+
+    // Enum variant access: Direction.North — always compile-time.
+    // The object must be an identifier that resolves to an enum symbol.
+    if (expr->isa<FieldAccessExprAST>()) {
+        auto* fa = expr->as<FieldAccessExprAST>();
+        if (fa->object && fa->object->isa<IdentifierExprAST>()) {
+            Symbol* sym = symbols.lookup(fa->object->as<IdentifierExprAST>()->name);
+            return sym && sym->kind == SymbolKind::Enum;
+        }
+        return false;
+    }
+
+    // Arithmetic over const operands is const.
+    if (expr->isa<BinaryExprAST>()) {
+        auto* bin = expr->as<BinaryExprAST>();
+        return isConstExpr(bin->left.get(), symbols) &&
+               isConstExpr(bin->right.get(), symbols);
+    }
+
+    // Unary negation / bitwise-not of a const is const.
+    if (expr->isa<UnaryExprAST>()) {
+        return isConstExpr(expr->as<UnaryExprAST>()->operand.get(), symbols);
+    }
+
+    // Safe type conversion of a const is const: float(42), int(MY_CONST).
+    // Unsafe (*T) reinterprets are never const — raw memory is not known at
+    // compile time.
+    if (expr->isa<TypeConvExprAST>()) {
+        auto* tc = expr->as<TypeConvExprAST>();
+        return !tc->isUnsafe && isConstExpr(tc->expr.get(), symbols);
+    }
+
+    // Anything else (calls, struct literals, closures, pipelines, …) is not
+    // a compile-time constant.
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // checkVarDecl
 //
 // Rules enforced:
 //   - Type annotation must resolve.
-//   - val: nil is forbidden anywhere in the type tree (hasNilInTree).
-//   - val/imt without an initialiser is an error.
+//   - const requires an initialiser that is a compile-time constant expression.
 //   - If an initialiser is present, its type must be assignable to the annotation.
 //   - nil literal is only assignable to nullable types.
+//   - const does not allow nil (nil is never a compile-time constant).
 // ─────────────────────────────────────────────────────────────────────────────
 void checkVarDecl(VarDeclAST& node, SymbolTable& symbols, TypeResolver& resolver,
                   DiagnosticEngine& dc, int& asyncDepth, int& loopDepth,
@@ -67,27 +133,21 @@ void checkVarDecl(VarDeclAST& node, SymbolTable& symbols, TypeResolver& resolver
     TypeAST* declaredType = resolver.resolveType(node.type.get());
     if (!declaredType) return; // resolver already emitted a diagnostic
 
-    // 2. val forbids nil anywhere in the type tree.
-    if (node.keyword == DeclKeyword::Val && TypeChecker::hasNilInTree(declaredType)) {
-        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                 "val '" + node.name + "': nil is not allowed in a val type tree");
-    }
-
-    // 3. val and imt require an initialiser.
+    // 2. const requires an initialiser.
     if (!node.init) {
-        if (node.keyword == DeclKeyword::Val) {
+        if (node.keyword == DeclKeyword::Const) {
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                     "val '" + node.name + "' must have an initialiser");
+                     "const '" + node.name + "' must have an initialiser");
         }
         return;
     }
 
-    // 4. Check the initialiser type and verify assignability.
+    // 3. Check the initialiser type and verify assignability.
     TypeAST* initType = checkExpr(node.init.get(), symbols, resolver, dc,
                                   asyncDepth, loopDepth, parallelDepth, insideExtern);
     if (!initType) return;
 
-    // nil literal is assignable only to nullable types.
+    // 4. nil literal is assignable only to nullable types.
     if (node.init->isa<LiteralExprAST>()) {
         auto* lit = node.init->as<LiteralExprAST>();
         if (lit->kind == LiteralKind::Nil && !TypeChecker::isNullable(declaredType)) {
@@ -95,6 +155,12 @@ void checkVarDecl(VarDeclAST& node, SymbolTable& symbols, TypeResolver& resolver
                      "nil cannot be assigned to non-nullable type '" + node.name + "'");
             return;
         }
+    }
+
+    // 5. const initialiser must be a compile-time constant expression.
+    if (node.keyword == DeclKeyword::Const && !isConstExpr(node.init.get(), symbols)) {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                 "const '" + node.name + "' initialiser must be a compile-time constant expression");
     }
 
     if (!TypeChecker::isAssignable(initType, declaredType)) {

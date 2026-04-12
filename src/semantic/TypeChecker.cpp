@@ -92,28 +92,6 @@ bool TypeChecker::isNullable(TypeAST* type) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// hasNilInTree  — Drills down completely deep to check if `nil` is permissible inside
-//
-// Crucial for val validation. Searches complex deep types like Arrays or Unions to
-// verify if there is any mapping internally whatsoever evaluating as securely nullable.
-// ─────────────────────────────────────────────────────────────────────────────
-bool TypeChecker::hasNilInTree(TypeAST* type) {
-    if (!type) return false;
-    if (isNullable(type)) return true;
-
-    if (type->isa<FixedArrayTypeAST>()) {
-        return hasNilInTree(type->as<FixedArrayTypeAST>()->element.get());
-    }
-    if (type->isa<UnionTypeAST>()) {
-        for (auto& m : type->as<UnionTypeAST>()->members) {
-            if (hasNilInTree(m.get())) return true;
-        }
-    }
-
-    return false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // unify  — Merges two Types discovering boundaries defining them safely together
 //
 // Commonly required securely balancing dual-branch architectures mapping out

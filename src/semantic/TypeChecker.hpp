@@ -22,7 +22,6 @@ public:
     static bool isCallable(TypeAST* type);
     static bool isBooleanCompatible(TypeAST* type);
     static bool isNullable(TypeAST* type);
-    static bool hasNilInTree(TypeAST* type);
     static TypeAST* unify(TypeAST* a, TypeAST* b);
     static bool primitiveWidening(PrimitiveKind from, PrimitiveKind to);
     static bool isFromConvertible(TypeAST* src, TypeAST* target);

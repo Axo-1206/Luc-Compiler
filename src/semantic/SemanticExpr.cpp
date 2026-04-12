@@ -453,7 +453,7 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3004,
                              "cannot reassign body of '" + ident->name +
                              "': declared with " +
-                             (sym->declKw == DeclKeyword::Imt ? "imt" : "val"));
+                             "const");
                 }
 
                 if (parallelDepth > 0) {
@@ -657,7 +657,7 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                              DiagCode::E3004,
                              "cannot reassign '" + ident->name +
                              "': declared with " +
-                             (sym->declKw == DeclKeyword::Imt ? "imt" : "val"));
+                             "const");
                 }
 
                 if (parallelDepth > 0) {
@@ -732,7 +732,7 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
         if (sym && sym->declKw != DeclKeyword::Let) {
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3004,
                      "cannot assign to '" + ident->name + "': declared with " +
-                     (sym->declKw == DeclKeyword::Imt ? "imt" : "val"));
+                     "const");
         }
     }
 

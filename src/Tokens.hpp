@@ -29,9 +29,8 @@ enum class TokenType {
     FROM,    // from      - type conversion entry point: from (c Celsius) Fahrenheit = { ... }
 
     // ─── Declarations ─────────────────────────────────────────────────────────
-    LET, // let       - reassignable, mutable in place, nil allowed
-    IMT, // imt       - immutable: not reassignable, not mutable in place, nil allowed
-    VAL, // val       - fully immutable, nil forbidden in entire type tree
+    LET,     // let       - reassignable, mutable in place, nil allowed
+    CONST,   // const     - not reassignable, not mutable in place, nil allowed
 
     // ─── Concurrency ──────────────────────────────────────────────────────────
     ASYNC,    // async     - async function modifier

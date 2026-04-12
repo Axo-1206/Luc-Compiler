@@ -7,92 +7,90 @@
 
 Lexer::Lexer(const std::string &source)
     : src(source), pos(0), line(1), column(1) {
-
 	// ── Modifiers ──────────────────────────────────────────────────────────────
-	keywords["pub"]     = TokenType::PUB;
-	keywords["extern"]  = TokenType::EXTERN;
-	keywords["export"]  = TokenType::EXPORT;
+	keywords["pub"] = TokenType::PUB;
+	keywords["extern"] = TokenType::EXTERN;
+	keywords["export"] = TokenType::EXPORT;
 
 	// ── Top Level ──────────────────────────────────────────────────────────────
 	keywords["package"] = TokenType::PACKAGE;
-	keywords["use"]     = TokenType::USE;
-	keywords["as"]      = TokenType::AS;
-	keywords["impl"]    = TokenType::IMPL;
-	keywords["type"]    = TokenType::TYPE;
-	keywords["struct"]  = TokenType::STRUCT;
-	keywords["enum"]    = TokenType::ENUM;
-	keywords["trait"]   = TokenType::TRAIT;
-	keywords["from"]    = TokenType::FROM;
+	keywords["use"] = TokenType::USE;
+	keywords["as"] = TokenType::AS;
+	keywords["impl"] = TokenType::IMPL;
+	keywords["type"] = TokenType::TYPE;
+	keywords["struct"] = TokenType::STRUCT;
+	keywords["enum"] = TokenType::ENUM;
+	keywords["trait"] = TokenType::TRAIT;
+	keywords["from"] = TokenType::FROM;
 
 	// ── Declarations ───────────────────────────────────────────────────────────
-	keywords["let"]     = TokenType::LET;
-	keywords["imt"]     = TokenType::IMT;
-	keywords["val"]     = TokenType::VAL;
+	keywords["let"] = TokenType::LET;
+	keywords["const"] = TokenType::CONST;
 
 	// ── Concurrency ────────────────────────────────────────────────────────────
-	keywords["async"]   = TokenType::ASYNC;
-	keywords["await"]   = TokenType::AWAIT;
+	keywords["async"] = TokenType::ASYNC;
+	keywords["await"] = TokenType::AWAIT;
 	keywords["parallel"] = TokenType::PARALLEL;
 
 	// ── Primary Types ──────────────────────────────────────────────────────────
 	keywords["bool"] = TokenType::TYPE_BOOL;
 
 	// Signed integers
-	keywords["byte"]    = TokenType::TYPE_BYTE;
-	keywords["short"]   = TokenType::TYPE_SHORT;
-	keywords["int"]     = TokenType::TYPE_INT;
-	keywords["long"]    = TokenType::TYPE_LONG;
+	keywords["byte"] = TokenType::TYPE_BYTE;
+	keywords["short"] = TokenType::TYPE_SHORT;
+	keywords["int"] = TokenType::TYPE_INT;
+	keywords["long"] = TokenType::TYPE_LONG;
 
 	// Unsigned integers
-	keywords["ubyte"]   = TokenType::TYPE_UBYTE;
-	keywords["ushort"]  = TokenType::TYPE_USHORT;
-	keywords["uint"]    = TokenType::TYPE_UINT;
-	keywords["ulong"]   = TokenType::TYPE_ULONG;
+	keywords["ubyte"] = TokenType::TYPE_UBYTE;
+	keywords["ushort"] = TokenType::TYPE_USHORT;
+	keywords["uint"] = TokenType::TYPE_UINT;
+	keywords["ulong"] = TokenType::TYPE_ULONG;
 
 	// Fixed-width (critical for Vulkan struct layouts)
-	keywords["int8"]    = TokenType::TYPE_INT8;
-	keywords["int16"]   = TokenType::TYPE_INT16;
-	keywords["int32"]   = TokenType::TYPE_INT32;
-	keywords["int64"]   = TokenType::TYPE_INT64;
-	keywords["uint8"]   = TokenType::TYPE_UINT8;
-	keywords["uint16"]  = TokenType::TYPE_UINT16;
-	keywords["uint32"]  = TokenType::TYPE_UINT32;
-	keywords["uint64"]  = TokenType::TYPE_UINT64;
+	keywords["int8"] = TokenType::TYPE_INT8;
+	keywords["int16"] = TokenType::TYPE_INT16;
+	keywords["int32"] = TokenType::TYPE_INT32;
+	keywords["int64"] = TokenType::TYPE_INT64;
+	keywords["uint8"] = TokenType::TYPE_UINT8;
+	keywords["uint16"] = TokenType::TYPE_UINT16;
+	keywords["uint32"] = TokenType::TYPE_UINT32;
+	keywords["uint64"] = TokenType::TYPE_UINT64;
 
 	// Floating point
-	keywords["float"]   = TokenType::TYPE_FLOAT;
-	keywords["double"]  = TokenType::TYPE_DOUBLE;
+	keywords["float"] = TokenType::TYPE_FLOAT;
+	keywords["double"] = TokenType::TYPE_DOUBLE;
 	keywords["decimal"] = TokenType::TYPE_DECIMAL;
 
 	// Text
 	keywords["string"] = TokenType::TYPE_STRING;
-	keywords["char"]   = TokenType::TYPE_CHAR;
+	keywords["char"] = TokenType::TYPE_CHAR;
 
 	// Special
 	keywords["any"] = TokenType::TYPE_ANY;
 	keywords["nil"] = TokenType::NIL;
 
 	// ── Control Flow ───────────────────────────────────────────────────────────
-	keywords["if"]       = TokenType::IF;
-	keywords["else"]     = TokenType::ELSE;
-	keywords["match"]    = TokenType::MATCH;
-	keywords["switch"]   = TokenType::SWITCH;
-	keywords["case"]     = TokenType::CASE;
-	keywords["default"]  = TokenType::DEFAULT;
-	keywords["is"]       = TokenType::IS;
-	keywords["while"]    = TokenType::WHILE;
-	keywords["for"]      = TokenType::FOR;
-	keywords["in"]       = TokenType::IN;
-	keywords["do"]       = TokenType::DO;
-	keywords["return"]   = TokenType::RETURN;
-	keywords["break"]    = TokenType::BREAK;
+	keywords["if"] = TokenType::IF;
+	keywords["else"] = TokenType::ELSE;
+	keywords["match"] = TokenType::MATCH;
+	keywords["switch"] = TokenType::SWITCH;
+	keywords["case"] = TokenType::CASE;
+	keywords["default"] = TokenType::DEFAULT;
+	keywords["is"] = TokenType::IS;
+	keywords["while"] = TokenType::WHILE;
+	keywords["for"] = TokenType::FOR;
+	keywords["in"] = TokenType::IN;
+	keywords["do"] = TokenType::DO;
+	keywords["return"] = TokenType::RETURN;
+	keywords["break"] = TokenType::BREAK;
 	keywords["continue"] = TokenType::CONTINUE;
 
 	// ── Logical ────────────────────────────────────────────────────────────────
-	keywords["and"]   = TokenType::AND;
-	keywords["or"]    = TokenType::OR;
-	keywords["not"]   = TokenType::NOT;
-	keywords["true"]  = TokenType::TRUE;
+	keywords["and"] = TokenType::AND;
+	keywords["or"] = TokenType::OR;
+	keywords["not"] = TokenType::NOT;
+	keywords["true"] = TokenType::TRUE;
 	keywords["false"] = TokenType::FALSE;
 }
 
@@ -181,158 +179,158 @@ void Lexer::skipWhitespace() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 Token Lexer::readNumber(char first) {
-    std::string num(1, first);
+  std::string num(1, first);
 
-    // Hex: 0xFF
-    if (first == '0' && (peek() == 'x' || peek() == 'X')) {
-        num += advance(); // consume 'x'
-        while (isxdigit(peek()) || peek() == '_')
-            num += advance();
-        return makeToken(TokenType::HEX_LITERAL, num);
-    }
+  // Hex: 0xFF
+  if (first == '0' && (peek() == 'x' || peek() == 'X')) {
+    num += advance(); // consume 'x'
+    while (isxdigit(peek()) || peek() == '_')
+      num += advance();
+    return makeToken(TokenType::HEX_LITERAL, num);
+  }
 
-    // Binary: 0b1010
-    if (first == '0' && (peek() == 'b' || peek() == 'B')) {
-        num += advance(); // consume 'b'
-        while (peek() == '0' || peek() == '1' || peek() == '_')
-            num += advance();
-        return makeToken(TokenType::BINARY_LITERAL, num);
-    }
+  // Binary: 0b1010
+  if (first == '0' && (peek() == 'b' || peek() == 'B')) {
+    num += advance(); // consume 'b'
+    while (peek() == '0' || peek() == '1' || peek() == '_')
+      num += advance();
+    return makeToken(TokenType::BINARY_LITERAL, num);
+  }
 
-    // Integer or float
-    bool isFloat = false;
+  // Integer or float
+  bool isFloat = false;
+  while (isdigit(peek()) || peek() == '_')
+    num += advance();
+
+  if (peek() == '.' && peekNext() != '.') // avoid consuming '..' range
+  {
+    isFloat = true;
+    num += advance(); // consume '.'
     while (isdigit(peek()) || peek() == '_')
-        num += advance();
+      num += advance();
+  }
 
-    if (peek() == '.' && peekNext() != '.') // avoid consuming '..' range
-    {
-        isFloat = true;
-        num += advance(); // consume '.'
-        while (isdigit(peek()) || peek() == '_')
-            num += advance();
-    }
+  // Exponent: 1e10, 1.5e-3
+  if (peek() == 'e' || peek() == 'E') {
+    isFloat = true;
+    num += advance();
+    if (peek() == '+' || peek() == '-')
+      num += advance();
+    while (isdigit(peek()))
+      num += advance();
+  }
 
-    // Exponent: 1e10, 1.5e-3
-    if (peek() == 'e' || peek() == 'E') {
-        isFloat = true;
-        num += advance();
-        if (peek() == '+' || peek() == '-')
-            num += advance();
-        while (isdigit(peek()))
-            num += advance();
-    }
-
-    return makeToken(isFloat ? TokenType::FLOAT_LITERAL : TokenType::INT_LITERAL,
-                    num);
+  return makeToken(isFloat ? TokenType::FLOAT_LITERAL : TokenType::INT_LITERAL,
+                   num);
 }
 
 Token Lexer::readString() {
-    std::string str;
-    while (!isAtEnd() && peek() != '"') {
-        if (peek() == '\n') {
-            line++;
-            column = 1;
-        }
-        if (peek() == '\\') {
-            advance(); // consume '\'
-            char esc = advance();
-            switch (esc) {
-                case 'n':
-                    str += '\n';
-                    break;
-                case 't':
-                    str += '\t';
-                    break;
-                case 'r':
-                    str += '\r';
-                    break;
-                case '"':
-                    str += '"';
-                    break;
-                case '\\':
-                    str += '\\';
-                    break;
-                case '\'':
-                    str += '\'';
-                    break;
-                case '0':
-                    str += '\0';
-                    break;
-                case 'x': {
-                    // \xHH — two hex digits
-                    std::string hex;
-                    for (int i = 0; i < 2 && isxdigit(peek()); i++)
-                        hex += advance();
-                    str += (char)std::stoi(hex, nullptr, 16);
-                    break;
-                }
-                case 'u': {
-                    // \uXXXX — four hex digits (Unicode BMP codepoint, UTF-8 encoded)
-                    std::string hex;
-                    for (int i = 0; i < 4 && isxdigit(peek()); i++)
-                        hex += advance();
-                    unsigned long cp = std::stoul(hex, nullptr, 16);
-                    // encode as UTF-8
-                    if (cp < 0x80) {
-                        str += (char)cp;
-                    } else if (cp < 0x800) {
-                        str += (char)(0xC0 | (cp >> 6));
-                        str += (char)(0x80 | (cp & 0x3F));
-                    } else {
-                        str += (char)(0xE0 | (cp >> 12));
-                        str += (char)(0x80 | ((cp >> 6) & 0x3F));
-                        str += (char)(0x80 | (cp & 0x3F));
-                    }
-                    break;
-                }
-                case 'U': {
-                    // \UXXXXXXXX — eight hex digits (full Unicode codepoint, UTF-8 encoded)
-                    std::string hex;
-                    for (int i = 0; i < 8 && isxdigit(peek()); i++)
-                        hex += advance();
-                    unsigned long cp = std::stoul(hex, nullptr, 16);
-                    // encode as UTF-8
-                    if (cp < 0x80) {
-                        str += (char)cp;
-                    } else if (cp < 0x800) {
-                        str += (char)(0xC0 | (cp >> 6));
-                        str += (char)(0x80 | (cp & 0x3F));
-                    } else if (cp < 0x10000) {
-                        str += (char)(0xE0 | (cp >> 12));
-                        str += (char)(0x80 | ((cp >> 6) & 0x3F));
-                        str += (char)(0x80 | (cp & 0x3F));
-                    } else {
-                        str += (char)(0xF0 | (cp >> 18));
-                        str += (char)(0x80 | ((cp >> 12) & 0x3F));
-                        str += (char)(0x80 | ((cp >> 6) & 0x3F));
-                        str += (char)(0x80 | (cp & 0x3F));
-                    }
-                    break;
-                }
-                default:
-                    str += '\\';
-                    str += esc;
-                    break;
-            }
-        } else {
-            str += advance();
-        }
+  std::string str;
+  while (!isAtEnd() && peek() != '"') {
+    if (peek() == '\n') {
+      line++;
+      column = 1;
     }
-    if (!isAtEnd())
-        advance(); // consume closing '"'
-    return makeToken(TokenType::STRING_LITERAL, str);
+    if (peek() == '\\') {
+      advance(); // consume '\'
+      char esc = advance();
+      switch (esc) {
+      case 'n':
+        str += '\n';
+        break;
+      case 't':
+        str += '\t';
+        break;
+      case 'r':
+        str += '\r';
+        break;
+      case '"':
+        str += '"';
+        break;
+      case '\\':
+        str += '\\';
+        break;
+      case '\'':
+        str += '\'';
+        break;
+      case '0':
+        str += '\0';
+        break;
+      case 'x': {
+        // \xHH — two hex digits
+        std::string hex;
+        for (int i = 0; i < 2 && isxdigit(peek()); i++)
+          hex += advance();
+        str += (char)std::stoi(hex, nullptr, 16);
+        break;
+      }
+      case 'u': {
+        // \uXXXX — four hex digits (Unicode BMP codepoint, UTF-8 encoded)
+        std::string hex;
+        for (int i = 0; i < 4 && isxdigit(peek()); i++)
+          hex += advance();
+        unsigned long cp = std::stoul(hex, nullptr, 16);
+        // encode as UTF-8
+        if (cp < 0x80) {
+          str += (char)cp;
+        } else if (cp < 0x800) {
+          str += (char)(0xC0 | (cp >> 6));
+          str += (char)(0x80 | (cp & 0x3F));
+        } else {
+          str += (char)(0xE0 | (cp >> 12));
+          str += (char)(0x80 | ((cp >> 6) & 0x3F));
+          str += (char)(0x80 | (cp & 0x3F));
+        }
+        break;
+      }
+      case 'U': {
+        // \UXXXXXXXX — eight hex digits (full Unicode codepoint, UTF-8 encoded)
+        std::string hex;
+        for (int i = 0; i < 8 && isxdigit(peek()); i++)
+          hex += advance();
+        unsigned long cp = std::stoul(hex, nullptr, 16);
+        // encode as UTF-8
+        if (cp < 0x80) {
+          str += (char)cp;
+        } else if (cp < 0x800) {
+          str += (char)(0xC0 | (cp >> 6));
+          str += (char)(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+          str += (char)(0xE0 | (cp >> 12));
+          str += (char)(0x80 | ((cp >> 6) & 0x3F));
+          str += (char)(0x80 | (cp & 0x3F));
+        } else {
+          str += (char)(0xF0 | (cp >> 18));
+          str += (char)(0x80 | ((cp >> 12) & 0x3F));
+          str += (char)(0x80 | ((cp >> 6) & 0x3F));
+          str += (char)(0x80 | (cp & 0x3F));
+        }
+        break;
+      }
+      default:
+        str += '\\';
+        str += esc;
+        break;
+      }
+    } else {
+      str += advance();
+    }
+  }
+  if (!isAtEnd())
+    advance(); // consume closing '"'
+  return makeToken(TokenType::STRING_LITERAL, str);
 }
 
 Token Lexer::readChar() {
 	std::string ch;
 	if (!isAtEnd() && peek() != '\'') {
 		if (peek() == '\\') {
-            advance();
-            ch += '\\';
-		    if (!isAtEnd())
-			    ch += advance();
+		advance();
+		ch += '\\';
+		if (!isAtEnd())
+			ch += advance();
 		} else {
-		    ch += advance();
+		ch += advance();
 		}
 	}
 	if (!isAtEnd() && peek() == '\'')
@@ -384,14 +382,14 @@ Token Lexer::readDocComment() {
 		// Closing sequence is --/
 		if (peek() == '-' && pos + 1 < src.size() && src[pos + 1] == '-' &&
 			pos + 2 < src.size() && src[pos + 2] == '/') {
-		    advance();
-		    advance();
-		    advance(); // consume --/
-		    break;
+		advance();
+		advance();
+		advance(); // consume --/
+		break;
 		}
 		if (peek() == '\n') {
-            line++;
-            column = 1;
+		line++;
+		column = 1;
 		}
 		doc += advance();
 	}
@@ -568,7 +566,7 @@ Token Lexer::getNextToken() {
 		    return makeToken(TokenType::BIT_XOR, "~^");
 		return makeToken(TokenType::BIT_NOT, "~");
 
-	// ── Reserved ─────────────────────────────────────────────────────────────
+	// ── FFI ────────────────────────────────────────────────────────────────────
 	case '@':
 		return makeToken(TokenType::AT, "@"); // reserved for future feature
 

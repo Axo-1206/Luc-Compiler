@@ -140,7 +140,7 @@ class Parser {
     // resume parsing at a known-good point and surface further errors.
     //
     // Synchronisation stops at: IF ELSE FOR WHILE DO RETURN BREAK CONTINUE
-    //                            LET IMT VAL STRUCT ENUM TRAIT IMPL TYPE
+    //                            LET CONST STRUCT ENUM TRAIT IMPL TYPE
     //                            PACKAGE USE EXTERN RBRACE EOF_TOKEN
     void synchronize();
 
@@ -238,10 +238,10 @@ class Parser {
     // [vis] use module_path [ as IDENTIFIER ]
     std::unique_ptr<UseDeclAST> parseUseDecl(Visibility vis);
 
-    // [vis] let / imt / val IDENTIFIER type [ '=' expr ]
+    // [vis] let / const IDENTIFIER type [ '=' expr ]
     std::unique_ptr<VarDeclAST> parseVarDecl(Visibility vis);
 
-    // [vis] let / imt / val IDENTIFIER [<generics>] param_group+ [return_type]
+    // [vis] let / const IDENTIFIER [<generics>] param_group+ [return_type]
     // '=' body Distinguishes a function from a variable by lookahead after the
     // name:
     //   function → next meaningful token after name (and optional generics) is '('
@@ -499,7 +499,7 @@ class Parser {
     // parallel '{' { block } '}'
     std::unique_ptr<ParallelBlockStmtAST> parseParallelBlockStmt();
 
-    // Local declaration inside a block: let / imt / val → VarDeclAST or
+    // Local declaration inside a block: let / const → VarDeclAST or
     // FuncDeclAST. Wrapped in DeclStmtAST. pub is forbidden inside a block —
     // recorded as an error if encountered and then ignored so parsing continues.
     std::unique_ptr<DeclStmtAST> parseLocalDecl();

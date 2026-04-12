@@ -16,8 +16,8 @@
  *
  *   isConst  — true when a node is a compile-time constant. Set on:
  *     • every LiteralExprAST except nil  (42, 3.14, "hi", true, false, …)
- *     • every VarDeclAST / FuncDeclAST declared with the 'val' keyword
- *     • every IdentifierExprAST whose symbol was declared with 'val'
+ *     • every VarDeclAST / FuncDeclAST declared with the 'const' keyword
+ *     • every IdentifierExprAST whose symbol was declared with 'const'
  *     • enum declarations and their variants (integer-backed, fixed at compile time)
  *     • BinaryExprAST / UnaryExprAST / RangeExprAST / FieldAccessExprAST whose
  *       sub-expressions are all const  (constant-folding marker, not folded here)
@@ -87,11 +87,10 @@ private:
         // Walk the initialiser first (post-order).
         if (node.init) walk(node.init.get());
 
-        // 'val' variables are compile-time constants.
-        //   val MAX int  = 65536   → MAX.isConst = true
-        //   imt PI float = 3.14    → PI.isConst = false  (immut, not compile-time)
-        //   let x  int   = 0       → x.isConst  = false
-        node.isConst = (node.keyword == DeclKeyword::Val);
+        // 'const' variables are compile-time constants.
+        //   const MAX int   = 65536   → MAX.isConst = true
+        //   let   x   int   = 0       → x.isConst   = false
+        node.isConst = (node.keyword == DeclKeyword::Const);
     }
 
     void visit(ParamAST& node) override {
@@ -110,8 +109,8 @@ private:
                 walk(param.get());
         walk(node.body.get());
 
-        // 'val' functions are compile-time-bound (not reassignable at call sites).
-        node.isConst = (node.keyword == DeclKeyword::Val);
+        // 'const' functions are permanently bound (not reassignable at call sites).
+        node.isConst = (node.keyword == DeclKeyword::Const);
     }
 
     void visit(StructDeclAST& node) override {
@@ -198,7 +197,7 @@ private:
         // isBehaviorMember was already set by checkExpr in Phase 3.
         Symbol* sym = symbols_.lookup(node.name);
         if (sym) {
-            node.isConst = (sym->declKw == DeclKeyword::Val);
+            node.isConst = (sym->declKw == DeclKeyword::Const);
         }
     }
 

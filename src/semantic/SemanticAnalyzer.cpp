@@ -72,7 +72,7 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
 
     // Phase 3.5: Entry point detection
     // Validate that a 'main' function exists and has a valid signature.
-    // Required format: export imt main () int = { ... }
+    // Required format: export const main () int = { ... }
     Symbol* mainSym = symbols_->lookup("main");
     if (!mainSym) {
         // Points to the start of the first file for a missing entry point error.
@@ -85,16 +85,16 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
     } else {
         auto* func = static_cast<FuncDeclAST*>(mainSym->decl);
         
-        // 1. MUST be exported: export main ...
+        // 1. MUST be exported: export const main ...
         if (func->visibility != Visibility::Export) {
             dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
-                      "'main' function must be exported (use 'export imt main')");
+                      "'main' function must be exported (use 'export const main')");
         }
         
-        // 2. MUST be imt: imt main ...
-        if (func->keyword != DeclKeyword::Imt) {
+        // 2. MUST be const: const main ...
+        if (func->keyword != DeclKeyword::Const) {
             dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
-                      "'main' function must use 'imt' keyword");
+                      "'main' function must use 'const' keyword");
         }
         
         // 3. MUST have zero parameters: ()
@@ -215,7 +215,7 @@ void SemanticAnalyzer::checkDecls(std::vector<ProgramAST*>& files) {
 // annotate  — Phase 4
 // Invokes the Annotator visitor (Annotator.cpp) over every file in the package.
 // The Annotator stamps:
-//   isConst          — true for val-declared nodes and all literal expressions
+//   isConst          — true for const-declared nodes and all literal expressions
 //   isBehaviorMember — reinforced on BehaviorAccessExprAST nodes
 // resolvedType and scopeDepth are left as-is; they were written inline during
 // Phase 3 by checkExpr and checkBlock respectively.
