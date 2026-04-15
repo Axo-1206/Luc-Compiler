@@ -34,6 +34,19 @@
 #include "ast/DeclAST.hpp"
 #include "ast/ExprAST.hpp"
 #include "ast/TypeAST.hpp"
+#include <fstream>
+#include <chrono>
+
+static void agentDebugLogStmt(const char* hypothesisId, const char* location,
+                              const std::string& message, const std::string& data) {
+    std::ofstream out("debug-00e876.log", std::ios::app);
+    if (!out) return;
+    const auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+    out << "{\"sessionId\":\"00e876\",\"runId\":\"pre-fix\",\"hypothesisId\":\""
+        << hypothesisId << "\",\"location\":\"" << location << "\",\"message\":\""
+        << message << "\",\"data\":" << data << ",\"timestamp\":" << ts << "}\n";
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Forward declarations 
@@ -85,6 +98,44 @@ static PrimitiveTypeAST* stmtPrimType(PrimitiveKind k) {
     return &singletons[static_cast<int>(k)];
 }
 
+// Build a function signature for local function declarations in statement scope.
+// This mirrors SemanticCollector's curry-chain shape so local calls type-check
+// the same way as top-level functions.
+static TypePtr buildLocalFuncSignature(FuncDeclAST& node) {
+    TypePtr sig = nullptr;
+    for (int i = static_cast<int>(node.paramGroups.size()) - 1; i >= 0; --i) {
+        auto ft = std::make_unique<FuncTypeAST>();
+        ft->loc = node.loc;
+        for (auto& p : node.paramGroups[i]) {
+            if (p->type->kind == ASTKind::PrimitiveType) {
+                ft->params.push_back(std::make_unique<PrimitiveTypeAST>(
+                    static_cast<PrimitiveTypeAST*>(p->type.get())->primitiveKind));
+            } else if (p->type->kind == ASTKind::NamedType) {
+                const auto* named = static_cast<NamedTypeAST*>(p->type.get());
+                ft->params.push_back(std::make_unique<NamedTypeAST>(named->name));
+            } else {
+                ft->params.push_back(std::make_unique<PrimitiveTypeAST>(PrimitiveKind::Any));
+            }
+        }
+
+        if (sig) {
+            ft->returnType = std::move(sig);
+        } else if (node.returnType) {
+            if (node.returnType->kind == ASTKind::PrimitiveType) {
+                ft->returnType = std::make_unique<PrimitiveTypeAST>(
+                    static_cast<PrimitiveTypeAST*>(node.returnType.get())->primitiveKind);
+            } else if (node.returnType->kind == ASTKind::NamedType) {
+                ft->returnType = std::make_unique<NamedTypeAST>(
+                    static_cast<NamedTypeAST*>(node.returnType.get())->name);
+            } else {
+                ft->returnType = std::make_unique<PrimitiveTypeAST>(PrimitiveKind::Any);
+            }
+        }
+        sig = std::move(ft);
+    }
+    return sig;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // checkStmt — main dispatcher (defined after all helpers)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,6 +157,15 @@ static void checkBlock(BlockStmtAST& node, SymbolTable& symbols, TypeResolver& r
     node.scopeDepth = symbols.currentDepth();
 
     for (auto& stmt : node.stmts) {
+        // #region agent log
+        agentDebugLogStmt(
+            "H12",
+            "src/semantic/SemanticStmt.cpp:172",
+            "checkBlock statement dispatch",
+            std::string("{\"stmtKind\":") +
+                (stmt ? std::to_string(static_cast<int>(stmt->kind)) : "-1") +
+                ",\"line\":" + (stmt ? std::to_string(stmt->loc.line) : "-1") + "}");
+        // #endregion
         checkStmt(stmt.get(), symbols, resolver, dc, expectedReturn,
                   asyncDepth, loopDepth, parallelDepth, insideExtern);
     }
@@ -159,15 +219,32 @@ static void checkDeclStmt(DeclStmtAST& node, SymbolTable& symbols, TypeResolver&
         checkFuncDecl(*fd, symbols, resolver, dc,
                       asyncDepth, loopDepth, parallelDepth, insideExtern);
 
+        // Ensure local function symbols carry a callable FuncType signature.
+        if (!fd->signature) {
+            fd->signature = buildLocalFuncSignature(*fd);
+        }
+
         Symbol sym;
         sym.name       = fd->name;
         sym.kind       = SymbolKind::Func;
         sym.declKw     = fd->keyword;
         sym.visibility = Visibility::Private;
-        sym.type       = fd->returnType ? resolver.resolveType(fd->returnType.get()) : nullptr;
+        sym.type       = fd->signature.get();
         sym.decl       = fd;
         sym.isAsync    = fd->isAsync;
         sym.loc        = fd->loc;
+        // #region agent log
+        agentDebugLogStmt(
+            "H9",
+            "src/semantic/SemanticStmt.cpp:183",
+            "local function symbol declared in statement scope",
+            std::string("{\"name\":\"") + fd->name + "\",\"line\":" +
+                std::to_string(fd->loc.line) +
+                ",\"symTypeKind\":" +
+                (sym.type ? std::to_string(static_cast<int>(sym.type->kind)) : "-1") +
+                ",\"signatureKind\":" +
+                (fd->signature ? std::to_string(static_cast<int>(fd->signature->kind)) : "-1") + "}");
+        // #endregion
         if (!symbols.declare(sym)) {
             dc.error(DiagnosticCategory::Semantic, fd->loc, DiagCode::E3005,
                      "symbol '" + fd->name + "' is already declared in this scope");

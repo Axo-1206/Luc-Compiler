@@ -33,6 +33,19 @@
 
 #include <unordered_set>
 #include <string>
+#include <fstream>
+#include <chrono>
+
+static void agentDebugLogDecl(const char* hypothesisId, const char* location,
+                              const std::string& message, const std::string& data) {
+    std::ofstream out("debug-00e876.log", std::ios::app);
+    if (!out) return;
+    const auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+    out << "{\"sessionId\":\"00e876\",\"runId\":\"pre-fix\",\"hypothesisId\":\""
+        << hypothesisId << "\",\"location\":\"" << location << "\",\"message\":\""
+        << message << "\",\"data\":" << data << ",\"timestamp\":" << ts << "}\n";
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Forward declarations 
@@ -244,14 +257,22 @@ void checkStructDecl(StructDeclAST& node, SymbolTable& symbols, TypeResolver& re
 
     std::unordered_set<std::string> seen;
     std::cout << "\n--- checkStructDecl: " << node.name << " ---" << std::endl;
+
+    std::cout << "\n--- Test1: " << node.name << " ---" << std::endl;
+
     for (auto& field : node.fields) {
         if (!seen.insert(field->name).second) {
             dc.error(DiagnosticCategory::Semantic, field->loc, DiagCode::E3005,
                      "duplicate field '" + field->name + "' in struct '" + node.name + "'");
             continue;
         }
+
+        std::cout << "\n--- For Test1: " << node.name << " ---" << std::endl;
+
         TypeAST* ft = resolver.resolveType(field->type.get());
         if (!ft) continue;
+
+        std::cout << "\n--- For Test2: " << node.name << " ---" << std::endl;
 
         if (field->defaultVal) {
             TypeAST* dvt = checkExpr(field->defaultVal.get(), symbols, resolver, dc,
@@ -262,6 +283,9 @@ void checkStructDecl(StructDeclAST& node, SymbolTable& symbols, TypeResolver& re
             }
         }
     }
+
+    std::cout << "\n--- Test2: " << node.name << " ---" << std::endl;
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

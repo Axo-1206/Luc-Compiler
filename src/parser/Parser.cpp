@@ -435,8 +435,66 @@ bool Parser::looksLikeFuncDecl() const {
         }
     }
 
-    // After optional generics, a '(' means function declaration.
-    return (i < tokens_.size() && tokens_[i].type == TokenType::LPAREN);
+    // After optional generics, we need at least one parameter group.
+    if (!(i < tokens_.size() && tokens_[i].type == TokenType::LPAREN)) {
+        return false;
+    }
+
+    auto skipLineComments = [&](std::size_t &idx) {
+        while (idx < tokens_.size() && tokens_[idx].type == TokenType::LINE_COMMENT) {
+            ++idx;
+        }
+    };
+
+    // Consume one or more parameter groups: '(' ... ')'+
+    while (i < tokens_.size() && tokens_[i].type == TokenType::LPAREN) {
+        int parenDepth = 1;
+        ++i;
+        while (i < tokens_.size() && parenDepth > 0) {
+            if (tokens_[i].type == TokenType::LPAREN) ++parenDepth;
+            else if (tokens_[i].type == TokenType::RPAREN) --parenDepth;
+            ++i;
+        }
+        skipLineComments(i);
+    }
+
+    // Scan optional return type until the top-level '='.
+    int parenDepth = 0;
+    int bracketDepth = 0;
+    int angleDepth = 0;
+    while (i < tokens_.size()) {
+        TokenType tt = tokens_[i].type;
+        if (tt == TokenType::LPAREN) ++parenDepth;
+        else if (tt == TokenType::RPAREN && parenDepth > 0) --parenDepth;
+        else if (tt == TokenType::LBRACKET) ++bracketDepth;
+        else if (tt == TokenType::RBRACKET && bracketDepth > 0) --bracketDepth;
+        else if (tt == TokenType::LESS) ++angleDepth;
+        else if (tt == TokenType::GREATER && angleDepth > 0) --angleDepth;
+
+        if (tt == TokenType::ASSIGN && parenDepth == 0 && bracketDepth == 0 && angleDepth == 0) {
+            break;
+        }
+        if (tt == TokenType::SEMICOLON || tt == TokenType::RBRACE || tt == TokenType::EOF_TOKEN) {
+            break;
+        }
+        ++i;
+    }
+
+    bool looksLikeFunc = true;
+    if (i < tokens_.size() && tokens_[i].type == TokenType::ASSIGN) {
+        std::size_t j = i + 1;
+        skipLineComments(j);
+        TokenType afterAssign = (j < tokens_.size()) ? tokens_[j].type : TokenType::EOF_TOKEN;
+
+        // Disambiguation:
+        // - Function declaration: body starts with '{', 'async', or '(' (anon-form)
+        // - Variable declaration with function type: body starts with a regular expression token
+        looksLikeFunc = (afterAssign == TokenType::LBRACE ||
+                         afterAssign == TokenType::ASYNC ||
+                         afterAssign == TokenType::LPAREN);
+    }
+
+    return looksLikeFunc;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

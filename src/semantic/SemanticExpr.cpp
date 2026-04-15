@@ -173,19 +173,63 @@ static TypeAST* checkFieldAccessExpr(FieldAccessExprAST& node, SymbolTable& symb
 // ─────────────────────────────────────────────────────────────────────────────
 // checkBehaviorAccessExpr
 // Vec2:normalize — looks up the mangled name "Vec2.normalize" in the symbol table.
+//
+// The registered type for a method is always  (Self) -> (params…) -> ReturnType
+// because SemanticCollector prepends a self-group. When the programmer writes
+// p:offset they are already binding 'p' as self, so the type visible at the
+// call site must be the *inner* type after self is consumed — i.e. the return
+// type of the outer FuncTypeAST.  We strip that one level here so that
+// subsequent CallExpr checks see the correct user-facing signature.
 // ─────────────────────────────────────────────────────────────────────────────
 static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable& symbols,
                                          DiagnosticEngine& dc) {
-    std::string mangled = node.typeName + "." + node.method;
+    Symbol* lhsSym = symbols.lookup(node.typeName);
+    if (!lhsSym) {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
+                 "undeclared identifier '" + node.typeName + "'");
+        return nullptr;
+    }
+
+    // DISALLOW STATIC ACCESS: The ':' operator must be used on an instance (Var or Param).
+    if (lhsSym->kind != SymbolKind::Var && lhsSym->kind != SymbolKind::Param) {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                 "behavior access ':' is only valid on instances; '" + node.typeName + 
+                 "' is a type name. Use an instance variable instead.");
+        return nullptr;
+    }
+
+    // Extract the underlying struct/type name from the instance.
+    if (!lhsSym->type || !lhsSym->type->isa<NamedTypeAST>()) {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                 "identifier '" + node.typeName + "' does not resolve to a named struct type");
+        return nullptr;
+    }
+
+    std::string actualTypeName = lhsSym->type->as<NamedTypeAST>()->name;
+    std::string mangled = actualTypeName + "." + node.method;
+
     Symbol* sym = symbols.lookup(mangled);
     if (!sym) {
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
-                 "no method '" + node.method + "' found on '" + node.typeName + "'");
+                 "no method '" + node.method + "' found on '" + actualTypeName + "'");
         return nullptr;
     }
     node.isBehaviorMember = true;
-    node.resolvedType = sym->type;
-    return sym->type;
+
+    // sym->type is the full (Self) -> ... FuncTypeAST built by SemanticCollector.
+    // Strip the outermost self-group so the resolved type reflects what callers
+    // actually pass — e.g. p:offset resolves to (dx float) -> (dy float) -> Point.
+    TypeAST* exposedType = sym->type;
+    if (exposedType && exposedType->isa<FuncTypeAST>()) {
+        TypeAST* inner = exposedType->as<FuncTypeAST>()->returnType.get();
+        if (inner) exposedType = inner;
+    }
+
+    node.resolvedType = exposedType;
+    // Update the node's type name to the resolved struct name for downstream passes.
+    node.typeName = actualTypeName;
+    
+    return exposedType;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,51 +379,81 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
     
     if (calleeSym && (calleeSym->kind == SymbolKind::Func || calleeSym->kind == SymbolKind::Method) && calleeSym->decl) {
         auto* funcDecl = static_cast<FuncDeclAST*>(calleeSym->decl);
-        returnType = funcDecl->returnType.get();
-        // Return type is already wrapped to what it evaluates, but we may need to resolve:
-        // Although SemanticCollector stored and resolver resolved it, it's just `returnType`.
         
-        // Flatten param groups to check args
-        std::vector<TypeAST*> flatParams;
-        for (auto& group : funcDecl->paramGroups) {
-            for (auto& param : group) {
-                flatParams.push_back(param->type.get());
+        // For curried functions, support partial application.
+        // The function signature is built as a curry chain where each level is a FuncTypeAST.
+        if (!funcDecl->paramGroups.empty()) {
+            auto& firstGroup = funcDecl->paramGroups[0];
+            
+            // Check that we're not providing too many arguments for the first group
+            if (node.args.size() > firstGroup.size()) {
+                dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
+                         "wrong number of arguments: expected " +
+                         std::to_string(firstGroup.size()) + ", got " +
+                         std::to_string(node.args.size()));
+                node.resolvedType = nullptr;
+                return nullptr;
             }
-        }
-        
-        if (node.args.size() != flatParams.size()) {
-            dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
-                     "wrong number of arguments: expected " +
-                     std::to_string(flatParams.size()) + ", got " +
-                     std::to_string(node.args.size()));
-        }
-        
-        size_t limit = std::min(node.args.size(), flatParams.size());
-        for (size_t i = 0; i < limit; ++i) {
-            TypeAST* argType = static_cast<TypeAST*>(node.args[i]->resolvedType);
-            TypeAST* paramType = flatParams[i];
-            if (argType && paramType && !TypeChecker::isAssignable(argType, paramType)) {
-                dc.error(DiagnosticCategory::Semantic, node.args[i]->loc, DiagCode::E3002,
-                         "argument " + std::to_string(i + 1) + " type mismatch");
+            
+            // Check argument types against first parameter group
+            for (size_t i = 0; i < node.args.size(); ++i) {
+                TypeAST* argType = static_cast<TypeAST*>(node.args[i]->resolvedType);
+                TypeAST* paramType = firstGroup[i]->type.get();
+                if (argType && paramType && !TypeChecker::isAssignable(argType, paramType)) {
+                    dc.error(DiagnosticCategory::Semantic, node.args[i]->loc, DiagCode::E3002,
+                             "argument " + std::to_string(i + 1) + " type mismatch");
+                }
+            }
+            
+            if (node.args.size() < firstGroup.size()) {
+                // Partial application: return the curried function type
+                // which is the return type of the first function in the chain
+                if (funcDecl->signature && funcDecl->signature->isa<FuncTypeAST>()) {
+                    returnType = funcDecl->signature->as<FuncTypeAST>()->returnType.get();
+                } else {
+                    returnType = nullptr;
+                }
+            } else if (node.args.size() == firstGroup.size()) {
+                // Full first group provided
+                if (funcDecl->paramGroups.size() > 1) {
+                    // More groups exist: return the next curried function
+                    if (funcDecl->signature && funcDecl->signature->isa<FuncTypeAST>()) {
+                        returnType = funcDecl->signature->as<FuncTypeAST>()->returnType.get();
+                    } else {
+                        returnType = nullptr;
+                    }
+                } else {
+                    // No more groups: return the final return type
+                    returnType = funcDecl->returnType.get();
+                }
+            }
+        } else {
+            // No parameters
+            returnType = funcDecl->returnType.get();
+            if (node.args.size() > 0) {
+                dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
+                         "wrong number of arguments: expected 0, got " +
+                         std::to_string(node.args.size()));
             }
         }
     } 
     // 2. Indirect call: callee evaluates to a FuncTypeAST (e.g. variable holding a closure).
     else if (calleeType && calleeType->isa<FuncTypeAST>()) {
         auto* ft = calleeType->as<FuncTypeAST>();
-        returnType = ft->returnType.get();
-
-        // Argument count check.
-        if (!ft->params.empty() && node.args.size() != ft->params.size()) {
+        
+        // Support partial application: if fewer args provided, we return the return type
+        // (which for curried functions is the next function in the chain)
+        if (node.args.size() > ft->params.size()) {
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                      "wrong number of arguments: expected " +
                      std::to_string(ft->params.size()) + ", got " +
                      std::to_string(node.args.size()));
+            node.resolvedType = nullptr;
+            return nullptr;
         }
-
-        // Argument type check.
-        size_t limit = std::min(node.args.size(), ft->params.size());
-        for (size_t i = 0; i < limit; ++i) {
+        
+        // Check argument types.
+        for (size_t i = 0; i < node.args.size(); ++i) {
             TypeAST* argType = static_cast<TypeAST*>(node.args[i]->resolvedType);
             TypeAST* paramType = ft->params[i].get();
             if (argType && paramType && !TypeChecker::isAssignable(argType, paramType)) {
@@ -387,6 +461,9 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                          "argument " + std::to_string(i + 1) + " type mismatch");
             }
         }
+        
+        // Return the appropriate type based on argument count
+        returnType = ft->returnType.get();
     } 
     // 3. Not callable.
     else {

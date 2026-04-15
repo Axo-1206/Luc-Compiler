@@ -114,8 +114,13 @@ bool TypeChecker::isAssignable(TypeAST* from, TypeAST* to) {
         return true;
     }
 
-    // Fallback: compare ASTKind tags — same concrete node type means structurally identical.
-    return from->kind == to->kind;
+    // 3. Function types.
+    if (from->isa<FuncTypeAST>() && to->isa<FuncTypeAST>()) {
+        return isEqual(from, to);
+    }
+
+    // Fallback: use structural equality for all other types (Arrays, Ptrs, Refs, etc.)
+    return isEqual(from, to);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

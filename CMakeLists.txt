@@ -23,7 +23,7 @@ list(APPEND CMAKE_PREFIX_PATH
 # This provides the ZLIB::ZLIB target that LLVMSupport needs
 find_package(ZLIB REQUIRED)
 
-#4. Find LLVM
+# Find LLVM
 find_package(LLVM REQUIRED CONFIG)
 
 # Standard LLVM setup

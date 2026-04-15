@@ -86,8 +86,9 @@ void SemanticCollector::visit(FuncDeclAST& node) {
                 ft->params.push_back(std::make_unique<PrimitiveTypeAST>(
                     static_cast<PrimitiveTypeAST*>(p->type.get())->primitiveKind));
             } else if (p->type->kind == ASTKind::NamedType) {
+                const auto *named = static_cast<NamedTypeAST*>(p->type.get());
                 ft->params.push_back(std::make_unique<NamedTypeAST>(
-                    static_cast<NamedTypeAST*>(p->type.get())->name));
+                    named->name));
             } else {
                 // Fallback: just use a dummy any for complex types during Phase 1
                 ft->params.push_back(std::make_unique<PrimitiveTypeAST>(PrimitiveKind::Any));

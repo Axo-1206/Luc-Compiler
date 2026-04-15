@@ -14,7 +14,7 @@ const add (a int) (b int) int = {
     return a + b
 }
 
--- This should error: missing second argument
+-- This should error: incorrect type, expected (b int) int but got int
 let res int = add(5)
 
 -- Test 3: Calling non-callable
