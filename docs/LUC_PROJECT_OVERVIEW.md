@@ -20,7 +20,7 @@
 
 ## Design Philosophy
 
-Luc follows a **functional / composite / module** paradigm.
+Luc follows a **functional / procedural / composite / module** paradigm.
 
 - **No classes or inheritance** — OOP-style hierarchies are intentionally absent and rejected at the semantic level
 - **Struct-Impl** (Go-inspired) — primary data and component structure; act as typed composites (struct + behavior, no class semantics)

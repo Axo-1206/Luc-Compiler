@@ -41,6 +41,8 @@ enum class DiagCode : uint32_t {
     E2007 = 2007, ///< Duplicate clause in switch or match.
     E2008 = 2008, ///< Expected an expression but found none.
     E2009 = 2009, ///< Literal value is malformed (e.g., invalid hex sequence).
+    E2010 = 2010, ///< Unknown or unsupported '@' attribute name.
+    E2011 = 2011, ///< Wrong number of arguments for '@' attribute.
     E2999 = 2999, ///< Generic fallback for syntax errors.
 
     // ── 3000-3999: Semantic ──────────────────────────────────────────────────
@@ -51,5 +53,7 @@ enum class DiagCode : uint32_t {
     E3005 = 3005, ///< Symbol already declared in this scope.
     E3006 = 3006, ///< Missing 'main' entry point.
     E3007 = 3007, ///< Invalid signature for the 'main' function.
-    E3008 = 3008  ///< Implicit type conversion not allowed; suggest explicit casting.
+    E3008 = 3008, ///< Implicit type conversion not allowed; suggest explicit casting.
+    E3009 = 3009, ///< Unknown '@' intrinsic name.
+    E3010 = 3010  ///< Wrong argument count or type for '@' intrinsic.
 };

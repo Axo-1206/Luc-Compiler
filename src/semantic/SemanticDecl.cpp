@@ -7,14 +7,15 @@
  *   types via TypeResolver, and enforces all declaration-level rules.
  *
  * @logic
+ *   checkAttributes — validates '@' attribute lists on declarations (@extern, @inline, etc.)
  *   checkVarDecl   — resolves annotation type, enforces const/nil rules, checks init type
- *   checkFuncDecl  — resolves param + return types, pushes func scope, checks body
+ *   checkFuncDecl  — resolves param + return types, pushes func scope, checks body;
+ *                    short-circuits body check when @extern attribute is present
  *   checkStructDecl— resolves field types, checks no duplicate field names
  *   checkEnumDecl  — validates variant values are unique, assigns auto-increments
  *   checkTraitDecl — resolves method param + return types
  *   checkImplDecl  — checks method bodies, verifies trait conformance if traitRef present
  *   checkFromDecl  — validates source/target types for custom castings
- *   checkExternDecl— resolves param + return types under insideExtern_ = true
  *
  * @related SemanticAnalyzer.cpp, SemanticStmt.cpp, SemanticExpr.cpp
  */
@@ -45,6 +46,163 @@ static void agentDebugLogDecl(const char* hypothesisId, const char* location,
     out << "{\"sessionId\":\"00e876\",\"runId\":\"pre-fix\",\"hypothesisId\":\""
         << hypothesisId << "\",\"location\":\"" << location << "\",\"message\":\""
         << message << "\",\"data\":" << data << ",\"timestamp\":" << ts << "}\n";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AttributeContext — which kind of declaration owns the attribute list.
+// Controls which attribute names are valid in a given position.
+// ─────────────────────────────────────────────────────────────────────────────
+enum class AttributeContext { Func, Var, Struct };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// checkAttributes
+//
+// Validates every '@' attribute on a declaration and enforces:
+//
+//   @extern("symbol")          — valid on Func/Var; exactly 1 string arg (symbol name).
+//                                Optional 2nd string arg = calling convention (default "C").
+//                                When present: function must have NO body (FuncBodyKind check
+//                                is the caller's responsibility; we flag body presence here
+//                                via outIsExtern).
+//
+//   @extern("symbol", "conv")  — same as above with explicit calling convention.
+//
+//   @inline                    — valid on Func only; no args.
+//   @noinline                  — valid on Func only; no args.
+//   @packed                    — valid on Struct only; no args.
+//   @deprecated("message")     — valid on Func/Var/Struct; optional 1 string arg.
+//
+// FUTURE EXPANSION (LLVM/FFI):
+//   - To add new attributes (e.g. @section, @visibility), update the loop below.
+//   - Metadata should be stored in the Symbol or passed to Codegen for LLVM attribute injection.
+//   - See docs/FFI_DESIGN.md for the full architecture roadmap.
+//
+// Returns:
+//   outIsExtern  — set true when @extern was found; the function has no body.
+//   outExternSym — the C symbol name from @extern("name"), empty if not @extern.
+//   outCallingConv — the calling convention string, defaults to "C".
+// ─────────────────────────────────────────────────────────────────────────────
+static void checkAttributes(const std::vector<AttributePtr>& attributes,
+                             AttributeContext ctx,
+                             DiagnosticEngine& dc,
+                             bool& outIsExtern,
+                             std::string& outExternSym,
+                             std::string& outCallingConv) {
+    outIsExtern    = false;
+    outExternSym   = "";
+    outCallingConv = "C"; // default calling convention
+
+    // Track which attribute names we have already seen to catch duplicates.
+    std::unordered_set<std::string> seen;
+
+    for (const auto& attr : attributes) {
+        const std::string& n = attr->name;
+
+        if (!seen.insert(n).second) {
+            dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E3005,
+                     "duplicate attribute '@" + n + "'");
+            continue;
+        }
+
+        // ── @extern ──────────────────────────────────────────────────────────
+        if (n == "extern") {
+            if (ctx != AttributeContext::Func && ctx != AttributeContext::Var) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
+                         "'@extern' is only valid on function or variable declarations");
+                continue;
+            }
+            if (attr->args.empty()) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
+                         "'@extern' requires at least one string argument: the C symbol name");
+                continue;
+            }
+            if (attr->args[0].argKind != AttributeArgAST::ArgKind::StringLit) {
+                dc.error(DiagnosticCategory::Semantic, attr->args[0].loc, DiagCode::E2011,
+                         "'@extern' first argument must be a string literal (the C symbol name)");
+                continue;
+            }
+            outIsExtern  = true;
+            outExternSym = attr->args[0].value;
+
+            // Optional second argument: calling convention string.
+            if (attr->args.size() >= 2) {
+                if (attr->args[1].argKind != AttributeArgAST::ArgKind::StringLit) {
+                    dc.error(DiagnosticCategory::Semantic, attr->args[1].loc, DiagCode::E2011,
+                             "'@extern' second argument must be a string literal (calling convention)");
+                } else {
+                    outCallingConv = attr->args[1].value;
+                }
+            }
+            if (attr->args.size() > 2) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
+                         "'@extern' takes at most 2 arguments: (symbol_name, calling_convention)");
+            }
+            continue;
+        }
+
+        // ── @inline ──────────────────────────────────────────────────────────
+        if (n == "inline") {
+            if (ctx != AttributeContext::Func) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
+                         "'@inline' is only valid on function declarations");
+            }
+            if (!attr->args.empty()) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
+                         "'@inline' takes no arguments");
+            }
+            continue;
+        }
+
+        // ── @noinline ────────────────────────────────────────────────────────
+        if (n == "noinline") {
+            if (ctx != AttributeContext::Func) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
+                         "'@noinline' is only valid on function declarations");
+            }
+            if (!attr->args.empty()) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
+                         "'@noinline' takes no arguments");
+            }
+            // @inline and @noinline are mutually exclusive.
+            if (seen.count("inline")) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
+                         "'@inline' and '@noinline' cannot both appear on the same declaration");
+            }
+            continue;
+        }
+
+        // ── @packed ──────────────────────────────────────────────────────────
+        if (n == "packed") {
+            if (ctx != AttributeContext::Struct) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
+                         "'@packed' is only valid on struct declarations");
+            }
+            if (!attr->args.empty()) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
+                         "'@packed' takes no arguments");
+            }
+            continue;
+        }
+
+        // ── @deprecated ──────────────────────────────────────────────────────
+        if (n == "deprecated") {
+            if (attr->args.size() > 1) {
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
+                         "'@deprecated' takes at most one string argument (the message)");
+            }
+            if (!attr->args.empty() &&
+                attr->args[0].argKind != AttributeArgAST::ArgKind::StringLit) {
+                dc.error(DiagnosticCategory::Semantic, attr->args[0].loc, DiagCode::E2011,
+                         "'@deprecated' argument must be a string literal message");
+            }
+            continue;
+        }
+
+        // ── Unknown attribute ─────────────────────────────────────────────────
+        dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
+                 "unknown attribute '@" + n + "'; "
+                 "known attributes: extern, inline, noinline, packed, deprecated");
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,6 +300,26 @@ void checkVarDecl(VarDeclAST& node, SymbolTable& symbols, TypeResolver& resolver
                   DiagnosticEngine& dc, int& asyncDepth, int& loopDepth,
                   int& parallelDepth, bool insideExtern) {
 
+    // Validate '@' attributes on this variable declaration.
+    bool attrIsExtern = false;
+    std::string attrExternSym, attrCallingConv;
+    checkAttributes(node.attributes, AttributeContext::Var, dc,
+                    attrIsExtern, attrExternSym, attrCallingConv);
+    // @extern on a variable: it must have no initialiser (linker provides the value).
+    if (attrIsExtern && node.init) {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                 "'@extern' variable '" + node.name +
+                 "' must not have an initialiser — the symbol is resolved by the linker");
+        return;
+    }
+    // @extern variable: skip type/init checks beyond the above (no body to validate).
+    if (attrIsExtern) {
+        resolver.setInsideExtern(true);
+        resolver.resolveType(node.type.get());
+        resolver.setInsideExtern(false);
+        return;
+    }
+
     // 1. Resolve the declared type.
     TypeAST* declaredType = resolver.resolveType(node.type.get());
     if (!declaredType) return; // resolver already emitted a diagnostic
@@ -231,6 +409,37 @@ void checkFuncDecl(FuncDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
                    DiagnosticEngine& dc, int& asyncDepth, int& loopDepth,
                    int& parallelDepth, bool insideExtern) {
 
+    // Validate '@' attributes on this function.
+    bool attrIsExtern = false;
+    std::string attrExternSym, attrCallingConv;
+    checkAttributes(node.attributes, AttributeContext::Func, dc,
+                    attrIsExtern, attrExternSym, attrCallingConv);
+
+    // @extern("sym") on a function means the body is resolved by the linker.
+    // We still resolve param/return types so they are available to codegen, but
+    // we skip the body check entirely.
+    if (attrIsExtern) {
+        if (node.body) {
+            dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                     "'@extern' function '" + node.name + 
+                     "' must not have a body — the symbol is resolved by the linker");
+        }
+
+        resolver.setInsideExtern(true);
+        resolver.setGenericParams(&node.genericParams);
+        // Resolve param types.
+        for (auto& group : node.paramGroups) {
+            for (auto& param : group)
+                resolver.resolveType(param->type.get());
+        }
+        if (node.returnType)
+            resolver.resolveType(node.returnType.get());
+        
+        resolver.setGenericParams(nullptr);
+        resolver.setInsideExtern(false);
+        return;
+    }
+
     // Set generic parameters context so that T in let foo<T> resolves as a valid generic param.
     resolver.setGenericParams(&node.genericParams);
 
@@ -299,6 +508,14 @@ void checkFuncDecl(FuncDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
 void checkStructDecl(StructDeclAST& node, SymbolTable& symbols, TypeResolver& resolver,
                      DiagnosticEngine& dc, int& asyncDepth, int& loopDepth,
                      int& parallelDepth, bool insideExtern) {
+
+    // Validate '@' attributes on this struct (@packed, @deprecated).
+    bool attrIsExtern = false;
+    std::string attrExternSym, attrCallingConv;
+    checkAttributes(node.attributes, AttributeContext::Struct, dc,
+                    attrIsExtern, attrExternSym, attrCallingConv);
+    // @extern is not valid on structs — checkAttributes already reported the error.
+    // We continue with normal struct checking regardless.
 
     // Set generic parameters context so that T in Struct<T> resolves as a valid generic param.
     resolver.setGenericParams(&node.genericParams);
@@ -750,23 +967,6 @@ void checkFromDecl(FromDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// checkExternDecl
-//
-// Rules enforced:
-//   - All param and return types resolved with insideExtern_ = true so *T is accepted.
-// ─────────────────────────────────────────────────────────────────────────────
-void checkExternDecl(ExternDeclAST& node, TypeResolver& resolver, DiagnosticEngine& /*dc*/) {
-    resolver.setInsideExtern(true);
-    for (auto& param : node.params) {
-        resolver.resolveType(param->type.get());
-    }
-    if (node.returnType) {
-        resolver.resolveType(node.returnType.get());
-    }
-    resolver.setInsideExtern(false);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // checkTopLevelDecl  — Dispatcher called by SemanticAnalyzer::checkDecls()
 // ─────────────────────────────────────────────────────────────────────────────
 void checkTopLevelDecl(DeclAST* decl, SymbolTable& symbols, TypeResolver& resolver,
@@ -796,9 +996,6 @@ void checkTopLevelDecl(DeclAST* decl, SymbolTable& symbols, TypeResolver& resolv
         checkImplDecl(*decl->as<ImplDeclAST>(), symbols, resolver, dc,
                       asyncDepth, loopDepth, parallelDepth, insideExtern);
 
-    else if (decl->isa<ExternDeclAST>())
-        checkExternDecl(*decl->as<ExternDeclAST>(), resolver, dc);
- 
     else if (decl->isa<FromDeclAST>())
         checkFromDecl(*decl->as<FromDeclAST>(), symbols, resolver, dc,
                       asyncDepth, loopDepth, parallelDepth, insideExtern);

@@ -19,6 +19,7 @@
 #include "SymbolTable.hpp"
 #include "TypeResolver.hpp"
 #include "TypeChecker.hpp"
+#include "IntrinsicRegistry.hpp"
 #include "diagnostics/DiagnosticEngine.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "ast/ExprAST.hpp"
@@ -371,10 +372,42 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
     // Extract return type and check params.
     TypeAST* returnType = nullptr;
     
-    // 1. Direct function call: callee is an identifier resolving to a Func/Method symbol.
+    // 1. Direct function call: callee is an identifier resolving to a Func/Method/ExternFunc symbol.
     Symbol* calleeSym = nullptr;
     if (node.callee->isa<IdentifierExprAST>()) {
         calleeSym = symbols.lookup(node.callee->as<IdentifierExprAST>()->name);
+    }
+
+    // ── ExternFunc (@extern-decorated function) ──────────────────────────────
+    // ExternFunc symbols have their param types stored in the FuncDeclAST just
+    // like normal functions. We check args against those param groups exactly
+    // as we do for Func, but we don't attempt to check a body (there isn't one).
+    if (calleeSym && calleeSym->kind == SymbolKind::ExternFunc && calleeSym->decl) {
+        auto* funcDecl = static_cast<FuncDeclAST*>(calleeSym->decl);
+        // Flat extern functions (no curry): check args against flat first group.
+        if (!funcDecl->paramGroups.empty()) {
+            auto& firstGroup = funcDecl->paramGroups[0];
+            if (node.args.size() != firstGroup.size()) {
+                dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
+                         "extern function '" + calleeSym->name +
+                         "' expects " + std::to_string(firstGroup.size()) +
+                         " argument(s), got " + std::to_string(node.args.size()));
+            } else {
+                for (size_t i = 0; i < node.args.size(); ++i) {
+                    TypeAST* argType = static_cast<TypeAST*>(node.args[i]->resolvedType);
+                    TypeAST* paramType = firstGroup[i]->type.get();
+                    if (argType && paramType && !TypeChecker::isAssignable(argType, paramType)) {
+                        dc.error(DiagnosticCategory::Semantic, node.args[i]->loc,
+                                 DiagCode::E3002,
+                                 "argument " + std::to_string(i + 1) +
+                                 " type mismatch in call to extern '" + calleeSym->name + "'");
+                    }
+                }
+            }
+        }
+        returnType = funcDecl->returnType.get();
+        node.resolvedType = returnType;
+        return returnType;
     }
     
     if (calleeSym && (calleeSym->kind == SymbolKind::Func || calleeSym->kind == SymbolKind::Method) && calleeSym->decl) {
@@ -524,7 +557,7 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
             auto* ident = node.lhs->as<IdentifierExprAST>();
             Symbol* sym = symbols.lookup(ident->name);
 
-            if (sym && sym->kind == SymbolKind::Func && sym->decl) {
+            if (sym && (sym->kind == SymbolKind::Func) && !sym->isExtern && sym->decl) {
                 // Verify the symbol is let-declared (reassignable).
                 if (sym->declKw != DeclKeyword::Let) {
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3004,
@@ -632,7 +665,7 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
             auto* ident = node.lhs->as<IdentifierExprAST>();
             Symbol* sym = symbols.lookup(ident->name);
 
-            if (sym && sym->kind == SymbolKind::Func && sym->decl) {
+            if (sym && (sym->kind == SymbolKind::Func) && !sym->isExtern && sym->decl) {
                 auto* funcDecl = static_cast<FuncDeclAST*>(sym->decl);
                 bool signatureOk = true;
 
@@ -1373,13 +1406,259 @@ static TypeAST* checkTypeConvExpr(TypeConvExprAST& node, SymbolTable& symbols,
                                    int& parallelDepth, bool insideExtern) {
     if (node.isUnsafe && !insideExtern) {
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                 "unsafe type reinterpret '*' is only valid inside extern declarations");
+                 "unsafe type reinterpret '*' is only valid on '@extern'-decorated declarations; "
+                 "use '@bitcast(T, x)' for general-purpose bit reinterpretation");
     }
     checkExpr(node.expr.get(), symbols, resolver, dc,
               asyncDepth, loopDepth, parallelDepth, insideExtern);
     TypeAST* targetType = resolver.resolveType(node.targetType.get());
     node.resolvedType = targetType;
     return targetType;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// checkIntrinsicCallExpr
+//
+// Registry-driven validation of '@name(args)' compiler intrinsic calls.
+//
+// Drives off IntrinsicRegistry::kEntries — every known intrinsic is described
+// there with its arg kinds, return kind, and min/max arg counts. Adding a new
+// intrinsic requires only a row in IntrinsicRegistry.hpp and no changes here.
+//
+// FUTURE EXPANSION:
+//   - New intrinsics mapping to LLVM (e.g. @prefetch, @expect) should be added
+//     to IntrinsicRegistry.hpp. 
+//   - Custom validation logic (e.g. type constraints) should be added to the
+//     switch statements in this function.
+//
+// Validation logic:
+//   1. Unknown name  → E3009 with full known-names list from registry.
+//   2. Type-arg intrinsics (@sizeof, @alignof):
+//        - Must have a typeArg and zero value args.
+//        - typeArg is resolved through the TypeResolver.
+//   3. @bitcast(T, x):
+//        - Has both a typeArg (target type) and one value arg.
+//   4. All other intrinsics:
+//        - Arg count checked against entry.minArgs / entry.maxArgs.
+//        - Each value arg is recursively checked through checkExpr.
+//        - FloatValue slots require float or double; IntValue slots require
+//          any integer primitive.  AnyValue / PtrValue / SizeValue are
+//          permissive (type validated at runtime / codegen level).
+//   5. Return type is resolved from IntrinsicReturnKind:
+//        Void        → nullptr
+//        Uint64      → uint64
+//        Float32     → float
+//        Float64     → double
+//        SameAsArg0  → type of the first value argument
+//        SameAsArg1  → type of the second value argument
+//
+// Unknown intrinsic names → E3009. Wrong arg counts / bad types → E3010.
+// ─────────────────────────────────────────────────────────────────────────────
+static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
+                                        SymbolTable& symbols,
+                                        TypeResolver& resolver,
+                                        DiagnosticEngine& dc,
+                                        int& asyncDepth, int& loopDepth,
+                                        int& parallelDepth, bool insideExtern) {
+    const std::string& name = node.intrinsicName;
+
+    // ── 1. Registry lookup ────────────────────────────────────────────────────
+    const IntrinsicEntry* entry = IntrinsicRegistry::lookup(name);
+    if (!entry) {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3009,
+                 "unknown compiler intrinsic '@" + name + "'; "
+                 "known intrinsics: " + IntrinsicRegistry::allNames());
+        // Still walk any provided args so their sub-expressions are visited.
+        for (auto& arg : node.args)
+            checkExpr(arg.get(), symbols, resolver, dc,
+                      asyncDepth, loopDepth, parallelDepth, insideExtern);
+        node.resolvedType = nullptr;
+        return nullptr;
+    }
+
+    // ── 2. Type-only intrinsics: @sizeof(T) and @alignof(T) ──────────────────
+    // These take one type argument and zero value arguments.
+    if (entry->returnKind == IntrinsicReturnKind::Uint64 &&
+        !entry->argKinds.empty() &&
+        entry->argKinds[0] == IntrinsicArgKind::TypeArg &&
+        entry->minArgs == 0) {
+
+        if (!node.typeArg) {
+            dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
+                     "'@" + name + "' requires a type argument, e.g. '@" + name + "(int)'");
+        } else {
+            resolver.resolveType(node.typeArg.get());
+        }
+        if (!node.args.empty()) {
+            dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
+                     "'@" + name + "' takes only a type argument, not value arguments");
+        }
+        TypeAST* ret = primType(PrimitiveKind::Uint64);
+        node.resolvedType = ret;
+        return ret;
+    }
+
+    // ── 3. @bitcast(T, x) — type arg + one value arg ─────────────────────────
+    if (name == "bitcast") {
+        if (!node.typeArg) {
+            dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
+                     "'@bitcast' requires a target type argument: '@bitcast(T, x)'");
+        } else {
+            resolver.resolveType(node.typeArg.get());
+        }
+        if (node.args.size() != 1) {
+            dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
+                     "'@bitcast' requires exactly 1 value argument: '@bitcast(T, x)'");
+        } else {
+            checkExpr(node.args[0].get(), symbols, resolver, dc,
+                      asyncDepth, loopDepth, parallelDepth, insideExtern);
+        }
+        // Return type is the target type (typeArg).
+        TypeAST* ret = node.typeArg ? resolver.resolveType(node.typeArg.get())
+                                     : primType(PrimitiveKind::Any);
+        node.resolvedType = ret;
+        return ret;
+    }
+
+    // ── 4. Value-argument intrinsics ─────────────────────────────────────────
+    // Verify typeArg was NOT supplied for these (they take only values).
+    if (node.typeArg) {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
+                 "'@" + name + "' does not take a type argument");
+    }
+
+    // Arg count check.
+    int nArgs = static_cast<int>(node.args.size());
+    bool countOk = (nArgs >= entry->minArgs) &&
+                   (entry->maxArgs == -1 || nArgs <= entry->maxArgs);
+    if (!countOk) {
+        std::string expected = (entry->minArgs == entry->maxArgs)
+            ? std::to_string(entry->minArgs)
+            : std::to_string(entry->minArgs) + ".." + std::to_string(entry->maxArgs);
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
+                 "'@" + name + "' expects " + expected + " argument(s), got " +
+                 std::to_string(nArgs));
+        // Walk args anyway to surface nested errors.
+        for (auto& arg : node.args)
+            checkExpr(arg.get(), symbols, resolver, dc,
+                      asyncDepth, loopDepth, parallelDepth, insideExtern);
+        node.resolvedType = nullptr;
+        return nullptr;
+    }
+
+    // Check each argument against its registry slot kind.
+    // Slots past the argKinds vector length default to AnyValue.
+    std::vector<TypeAST*> argTypes;
+    argTypes.reserve(node.args.size());
+
+    for (size_t i = 0; i < node.args.size(); ++i) {
+        TypeAST* at = checkExpr(node.args[i].get(), symbols, resolver, dc,
+                                asyncDepth, loopDepth, parallelDepth, insideExtern);
+        argTypes.push_back(at);
+
+        // Determine which slot kind applies.
+        IntrinsicArgKind slotKind = (i < entry->argKinds.size())
+            ? entry->argKinds[i]
+            : IntrinsicArgKind::AnyValue;
+
+        if (!at) continue; // expression error already reported
+
+        switch (slotKind) {
+            case IntrinsicArgKind::FloatValue:
+                if (at->isa<PrimitiveTypeAST>()) {
+                    auto k = at->as<PrimitiveTypeAST>()->primitiveKind;
+                    if (k != PrimitiveKind::Float  &&
+                        k != PrimitiveKind::Double &&
+                        k != PrimitiveKind::Decimal) {
+                        dc.error(DiagnosticCategory::Semantic,
+                                 node.args[i]->loc, DiagCode::E3010,
+                                 "'@" + name + "' argument " + std::to_string(i+1) +
+                                 " must be float, double, or decimal");
+                    }
+                }
+                break;
+
+            case IntrinsicArgKind::IntValue:
+                if (at->isa<PrimitiveTypeAST>()) {
+                    auto k = at->as<PrimitiveTypeAST>()->primitiveKind;
+                    // Any integer primitive is acceptable.
+                    bool isInt =
+                        k == PrimitiveKind::Byte  || k == PrimitiveKind::Short  ||
+                        k == PrimitiveKind::Int   || k == PrimitiveKind::Long   ||
+                        k == PrimitiveKind::Ubyte || k == PrimitiveKind::Ushort ||
+                        k == PrimitiveKind::Uint  || k == PrimitiveKind::Ulong  ||
+                        k == PrimitiveKind::Int8  || k == PrimitiveKind::Int16  ||
+                        k == PrimitiveKind::Int32 || k == PrimitiveKind::Int64  ||
+                        k == PrimitiveKind::Uint8 || k == PrimitiveKind::Uint16 ||
+                        k == PrimitiveKind::Uint32|| k == PrimitiveKind::Uint64;
+                    if (!isInt) {
+                        dc.error(DiagnosticCategory::Semantic,
+                                 node.args[i]->loc, DiagCode::E3010,
+                                 "'@" + name + "' argument " + std::to_string(i+1) +
+                                 " must be an integer type");
+                    }
+                }
+                break;
+
+            case IntrinsicArgKind::SizeValue:
+                // Accept any integer; ideally uint64 but we allow widening.
+                if (at->isa<PrimitiveTypeAST>()) {
+                    auto k = at->as<PrimitiveTypeAST>()->primitiveKind;
+                    bool isInt =
+                        k == PrimitiveKind::Int  || k == PrimitiveKind::Long  ||
+                        k == PrimitiveKind::Uint || k == PrimitiveKind::Ulong ||
+                        k == PrimitiveKind::Int32|| k == PrimitiveKind::Int64 ||
+                        k == PrimitiveKind::Uint32||k == PrimitiveKind::Uint64;
+                    if (!isInt) {
+                        dc.error(DiagnosticCategory::Semantic,
+                                 node.args[i]->loc, DiagCode::E3010,
+                                 "'@" + name + "' size argument must be an integer type");
+                    }
+                }
+                break;
+
+            case IntrinsicArgKind::AnyValue:
+            case IntrinsicArgKind::PtrValue:
+            case IntrinsicArgKind::TypeArg:
+                // No additional type constraint at the semantic level.
+                break;
+        }
+    }
+
+    // ── 5. Resolve return type from registry entry ────────────────────────────
+    TypeAST* ret = nullptr;
+    switch (entry->returnKind) {
+        case IntrinsicReturnKind::Void:
+            ret = nullptr;
+            break;
+        case IntrinsicReturnKind::Uint64:
+            ret = primType(PrimitiveKind::Uint64);
+            break;
+        case IntrinsicReturnKind::Float32:
+            ret = primType(PrimitiveKind::Float);
+            break;
+        case IntrinsicReturnKind::Float64:
+            ret = primType(PrimitiveKind::Double);
+            break;
+        case IntrinsicReturnKind::SameAsArg0:
+            ret = !argTypes.empty() ? argTypes[0] : primType(PrimitiveKind::Any);
+            break;
+        case IntrinsicReturnKind::SameAsArg1:
+            ret = argTypes.size() >= 2 ? argTypes[1] : primType(PrimitiveKind::Any);
+            break;
+    }
+
+    // For overloaded float intrinsics: if arg0 is double, return double.
+    if (entry->isOverloaded &&
+        entry->returnKind == IntrinsicReturnKind::SameAsArg0 &&
+        !argTypes.empty() && argTypes[0] &&
+        argTypes[0]->isa<PrimitiveTypeAST>() &&
+        argTypes[0]->as<PrimitiveTypeAST>()->primitiveKind == PrimitiveKind::Double) {
+        ret = primType(PrimitiveKind::Double);
+    }
+
+    node.resolvedType = ret;
+    return ret;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1520,6 +1799,11 @@ TypeAST* checkExpr(ExprAST* node, SymbolTable& symbols, TypeResolver& resolver,
         case ASTKind::TypeConvExpr:
             return checkTypeConvExpr(*node->as<TypeConvExprAST>(), symbols, resolver, dc,
                                      asyncDepth, loopDepth, parallelDepth, insideExtern);
+
+        case ASTKind::IntrinsicCallExpr:
+            return checkIntrinsicCallExpr(*node->as<IntrinsicCallExprAST>(), symbols,
+                                          resolver, dc, asyncDepth, loopDepth,
+                                          parallelDepth, insideExtern);
 
         default:
             // Unknown or unhandled expression kind — skip silently.

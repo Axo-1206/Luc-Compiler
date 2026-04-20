@@ -84,7 +84,8 @@ private:
     }
 
     void visit(VarDeclAST& node) override {
-        // Walk the initialiser first (post-order).
+        // Walk attributes and initialiser (post-order).
+        for (auto& attr : node.attributes) walk(attr.get());
         if (node.init) walk(node.init.get());
 
         // 'const' variables are compile-time constants.
@@ -103,7 +104,8 @@ private:
     }
 
     void visit(FuncDeclAST& node) override {
-        // Walk parameter groups and body first.
+        // Walk attributes, parameter groups, and body.
+        for (auto& attr : node.attributes) walk(attr.get());
         for (auto& group : node.paramGroups)
             for (auto& param : group)
                 walk(param.get());
@@ -114,6 +116,7 @@ private:
     }
 
     void visit(StructDeclAST& node) override {
+        for (auto& attr : node.attributes) walk(attr.get());
         for (auto& field : node.fields)
             walk(field.get());
         // Struct type declarations themselves are not runtime values.
@@ -176,11 +179,6 @@ private:
 
     void visit(TypeAliasDeclAST& /*node*/) override {
         // Type alias declarations are purely compile-time name mappings.
-    }
-
-    void visit(ExternDeclAST& node) override {
-        // External C / Vulkan symbols are resolved by the linker — never const.
-        node.isConst = false;
     }
 
     // ── Expression nodes ──────────────────────────────────────────────────────
@@ -351,6 +349,22 @@ private:
         // A safe type casting of a const expression is itself const.
         // Unsafe (*T) conversions reference raw memory — not const.
         node.isConst = !node.isUnsafe && node.expr && node.expr->isConst;
+    }
+
+    void visit(AttributeAST& /*node*/) override {
+        // Attributes are compile-time metadata — they carry no runtime value.
+        // No isConst propagation needed; args are literals handled at parse time.
+    }
+
+    void visit(IntrinsicCallExprAST& node) override {
+        // Walk value arguments (typeArg is a TypeAST, not walked here).
+        for (auto& arg : node.args) walk(arg.get());
+
+        // @sizeof and @alignof are compile-time constants (pure type queries).
+        // All other intrinsics involve runtime computation — not const.
+        bool isCompileTimeType = (node.intrinsicName == "sizeof" ||
+                                  node.intrinsicName == "alignof");
+        node.isConst = isCompileTimeType;
     }
 
     // ── Pattern nodes ─────────────────────────────────────────────────────────

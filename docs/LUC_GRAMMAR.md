@@ -29,7 +29,11 @@ program         := package_decl { top_level_decl }
 
 package_decl    := 'package' IDENTIFIER
 
-top_level_decl  := module_decl     -- optional re-export manifest (one per package)
+top_level_decl  := { attribute } actual_decl
+                   -- Zero or more '@' attributes may precede any declaration.
+                   -- Attributes are consumed and attached to the declaration that follows.
+
+actual_decl     := module_decl     -- optional re-export manifest (one per package)
                  | use_decl
                  | enum_decl        -- enum keyword:   named constant set, integer-backed
                  | struct_decl      -- struct keyword: data definition
@@ -158,7 +162,7 @@ union_type      := type '|' type { '|' type }
 -- Reference   (&T)
 ref_type        := '&' type
 
--- Raw pointer (*T) — extern / FFI only
+-- Raw pointer (*T) — only valid on declarations carrying @extern
 ptr_type        := '*' type
 
 -- Array types — three distinct kinds:
@@ -710,7 +714,7 @@ type_alias_rhs  := primitive_type                  -- type ID          = int
                                                    -- type ByteBuf  = []byte
                                                    -- type VertBuf  = [*]Vertex
                  | ref_type                        -- type IntRef      = &int
-                 | ptr_type                        -- type RawBuf      = *uint8   (FFI only)
+                 | ptr_type                        -- type RawBuf      = *uint8   (@extern only)
                  | func_type                       -- type Callback    = (event Event) bool
                                                    -- type Handler     = (req Request) Response?
                                                    -- type Transform<T> = (value T) T
@@ -1221,10 +1225,14 @@ conversion functions. This makes them valid pipeline steps:
 x  -> string -> io.printl  -- variable x converted to string, then printed
 ```
 
-Unsafe bit reinterpret uses `*` prefix — FFI / Vulkan only:
+Unsafe bit reinterpret uses `*` prefix — only valid in `@extern` declaration contexts. For general-purpose bit reinterpretation in expression position, prefer `@bitcast(T, x)`:
 
 ```luc
 bits -> *float             -- reinterpret uint32 bits as float32, no computation
+                           -- (valid only inside an @extern context)
+
+-- Preferred modern form anywhere:
+let asFloat float = @bitcast(float, bits)
 ```
 
 ### User-defined type conversion
@@ -1249,10 +1257,11 @@ let absF    Fahrenheit = Fahrenheit(abs)            -- dispatches to from Fahren
 boiling -> Fahrenheit -> io.printl
 ```
 
-Unsafe bit reinterpret of user types uses `*` prefix — FFI / Vulkan structs only:
+Unsafe bit reinterpret of user types uses `*` prefix — only valid in `@extern` declaration contexts. Prefer `@bitcast(T, x)` in general expression position:
 
 ```luc
 rawBytes -> *GpuVertex    -- reinterpret raw memory as GpuVertex, no conversion
+                          -- (valid only inside an @extern context)
 ```
 
 ### Usage forms
@@ -2503,13 +2512,290 @@ pub_mod         := 'pub'
 --   see Module System section for full grammar and examples
 ```
 
-### Extern (FFI)
+## `@` Compiler Directives
+
+`@` is the **compiler authority** prefix. It marks anything that cannot be
+expressed through ordinary procedural logic — FFI bindings, optimizer hints,
+struct layout control, and compile-time intrinsic calls. If you see `@`, the
+compiler is directly involved: either linking to an external symbol, guiding
+the backend, or computing a value at compile time.
+
+There are two syntactic positions for `@`:
+
+| Position | Form | Purpose |
+|---|---|---|
+| **Attribute** | `@name` / `@name(args)` before a declaration | Attach metadata to a `let`, `const`, or `struct` |
+| **Intrinsic call** | `@name(args)` in expression position | Compiler-builtin function call |
+
+Attributes and intrinsic calls share the same `@name` syntax but are
+distinguished by position. Attributes precede a declaration; intrinsic calls
+appear where any other expression appears.
+
+### Attributes
+
+An attribute is a compile-time annotation placed on a declaration. Attributes
+are processed during the semantic phase and stored in the symbol table.
+Multiple attributes may appear before the same declaration, one per line or
+stacked inline.
 
 ```
-extern_mod      := 'extern'
-                   -- declares an external C / Vulkan symbol; body is omitted
-                   -- raw pointer type *T is only valid inside extern declarations
+attribute       := '@' IDENTIFIER [ '(' attr_arg_list ')' ]
+
+attr_arg_list   := attr_arg { ',' attr_arg }
+
+attr_arg        := STRING_LITERAL      -- e.g. "malloc", "stdcall"
+                 | INT_LITERAL         -- e.g. 8
+                 | HEX_LITERAL         -- e.g. 0xFF
+                 | 'true' | 'false'
+                 | IDENTIFIER          -- type name: @sizeof(Vec2)
 ```
+
+**Parameter restriction:** attribute arguments are intentionally limited to
+compile-time literals and type identifiers. Runtime expressions, arithmetic,
+and function calls are not valid inside attribute argument lists.
+
+#### Known Attributes
+
+| Attribute | Valid on | Arguments | Purpose |
+|---|---|---|---|
+| `@extern("sym")` | `let`, `const` func/var | 1–2 strings | Bind to a C/OS/Vulkan symbol by name |
+| `@extern("sym", "conv")` | `let`, `const` func/var | 2 strings | Same, with explicit calling convention |
+| `@inline` | `let`, `const` func | none | Suggest the backend always inline this function |
+| `@noinline` | `let`, `const` func | none | Prevent the backend from inlining this function |
+| `@packed` | `struct` | none | Remove padding — all fields are byte-adjacent |
+| `@deprecated("msg")` | func, var, struct | 0–1 string | Emit a warning at every use site |
+
+`@inline` and `@noinline` are mutually exclusive on the same declaration.
+
+#### `@extern` — FFI Binding
+
+`@extern("symbol")` declares that a function or variable is resolved by the
+**linker** rather than compiled from Luc source. The body is omitted. The
+calling convention defaults to `"C"` and may be overridden with a second
+argument.
+
+```
+-- Grammar:
+--   @extern(symbol_name)
+--   @extern(symbol_name, calling_convention)
+--
+-- symbol_name        — the C/OS/Vulkan identifier the linker will look up
+-- calling_convention — optional; default "C". Other values: "stdcall", etc.
+```
+
+**Rules:**
+
+- `@extern` on a **function** — the declaration must have no body. The
+  compiler emits an external function declaration in the LLVM IR; the linker
+  resolves it.
+- `@extern` on a **variable** — the declaration must have no initialiser. The
+  linker provides the symbol's address.
+- Raw pointer type `*T` is only valid in declarations carrying `@extern`.
+- `@extern` functions are fully callable from Luc code; the semantic pass
+  validates argument count and types against the declared signature.
+
+```luc
+-- C stdlib bindings
+@extern("malloc")
+let malloc (size uint64) *uint8
+
+@extern("free")
+let free (ptr *uint8)
+
+@extern("printf", "C")
+let printf (fmt *uint8, args ...any) int
+
+-- Vulkan bindings
+@extern("vkCreateInstance")
+let vkCreateInstance (pInfo *VkInstanceCreateInfo
+                      pAllocator *VkAllocationCallbacks
+                      pInstance **VkInstance) uint32
+
+-- Linker-provided constant (e.g. from a linker script)
+@extern("__stack_top")
+let stackTop *uint8
+```
+
+> **Note — no body:** A function decorated with `@extern` must not have a
+> body. Writing one is a semantic error. The `@extern` attribute is the *sole*
+> replacement for the deprecated `extern let` block syntax.
+
+#### `@packed` — Struct Layout
+
+`@packed` removes all compiler-inserted padding from a struct. Every field is
+placed at the next byte boundary after the previous field, regardless of
+alignment requirements. This produces a layout identical to C's
+`__attribute__((packed))` and is necessary for Vulkan push constants, file
+format headers, and network packets.
+
+```luc
+@packed
+struct VkPushConstant {
+    modelMatrix  [16]float   -- 64 bytes, no padding inserted
+    color        [4]float    -- 16 bytes, immediately follows
+}
+
+@packed
+struct EthernetHeader {
+    dest   [6]ubyte
+    src    [6]ubyte
+    etherType uint16
+}
+```
+
+> **Note:** Using `@packed` on a struct with fields that require alignment
+> greater than 1 byte can cause unaligned memory accesses, which are
+> undefined behaviour on some architectures. Use only when the packed layout
+> is required by an external protocol or API.
+
+#### `@inline` / `@noinline` — Inlining Hints
+
+`@inline` suggests to the LLVM backend that every call site of this function
+should be inlined. `@noinline` prevents inlining even when the optimiser
+would normally choose to inline.
+
+```luc
+@inline
+const dot (a Vec3) (b Vec3) float = {
+    return a.x*b.x + a.y*b.y + a.z*b.z
+}
+
+@noinline
+const handleError (e Error) = {
+    io.printl("error: " + e.message)
+}
+```
+
+#### `@deprecated` — Deprecation Warning
+
+`@deprecated` causes the compiler to emit a warning at every call site or use
+of the annotated symbol. An optional message string explains the replacement.
+
+```luc
+@deprecated("use Vec3:normalise instead")
+let normalize (v Vec3) Vec3 = { ... }
+
+@deprecated
+struct OldConfig { ... }
+```
+
+---
+
+### Compiler Intrinsics
+
+Compiler intrinsics look like function calls but are implemented directly by
+the compiler backend — no function pointer, no call instruction, no overhead
+beyond what the underlying hardware instruction requires.
+
+**Syntax:** `@name(args)` in any expression position.
+
+```
+intrinsic_call  := '@' IDENTIFIER '(' [ intrinsic_arg_list ] ')'
+
+intrinsic_arg_list := intrinsic_arg { ',' intrinsic_arg }
+
+intrinsic_arg   := type                -- for @sizeof(T), @alignof(T), @bitcast(T, x)
+                 | expr                -- all other intrinsics
+```
+
+The parser distinguishes type-argument intrinsics (`@sizeof`, `@alignof`,
+`@bitcast`) from value-argument intrinsics at parse time. For all others,
+arguments are parsed as regular expressions.
+
+#### Categories
+
+**Compile-time type queries** — resolved entirely at compile time. The result
+is a compile-time constant (`isConst = true`) and may be used anywhere a
+`const` initialiser is expected.
+
+| Intrinsic | Arguments | Returns | Notes |
+|---|---|---|---|
+| `@sizeof(T)` | 1 type | `uint64` | Byte size of type `T` in memory |
+| `@alignof(T)` | 1 type | `uint64` | Alignment requirement of `T` in bytes |
+
+**Floating-point math** — maps to hardware-accelerated instructions via LLVM
+overloaded intrinsics. The return type matches the argument type: if `x` is
+`double`, the result is `double`.
+
+| Intrinsic | Arguments | Returns | Notes |
+|---|---|---|---|
+| `@sqrt(x)` | 1 float/double | same as arg | Hardware square root |
+| `@floor(x)` | 1 float/double | same as arg | Round toward −∞ |
+| `@ceil(x)` | 1 float/double | same as arg | Round toward +∞ |
+| `@round(x)` | 1 float/double | same as arg | Round to nearest, half away from zero |
+| `@abs(x)` | 1 numeric | same as arg | Absolute value; works on integers and floats |
+| `@pow(base, exp)` | 2 float/double | same as arg0 | Exponentiation |
+| `@fma(a, b, c)` | 3 float/double | same as arg0 | Fused multiply-add: `(a * b) + c`, single rounding |
+| `@min(a, b)` | 2 same-type | same as arg0 | Minimum value |
+| `@max(a, b)` | 2 same-type | same as arg0 | Maximum value |
+
+**Bit manipulation** — works on integer types only. Return type matches the
+argument. Useful for low-level graphics and systems programming.
+
+| Intrinsic | Arguments | Returns | Notes |
+|---|---|---|---|
+| `@clz(x)` | 1 integer | same as arg | Count leading zero bits |
+| `@ctz(x)` | 1 integer | same as arg | Count trailing zero bits |
+| `@popcount(x)` | 1 integer | same as arg | Count set (1) bits |
+| `@bswap(x)` | 1 integer | same as arg | Reverse byte order (endianness swap) |
+
+**Memory operations** — map to LLVM `memcpy`/`memmove`/`memset` intrinsics
+with full hardware acceleration. All three are `void` (return no value).
+
+| Intrinsic | Arguments | Returns | Notes |
+|---|---|---|---|
+| `@memcpy(dst, src, len)` | dest, src, uint64 | void | Copy `len` bytes; regions must not overlap |
+| `@memmove(dst, src, len)` | dest, src, uint64 | void | Copy `len` bytes; handles overlap |
+| `@memset(dst, val, len)` | dest, ubyte, uint64 | void | Fill `len` bytes with `val` |
+
+**Unsafe / Vulkan** — raw bit-level operations with no runtime cost beyond
+moving data. Use with care; incorrect use is undefined behaviour.
+
+| Intrinsic | Arguments | Returns | Notes |
+|---|---|---|---|
+| `@bitcast(T, x)` | 1 type, 1 value | `T` | Reinterpret bits of `x` as type `T`; sizes must match |
+
+#### Examples
+
+```luc
+-- Compile-time size queries
+const vecSize  uint64 = @sizeof(Vec3)     -- 12 on typical platforms
+const alignment uint64 = @alignof(float)  -- 4
+
+-- Use in a const: @sizeof is isConst = true
+const maxVerts uint64 = 65536
+const bufBytes uint64 = maxVerts * @sizeof(Vertex)
+
+-- Floating-point math
+let len float = @sqrt(v.x*v.x + v.y*v.y + v.z*v.z)
+let t   float = @clamp(@fma(a, b, c), 0.0, 1.0)   -- clamp via @min/@max
+let t   float = @min(@max(@fma(a, b, c), 0.0), 1.0)
+
+-- Bit manipulation
+let bits uint32 = 0b1010_1100
+let n    uint32 = @popcount(bits)    -- 4
+let swap uint32 = @bswap(0xDEADBEEF) -- 0xEFBEADDE  (big/little endian swap)
+
+-- Memory
+let buf [*]ubyte = [*]ubyte {}
+buf.reserve(1024)
+@memset(buf[0], 0, @sizeof(Header))
+@memcpy(dst.ptr, src.ptr, len)
+
+-- Unsafe bit reinterpret (Vulkan / GPU use)
+let asFloat float = @bitcast(float, bits)   -- interpret uint32 bits as float32
+```
+
+> **Note — `@sizeof` vs `float(x)` casts:** `@sizeof(T)` is a compiler
+> intrinsic that returns the byte size of a type at compile time. It is
+> entirely unrelated to explicit type casts like `float(x)` (which use the
+> `from` system or built-in primitive conversion). Do not confuse the two.
+
+> **Note — `@bitcast` vs unsafe `*T(x)` reinterpret:** The legacy pipeline
+> unsafe reinterpret `*float(x)` (raw pointer cast in expression position)
+> still works in `@extern` contexts for Vulkan struct reinterpretation.
+> `@bitcast(T, x)` is the cleaner modern form for the same operation and
+> does not require an `@extern` context.
 
 ## Choice and Fallback Operators
 
@@ -2854,7 +3140,7 @@ let add (a int) (b int) int = { return a + b }
 ## Keywords (Reserved)
 
 ```
-pub extern package module use as impl trait type from
+pub export package module use as impl trait type from
 let const struct enum
 async await parallel
 bool byte short int long ubyte ushort uint ulong
@@ -2864,3 +3150,7 @@ if else match switch case default is
 while for in do return break continue
 and or not true false
 ```
+
+> **Note — `extern` removed:** `extern` is no longer a reserved keyword.
+> External symbol binding is expressed through the `@extern` compiler
+> directive attribute. See the `@` Compiler Directives section.

@@ -11,6 +11,7 @@
 #include "Parser.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdlib> // std::strtoull
 #include <string>
@@ -552,7 +553,7 @@ TypePtr Parser::parseFuncType() {
                                    nextTT == TokenType::IDENTIFIER ||
                                    nextTT == TokenType::LBRACKET ||
                                    nextTT == TokenType::AMPERSAND ||
-                                   nextTT == TokenType::AT ||
+                                   nextTT == TokenType::MUL ||
                                    nextTT == TokenType::LPAREN ||
                                    nextTT == TokenType::VARIADIC);
                 if (nextIsType) {

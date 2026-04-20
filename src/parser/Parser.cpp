@@ -163,11 +163,11 @@ void Parser::synchronize() {
 
         switch (t) {
         // Declaration starters — we are back at the top level.
+        case TokenType::AT_SIGN: // @ compiler directive (may precede any declaration)
         case TokenType::PACKAGE:
         case TokenType::USE:
         case TokenType::PUB:
         case TokenType::EXPORT:
-        case TokenType::EXTERN:
         case TokenType::STRUCT:
         case TokenType::ENUM:
         case TokenType::TRAIT:
@@ -208,10 +208,6 @@ Visibility Parser::parseVisibility() {
     if (match(TokenType::EXPORT))
         return Visibility::Export;
     return Visibility::Private;
-}
-
-bool Parser::consumeExtern() {
-    return match(TokenType::EXTERN);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -560,6 +556,7 @@ bool Parser::looksLikeStmtStart() const {
         case TokenType::PARALLEL:
         case TokenType::MATCH:
         case TokenType::SWITCH:
+        case TokenType::AT_SIGN:   // @intrinsic(...) as an expression statement
         return true;
     default:
         // Any expression-starter is also a valid statement start.
@@ -582,11 +579,11 @@ bool Parser::looksLikeStmtStart() const {
 
 bool Parser::looksLikeDeclStart() const {
     switch (peek().type) {
+        case TokenType::AT_SIGN:   // @ attribute precedes a declaration
         case TokenType::PACKAGE:
         case TokenType::USE:
         case TokenType::PUB:
         case TokenType::EXPORT:
-        case TokenType::EXTERN:
         case TokenType::STRUCT:
         case TokenType::ENUM:
         case TokenType::TRAIT:
@@ -661,11 +658,13 @@ std::unique_ptr<ProgramAST> Parser::parse() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 DeclPtr Parser::parseTopLevelDecl() {
-    // ── 'extern' ──────────────────────────────────────────────────────────────
-    // extern let name (params) [ret]  — no pub, no body
-    if (check(TokenType::EXTERN)) {
-        return parseExternDecl();
-    }
+    // ── Collect leading '@' attributes ───────────────────────────────────────
+    // Attributes precede any declaration:
+    //   @extern("malloc")
+    //   export const malloc (size uint64) *uint8
+    //
+    // We collect them here and attach to whichever declaration follows.
+    std::vector<AttributePtr> attrs = parseAttributes();
 
     // ── Visibility modifier ───────────────────────────────────────────────────
     // All remaining top-level declarations may carry a visibility modifier.
@@ -674,36 +673,50 @@ DeclPtr Parser::parseTopLevelDecl() {
     // ── 'use' ─────────────────────────────────────────────────────────────────
     // 'export use math.vec2' is supported, so use can take a visibility tier.
     if (check(TokenType::USE)) {
+        if (!attrs.empty())
+            errorAt(DiagCode::E2002, "attributes are not valid on 'use' declarations");
         return parseUseDecl(vis);
     }
 
     // ── 'struct' ──────────────────────────────────────────────────────────────
     if (check(TokenType::STRUCT)) {
-        return parseStructDecl(vis);
+        auto decl = parseStructDecl(vis);
+        if (decl) decl->attributes = std::move(attrs);
+        return decl;
     }
 
     // ── 'enum' ────────────────────────────────────────────────────────────────
     if (check(TokenType::ENUM)) {
+        if (!attrs.empty())
+            errorAt(DiagCode::E2002, "attributes are not valid on 'enum' declarations");
         return parseEnumDecl(vis);
     }
 
     // ── 'trait' ───────────────────────────────────────────────────────────────
     if (check(TokenType::TRAIT)) {
+        if (!attrs.empty())
+            errorAt(DiagCode::E2002, "attributes are not valid on 'trait' declarations");
         return parseTraitDecl(vis);
     }
 
     // ── 'impl' ────────────────────────────────────────────────────────────────
     if (check(TokenType::IMPL)) {
+        if (!attrs.empty())
+            errorAt(DiagCode::E2002, "attributes are not valid on 'impl' declarations");
         return parseImplDecl(vis);
     }
 
     // ── 'from' ────────────────────────────────────────────────────────────────
     if (check(TokenType::FROM)) {
+        if (!attrs.empty())
+            errorAt(DiagCode::E2002, "attributes are not valid on 'from' declarations");
         return parseFromDecl(vis);
     }
 
     // ── 'type' ────────────────────────────────────────────────────────────────
     if (check(TokenType::TYPE)) {
+        if (!attrs.empty())
+            errorAt(DiagCode::E2002, "attributes are not valid on 'type' alias declarations");
         return parseTypeAliasDecl(vis);
     }
 
@@ -732,14 +745,18 @@ DeclPtr Parser::parseTopLevelDecl() {
         // Do NOT consume the name yet — parseFuncDecl / parseVarDecl each read
         // it themselves so they can record the correct location.
         if (looksLikeFuncDecl()) {
-            return parseFuncDecl(kw, vis);
+            return parseFuncDecl(kw, vis, std::move(attrs));
         } else {
-            return parseVarDecl(vis);
+            auto decl = parseVarDecl(vis);
+            if (decl) decl->attributes = std::move(attrs);
+            return decl;
         }
     }
 
     // ── Unrecognised token ────────────────────────────────────────────────────
-    if (vis != Visibility::Private) {
+    if (!attrs.empty()) {
+        errorAt(DiagCode::E2002, "expected a declaration after '@' attribute(s)");
+    } else if (vis != Visibility::Private) {
         // A modifier was consumed but no valid declaration followed.
         errorAt(DiagCode::E2002, "expected a declaration after modifier");
     } else {

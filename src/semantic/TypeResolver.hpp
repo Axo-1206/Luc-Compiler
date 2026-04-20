@@ -37,7 +37,8 @@ public:
     void visit(PtrTypeAST& node)            override;
     void visit(FuncTypeAST& node)           override;
 
-    // Call this before resolving types in an extern block so *T is permitted.
+    // Call this before resolving types in an @extern-decorated declaration
+    // so that *T raw pointer types are permitted in that context.
     void setInsideExtern(bool val) { insideExtern_ = val; }
 
     // Set generic parameters context. Called when resolving types within generic declarations

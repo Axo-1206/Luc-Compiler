@@ -21,6 +21,35 @@ SemanticCollector::SemanticCollector(SymbolTable& symbols, DiagnosticEngine& dc)
     : symbols_(symbols), dc_(dc) {}
 
 // ─────────────────────────────────────────────────────────────────────────────
+// extractExternAttr  — Scans an attribute list for @extern and extracts metadata
+//
+// Looks for an AttributeAST named "extern" in the attribute list.
+// If found, fills outSym (C symbol name) and outConv (calling convention).
+// Returns true when @extern is present.
+// This is a Phase 1 fast-path that reads only the literal args — no resolution.
+// ─────────────────────────────────────────────────────────────────────────────
+static bool extractExternAttr(const std::vector<AttributePtr>& attributes,
+                               std::string& outSym,
+                               std::string& outConv) {
+    for (const auto& attr : attributes) {
+        if (attr->name != "extern") continue;
+        // Arg 0: symbol name (string literal).
+        if (!attr->args.empty() &&
+            attr->args[0].argKind == AttributeArgAST::ArgKind::StringLit) {
+            outSym = attr->args[0].value;
+        }
+        // Arg 1: calling convention (string literal), default "C".
+        outConv = "C";
+        if (attr->args.size() >= 2 &&
+            attr->args[1].argKind == AttributeArgAST::ArgKind::StringLit) {
+            outConv = attr->args[1].value;
+        }
+        return true;
+    }
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // collectProgram  — Entry point to index a parsed file
 //
 // Passes each top-level statement through the AST visitor mechanics to process
@@ -50,18 +79,25 @@ void SemanticCollector::declareSymbol(const Symbol& sym) {
 // visit(VarDeclAST)  — Simple top-level global variable/constant registration
 //
 // Inserts the top-level let or const definition name into the global map.
+// If @extern is present, the symbol is tagged as linker-resolved.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(VarDeclAST& node) {
-    declareSymbol({
-        node.name,
-        SymbolKind::Var,
-        node.keyword,
-        node.visibility,
-        node.type.get(),
-        &node,
-        false,
-        node.loc
-    });
+    std::string externSym, callingConv;
+    bool isExtern = extractExternAttr(node.attributes, externSym, callingConv);
+
+    Symbol sym;
+    sym.name         = node.name;
+    sym.kind         = isExtern ? SymbolKind::ExternFunc : SymbolKind::Var;
+    sym.declKw       = node.keyword;
+    sym.visibility   = node.visibility;
+    sym.type         = node.type.get();
+    sym.decl         = &node;
+    sym.isAsync      = false;
+    sym.loc          = node.loc;
+    sym.isExtern     = isExtern;
+    sym.externSymbol = externSym;
+    sym.callingConv  = callingConv;
+    declareSymbol(sym);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,8 +106,14 @@ void SemanticCollector::visit(VarDeclAST& node) {
 // Registers the function identifier in the main scope. Temporarily pushes
 // an inner scope to quickly process arguments, confirming no two parameters 
 // share the same name locally, then instantly discards the parameter bindings.
+// If @extern("sym") is present, the symbol is tagged as linker-resolved and
+// SymbolKind::ExternFunc is used so codegen emits an external declaration.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(FuncDeclAST& node) {
+    // Detect @extern attribute on this function before building the symbol.
+    std::string externSym, callingConv;
+    bool isExtern = extractExternAttr(node.attributes, externSym, callingConv);
+
     // Build signature
     TypePtr sig = nullptr;
     // Iterate groups in REVERSE to build the curry chain
@@ -111,16 +153,19 @@ void SemanticCollector::visit(FuncDeclAST& node) {
     }
     node.signature = std::move(sig);
 
-    declareSymbol({
-        node.name,
-        SymbolKind::Func,
-        node.keyword,
-        node.visibility,
-        node.signature.get(),
-        &node,
-        node.isAsync,
-        node.loc
-    });
+    Symbol sym;
+    sym.name         = node.name;
+    sym.kind         = isExtern ? SymbolKind::ExternFunc : SymbolKind::Func;
+    sym.declKw       = node.keyword;
+    sym.visibility   = node.visibility;
+    sym.type         = node.signature.get();
+    sym.decl         = &node;
+    sym.isAsync      = node.isAsync;
+    sym.loc          = node.loc;
+    sym.isExtern     = isExtern;
+    sym.externSymbol = externSym;
+    sym.callingConv  = callingConv;
+    declareSymbol(sym);
 
     // Register params to check for duplicates
     symbols_.pushScope();
@@ -422,38 +467,4 @@ void SemanticCollector::visit(TypeAliasDeclAST& node) {
         false,
         node.loc
     });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// visit(ExternDeclAST)  — Collects external bindings for LLVM linkers
-//
-// Treat identically to standard `FuncDeclAST` nodes, indexing the base extern
-// function and temporarily asserting parameter label uniqueness.
-// ─────────────────────────────────────────────────────────────────────────────
-void SemanticCollector::visit(ExternDeclAST& node) {
-    declareSymbol({
-        node.name,
-        SymbolKind::Func, // Extern funcs are treated similarly
-        DeclKeyword::Let,
-        Visibility::Private,
-        node.returnType.get(),
-        &node,
-        false,
-        node.loc
-    });
-
-    symbols_.pushScope();
-    for (const auto& param : node.params) {
-        declareSymbol({
-            param->name,
-            SymbolKind::Param,
-            DeclKeyword::Let,
-            Visibility::Private,
-            param->type.get(),
-            param.get(),
-            false,
-            param->loc
-        });
-    }
-    symbols_.popScope();
 }

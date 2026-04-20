@@ -91,8 +91,12 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
         dc_.error(DiagnosticCategory::Semantic, loc, DiagCode::E3006, 
                   "program is missing a 'main' entry point");
     } else if (mainSym->kind != SymbolKind::Func) {
+        // ExternFunc (linker-resolved) is never a valid main entry point.
+        std::string kindNote = (mainSym->kind == SymbolKind::ExternFunc)
+            ? " ('@extern' functions cannot be entry points)"
+            : "";
         dc_.error(DiagnosticCategory::Semantic, mainSym->loc, DiagCode::E3007, 
-                  "'main' must be a function");
+                  "'main' must be a regular function" + kindNote);
     } else {
         auto* func = static_cast<FuncDeclAST*>(mainSym->decl);
         
@@ -187,28 +191,22 @@ void SemanticAnalyzer::collectSymbols(std::vector<ProgramAST*>& files) {
 // ─────────────────────────────────────────────────────────────────────────────
 // resolveTypes  — Phase 2
 // Walks every type annotation in every declaration and validates it.
-// Generic parameters in type aliases and extern declarations are resolved in context.
+// Generic parameters in type aliases are resolved in context.
+// @extern function types are resolved during Phase 3 (checkFuncDecl) when
+// the @extern attribute is detected — no special early pass needed here.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             // Type resolution is done lazily inside checkTopLevelDecl (Phase 3),
-            // but we do a quick pass here for top-level type aliases and extern
-            // declarations so their types are available during the check phase.
+            // but we do a quick pass here for top-level type aliases so their
+            // types are available during the check phase.
             if (decl->isa<TypeAliasDeclAST>()) {
                 auto* ta = decl->as<TypeAliasDeclAST>();
                 // Set generic parameters context for generic type aliases like type Transform<T> = (value T) T
                 typeResolver_->setGenericParams(&ta->genericParams);
                 typeResolver_->resolveType(ta->aliasedType.get());
                 typeResolver_->setGenericParams(nullptr);
-            } else if (decl->isa<ExternDeclAST>()) {
-                auto* ext = decl->as<ExternDeclAST>();
-                typeResolver_->setInsideExtern(true);
-                for (auto& p : ext->params)
-                    typeResolver_->resolveType(p->type.get());
-                if (ext->returnType)
-                    typeResolver_->resolveType(ext->returnType.get());
-                typeResolver_->setInsideExtern(false);
             }
         }
     }

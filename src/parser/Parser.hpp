@@ -141,7 +141,7 @@ class Parser {
     //
     // Synchronisation stops at: IF ELSE FOR WHILE DO RETURN BREAK CONTINUE
     //                            LET CONST STRUCT ENUM TRAIT IMPL TYPE
-    //                            PACKAGE USE EXTERN RBRACE EOF_TOKEN
+    //                            PACKAGE USE AT_SIGN RBRACE EOF_TOKEN
     void synchronize();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -179,9 +179,6 @@ class Parser {
     // Default is Visibility::Private.
     Visibility parseVisibility();
 
-    // Consume EXTERN if present and return true. Only used by parseExternDecl.
-    bool consumeExtern();
-
     // ─────────────────────────────────────────────────────────────────────────
     // ParserType.cpp — type annotation parsing
     // ─────────────────────────────────────────────────────────────────────────
@@ -207,8 +204,8 @@ class Parser {
     // &T — safe managed reference.
     TypePtr parseRefType();
 
-    // *T — raw pointer, only valid inside extern declarations.
-    // The semantic pass enforces the extern-only restriction; the parser
+    // *T — raw pointer, only valid on @extern-decorated declarations.
+    // The semantic pass enforces the restriction; the parser
     // produces PtrTypeAST regardless of context.
     TypePtr parsePtrType();
 
@@ -246,7 +243,7 @@ class Parser {
     // name:
     //   function → next meaningful token after name (and optional generics) is '('
     //   variable → type keyword, named type, '[', '&', '*', or '?'
-    std::unique_ptr<FuncDeclAST> parseFuncDecl(DeclKeyword kw, Visibility vis);
+    std::unique_ptr<FuncDeclAST> parseFuncDecl(DeclKeyword kw, Visibility vis, std::vector<AttributePtr> attrs = {});
 
     // Parse one parameter group '(' [ param_list ] ')'.
     // Used by parseFuncDecl and parseFuncType.
@@ -297,9 +294,16 @@ class Parser {
     // [vis] type IDENTIFIER [<generics>] '=' type
     std::unique_ptr<TypeAliasDeclAST> parseTypeAliasDecl(Visibility vis);
 
-    // extern let IDENTIFIER '(' flat_param_list ')' [ return_type ]
-    // No body, no curry groups, no generics.
-    std::unique_ptr<ExternDeclAST> parseExternDecl();
+    // ── Compiler Directive (@) parsers ────────────────────────────────────────
+
+    // Parse one '@' directive: '@' IDENTIFIER [ '(' attr_args ')' ]
+    // Called before any declaration that may carry attributes.
+    // Returns nullptr if current token is not AT_SIGN.
+    AttributePtr parseAttribute();
+
+    // Parse zero or more '@' directives that precede a declaration.
+    // Stops when the current token is not AT_SIGN.
+    std::vector<AttributePtr> parseAttributes();
 
     // Parse a function body in one of the supported forms:
     //   block form:     '=' '{' stmts '}'
@@ -382,6 +386,9 @@ class Parser {
 
     // await expr
     ExprPtr parseAwaitExpr();
+
+    // @intrinsicName ( [ type | expr, ... ] )
+    ExprPtr parseIntrinsicCallExpr();
 
     // match expr '{' arm* default_arm '}'
     ExprPtr parseMatchExpr();

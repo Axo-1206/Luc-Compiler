@@ -429,6 +429,12 @@ ExprPtr Parser::parsePrimaryExpr() {
     if (check(TokenType::IF))
         return parseIfExpr();
 
+    // ── @intrinsic call ───────────────────────────────────────────────────────
+    // '@' IDENTIFIER '(' args ')'  — compiler-builtin call.
+    // Examples:  @sizeof(Vec2)   @memcpy(dst, src, n)   @sqrt(x)
+    if (check(TokenType::AT_SIGN))
+        return parseIntrinsicCallExpr();
+
     // ── await ─────────────────────────────────────────────────────────────────
     if (check(TokenType::AWAIT))
         return parseAwaitExpr();
@@ -995,6 +1001,89 @@ ExprPtr Parser::parseAnonFuncExpr() {
     if (isAsync)
         --asyncDepth_;
 
+    return node;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// parseIntrinsicCallExpr
+//
+// Grammar:
+//   intrinsic_call := '@' IDENTIFIER '(' [ intrinsic_arg_list ] ')'
+//   intrinsic_arg_list := intrinsic_arg { ',' intrinsic_arg }
+//   intrinsic_arg  := type_name            -- for @sizeof(T), @alignof(T)
+//                   | expr                 -- for @sqrt(x), @memcpy(dst,src,n)
+//
+// The parser uses a simple disambiguation:
+//   If the first argument after '(' is a bare IDENTIFIER that looks like a
+//   named type (not followed by an infix operator), and the intrinsic is a
+//   type-parameter intrinsic (@sizeof / @alignof), we parse it as typeArg.
+//   Otherwise all arguments are parsed as regular expressions.
+//
+// Type-parameter intrinsics:  sizeof, alignof
+// Value-argument intrinsics:  sqrt, abs, min, max, memcpy, memset, ...
+// ─────────────────────────────────────────────────────────────────────────────
+
+ExprPtr Parser::parseIntrinsicCallExpr() {
+    SourceLocation loc = currentLoc();
+    consume(TokenType::AT_SIGN, "expected '@'");
+
+    if (!check(TokenType::IDENTIFIER)) {
+        errorAt(DiagCode::E2003, "expected intrinsic name after '@'");
+        return nullptr;
+    }
+
+    auto node = std::make_unique<IntrinsicCallExprAST>();
+    node->loc           = loc;
+    node->intrinsicName = advance().value; // e.g. "sizeof", "sqrt"
+
+    if (!check(TokenType::LPAREN)) {
+        errorAt(DiagCode::E2001,
+                "expected '(' after intrinsic '@" + node->intrinsicName + "'");
+        return nullptr;
+    }
+    consume(TokenType::LPAREN, "expected '('");
+
+    // ── Decide if the first argument is a type ────────────────────────────────
+    // Type-parameter intrinsics only take one argument and it is a type name.
+    static const std::initializer_list<std::string> typeParamIntrinsics = {
+        "sizeof", "alignof"
+    };
+    bool isTypeParam = false;
+    for (const auto& n : typeParamIntrinsics)
+        if (n == node->intrinsicName) { isTypeParam = true; break; }
+
+    if (isTypeParam) {
+        // Parse a type argument.
+        if (!check(TokenType::RPAREN)) {
+            TypePtr typeArg = parseType();
+            if (!typeArg) {
+                errorAt(DiagCode::E2005,
+                        "expected type argument for '@" + node->intrinsicName + "'");
+            } else {
+                node->typeArg = std::move(typeArg);
+            }
+        }
+    } else {
+        // Parse regular expression arguments.
+        while (!check(TokenType::RPAREN) && !isAtEnd()) {
+            ExprPtr arg = parseExpr();
+            if (!arg) {
+                errorAt(DiagCode::E2008,
+                        "expected argument expression in '@" + node->intrinsicName + "'");
+                break;
+            }
+            node->args.push_back(std::move(arg));
+
+            if (check(TokenType::RPAREN)) break;
+            if (!match(TokenType::COMMA)) {
+                errorAt(DiagCode::E2001,
+                        "expected ',' or ')' in intrinsic argument list");
+                break;
+            }
+        }
+    }
+
+    consume(TokenType::RPAREN, "expected ')' to close intrinsic call");
     return node;
 }
 

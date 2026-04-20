@@ -1989,3 +1989,7 @@
 {"sessionId":"00e876","runId":"pre-fix","hypothesisId":"H12","location":"src/semantic/SemanticStmt.cpp:172","message":"checkBlock statement dispatch","data":{"stmtKind":52,"line":285},"timestamp":1776415811016}
 {"sessionId":"00e876","runId":"pre-fix","hypothesisId":"H12","location":"src/semantic/SemanticStmt.cpp:172","message":"checkBlock statement dispatch","data":{"stmtKind":52,"line":286},"timestamp":1776415811016}
 {"sessionId":"00e876","runId":"pre-fix","hypothesisId":"H12","location":"src/semantic/SemanticStmt.cpp:172","message":"checkBlock statement dispatch","data":{"stmtKind":58,"line":290},"timestamp":1776415811016}
+{"sessionId":"00e876","runId":"pre-fix","hypothesisId":"H12","location":"src/semantic/SemanticStmt.cpp:172","message":"checkBlock statement dispatch","data":{"stmtKind":58,"line":4},"timestamp":1776424803152}
+{"sessionId":"00e876","runId":"pre-fix","hypothesisId":"H12","location":"src/semantic/SemanticStmt.cpp:172","message":"checkBlock statement dispatch","data":{"stmtKind":52,"line":8},"timestamp":1776424803153}
+{"sessionId":"00e876","runId":"pre-fix","hypothesisId":"H12","location":"src/semantic/SemanticStmt.cpp:172","message":"checkBlock statement dispatch","data":{"stmtKind":52,"line":9},"timestamp":1776424803153}
+{"sessionId":"00e876","runId":"pre-fix","hypothesisId":"H12","location":"src/semantic/SemanticStmt.cpp:172","message":"checkBlock statement dispatch","data":{"stmtKind":58,"line":10},"timestamp":1776424803154}

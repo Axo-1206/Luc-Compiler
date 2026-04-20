@@ -9,7 +9,6 @@ Lexer::Lexer(const std::string &source)
     : src(source), pos(0), line(1), column(1) {
 	// ── Modifiers ──────────────────────────────────────────────────────────────
 	keywords["pub"] = TokenType::PUB;
-	keywords["extern"] = TokenType::EXTERN;
 	keywords["export"] = TokenType::EXPORT;
 
 	// ── Top Level ──────────────────────────────────────────────────────────────
@@ -568,7 +567,7 @@ Token Lexer::getNextToken() {
 
 	// ── FFI ────────────────────────────────────────────────────────────────────
 	case '@':
-		return makeToken(TokenType::AT, "@"); // reserved for future feature
+		return makeToken(TokenType::AT_SIGN, "@"); // compiler directive: @extern, @inline, @sizeof, etc.
 
 	// ── Delimiters ─────────────────────────────────────────────────────────────
 	case ',':

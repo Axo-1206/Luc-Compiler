@@ -25,6 +25,7 @@
 enum class SymbolKind {
     Var,
     Func,
+    ExternFunc,   // function declared with @extern("sym") — resolved by the linker
     Struct,
     Enum,
     Trait,
@@ -47,10 +48,17 @@ enum class SymbolKind {
 struct Symbol {
     std::string name;
     SymbolKind kind;
-    DeclKeyword declKw; // Let / Imt / Val (for Var/Func)
+    DeclKeyword declKw; // Let / Const (for Var/Func)
     Visibility visibility;
     TypeAST *type;      // resolved type (non-owning)
     BaseAST *decl;      // back-pointer to the AST node
     bool isAsync = false;
     SourceLocation loc;
+
+    // ── @extern metadata ──────────────────────────────────────────────────────
+    // Populated by SemanticCollector when it encounters an @extern attribute.
+    // Codegen uses these to emit the correct LLVM external declaration.
+    bool        isExtern     = false;  // true → symbol is linker-resolved
+    std::string externSymbol;          // C/OS symbol name, e.g. "malloc"
+    std::string callingConv  = "C";    // calling convention, default "C"
 };

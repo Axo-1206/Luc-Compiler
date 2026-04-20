@@ -185,16 +185,18 @@ void TypeResolver::visit(RefTypeAST& node) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// visit(PtrTypeAST)  — Verifies unsafe raw C pointers exclusively
+// visit(PtrTypeAST)  — Validates raw C pointers in @extern contexts only
 //
-// The language forbids unsafe raw memory pointers anywhere outside explicitly 
-// marked top-level external binding functions interfacing directly with FFI boundaries.
+// The language forbids raw pointer types (*T) everywhere except declarations
+// carrying the @extern attribute. The TypeResolver's insideExtern_ flag is
+// set by checkFuncDecl / checkVarDecl when they detect @extern on the decl.
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(PtrTypeAST& node) {
-    // Standard rule: C pointers '*T' purely valid in FFI boundary scenarios.
+    // *T is only valid in @extern-decorated declaration contexts.
     if (!insideExtern_) {
         dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                  "raw pointers (*T) are only allowed inside extern declarations");
+                  "raw pointers (*T) are only allowed on '@extern'-decorated declarations; "
+                  "use '@bitcast(T, x)' for bit reinterpretation in expression position");
         resolved_ = nullptr;
         return;
     }

@@ -55,8 +55,48 @@
 //   MethodDeclAST       — name (params) [returnType] = body
 //   FromDeclAST         — from (paramName paramType) returnType = body
 //   TypeAliasDeclAST    — [Visibility] type Name [<generics>] = TypeAST
-//   ExternDeclAST       — extern let name (params) [returnType]
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AttributeAST
+//
+// A compiler directive annotation attached to a declaration.
+// Use @extern("name") on a let/const declaration to bind a C/Vulkan symbol.
+//
+// Forms:
+//   @extern("malloc")                  — FFI symbol name
+//   @extern("vkCreateInstance", "C")   — FFI with calling convention
+//   @inline                            — inlining hint
+//   @noinline                          — prevent inlining
+//   @packed                            — remove struct padding
+//   @deprecated("Use newFunc instead") — deprecation warning
+//
+// Parameters are restricted to string literals, integer literals, booleans, and
+// type identifiers — no runtime expressions inside attributes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// AttributeArg — one argument inside an attribute's parentheses.
+// Valid forms:  "string"  |  42  |  true/false  |  TypeName
+struct AttributeArgAST {
+    // Which kind of argument this is.
+    enum class ArgKind { StringLit, IntLit, BoolLit, TypeIdent };
+    ArgKind     argKind;
+    std::string value;   // raw string for StringLit/IntLit/TypeIdent; "true"/"false" for Bool
+    SourceLocation loc;
+};
+
+struct AttributeAST : BaseAST {
+    static constexpr ASTKind staticKind = ASTKind::Attribute;
+
+    std::string name;                               // "extern", "inline", "packed", "deprecated", …
+    std::vector<AttributeArgAST> args;              // may be empty when no () follows
+    SourceLocation loc;
+
+    AttributeAST() : BaseAST(ASTKind::Attribute) {}
+    void accept(ASTVisitor& v) override { v.visit(*this); }
+};
+
+using AttributePtr = std::unique_ptr<AttributeAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Visibility — the three visibility tiers for declarations.
@@ -174,6 +214,7 @@ struct VarDeclAST : DeclAST {
     TypePtr type;        // always present — annotation is required
     ExprPtr init;        // nullptr if no initialiser was written
     Visibility visibility = Visibility::Private;
+    std::vector<AttributePtr> attributes;  // @extern, @inline, etc. — may be empty
 
     VarDeclAST() : DeclAST(ASTKind::VarDecl) {}
 
@@ -276,6 +317,7 @@ struct FuncDeclAST : DeclAST {
     bool isAsync = false;
     TypePtr signature;                              // Synthesized Function Type (signature)
     Visibility visibility = Visibility::Private;
+    std::vector<AttributePtr> attributes;           // @extern("sym"), @inline, etc.
 
     FuncDeclAST() : DeclAST(ASTKind::FuncDecl) {}
 
@@ -355,6 +397,7 @@ struct StructDeclAST : DeclAST {
     std::vector<GenericParamPtr> genericParams; // empty if non-generic
     std::vector<FieldDeclPtr> fields;
     Visibility visibility = Visibility::Private;
+    std::vector<AttributePtr> attributes;       // @packed, @deprecated, etc.
     
     // SEMANTIC PHASE (Phase 1+): A synthesized NamedTypeAST representing
     // the struct as a type. Initialized by SemanticCollector, then stored
@@ -655,36 +698,6 @@ struct TypeAliasDeclAST : DeclAST {
     Visibility visibility = Visibility::Private;
 
     TypeAliasDeclAST() : DeclAST(ASTKind::TypeAliasDecl) {}
-
-    void accept(ASTVisitor& v) override { v.visit(*this); }
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ExternDeclAST
-//
-// An external C / Vulkan symbol declaration — body is absent.
-//   extern let malloc (size uint64) *uint8
-//   extern let vkCreateInstance (pInfo *VkInstanceCreateInfo ...) uint32
-//
-// The `extern` modifier signals to codegen that no body will be generated —
-// the linker resolves the symbol from a C/Vulkan library.
-//
-// Raw pointer types (*T) are only valid inside extern declarations.
-// The semantic pass enforces this by checking that PtrTypeAST nodes appear
-// only as children of ExternDeclAST subtrees.
-//
-// params is a flat list (no curry groups — extern functions are never curried).
-// returnType nullptr = void.
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct ExternDeclAST : DeclAST {
-    static constexpr ASTKind staticKind = ASTKind::ExternDecl;
-
-    std::string name;
-    std::vector<ParamPtr> params;
-    TypePtr returnType; // nullptr = void
-
-    ExternDeclAST() : DeclAST(ASTKind::ExternDecl) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };

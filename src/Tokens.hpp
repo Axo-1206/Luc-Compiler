@@ -14,7 +14,6 @@ enum class TokenType {
 
     // ─── Modifiers ────────────────────────────────────────────────────────────
     PUB,    // pub       - public visibility
-    EXTERN, // extern    - C/Vulkan FFI declaration
     EXPORT, // export    - package manifest: export math { use math.vec2 }
 
     // ─── Top Level ────────────────────────────────────────────────────────────
@@ -26,7 +25,7 @@ enum class TokenType {
     STRUCT,  // struct    - data structure: struct Vec2 { x float  y float }
     ENUM,    // enum      - named constant set: enum Direction { North, South, East, West }
     TRAIT,   // trait     - method contract / generic constraint: trait Drawable { draw () }
-    FROM,    // from      - type casting entry point: from (c Celsius) Fahrenheit = { ... }
+    FROM,    // from      - type conversion entry point: from (c Celsius) Fahrenheit = { ... }
 
     // ─── Declarations ─────────────────────────────────────────────────────────
     LET,     // let       - reassignable, mutable in place, nil allowed
@@ -111,7 +110,7 @@ enum class TokenType {
 
     // Reference & FFI
     AMPERSAND, // &         - reference type: &T  (safe, managed)
-    AT,        // @         - reserved for future feature
+    AT_SIGN,   // @         - compiler directive: @extern("sym"), @inline, @sizeof(T), etc.
 
     // Type operators
     PIPE,     // |         - union type: int | string

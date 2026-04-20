@@ -84,7 +84,6 @@ enum class ASTKind : uint16_t {
     FromEntry,
     ImplDecl,
     TypeAliasDecl,
-    ExternDecl,
 
     // ── Expression nodes ──────────────────────────────────────────────────────
     LiteralExpr,
@@ -136,6 +135,10 @@ enum class ASTKind : uint16_t {
 
     // ── Root ──────────────────────────────────────────────────────────────────
     Program,
+
+    // ── Compiler Directives (@) ───────────────────────────────────────────────
+    Attribute,          // @extern("name"), @inline, @packed, @deprecated("msg")
+    IntrinsicCallExpr,  // @sizeof(T), @memcpy(dest, src, len), @sqrt(x)
 };
 
 // TypeAST.hpp
@@ -169,7 +172,6 @@ struct FromDeclAST;         // from [method definition] - use for type casting
 struct FromEntryAST;        // entry inside the from block
 struct ImplDeclAST;
 struct TypeAliasDeclAST;
-struct ExternDeclAST;
 
 // ExprAST.hpp
 struct LiteralExprAST;
@@ -221,6 +223,11 @@ struct ParallelBlockStmtAST;
 
 // Root
 struct ProgramAST;
+
+// ── Compiler Directive nodes (@) ──────────────────────────────────────────────
+// Defined in DeclAST.hpp and ExprAST.hpp respectively.
+struct AttributeAST;         // @name or @name(args) — attached to declarations
+struct IntrinsicCallExprAST; // @name(args) — in expression position
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IndexKind — distinguishes the two postfix index operations on arrays.
@@ -331,7 +338,6 @@ struct ASTVisitor {
     virtual void visit(TypeAliasDeclAST&)   {}
     virtual void visit(ParamAST&)           {}
     virtual void visit(GenericParamAST&)    {}
-    virtual void visit(ExternDeclAST&)    	{}
     
 
     // ── Expression nodes ──────────────────────────────────────────────────────
@@ -384,6 +390,10 @@ struct ASTVisitor {
 
     // ── Root ──────────────────────────────────────────────────────────────────
     virtual void visit(ProgramAST&)             {}
+
+    // ── Compiler Directive nodes (@) ──────────────────────────────────────────
+    virtual void visit(AttributeAST&)           {}
+    virtual void visit(IntrinsicCallExprAST&)   {}
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

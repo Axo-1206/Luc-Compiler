@@ -142,6 +142,7 @@ static std::string kindToString(SymbolKind kind) {
     switch (kind) {
         case SymbolKind::Var:         return "Var";
         case SymbolKind::Func:        return "Func";
+        case SymbolKind::ExternFunc:  return "ExternFunc";
         case SymbolKind::Struct:      return "Struct";
         case SymbolKind::Enum:        return "Enum";
         case SymbolKind::Trait:       return "Trait";
@@ -175,10 +176,15 @@ void SymbolTable::dump() const {
             
             std::cout << "  - " 
                     << std::left << std::setw(35) << name      // Column 1: Name
-                    << std::left << std::setw(10) << kindStr;  // Column 2: [Kind]
+                    << std::left << std::setw(14) << kindStr;  // Column 2: [Kind]
 
             if (sym.loc.isKnown()) {
                 std::cout << " : " << sym.loc.file << ":" << sym.loc.line;
+            }
+            // Show extern binding info for linker-resolved symbols.
+            if (sym.isExtern) {
+                std::cout << "  [@extern(\"" << sym.externSymbol << "\", \""
+                          << sym.callingConv << "\")]";
             }
             
             std::cout << std::endl;

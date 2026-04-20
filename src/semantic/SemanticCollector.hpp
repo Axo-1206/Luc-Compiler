@@ -49,7 +49,6 @@ public:
     void visit(ImplDeclAST& node) override;
     void visit(FromDeclAST& node) override;
     void visit(TypeAliasDeclAST& node) override;
-    void visit(ExternDeclAST& node) override;
 
 private:
     SymbolTable& symbols_;

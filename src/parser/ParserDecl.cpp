@@ -9,6 +9,7 @@
 #include "Parser.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <string>
@@ -18,9 +19,12 @@
 //
 // Implements every declaration parse function declared in Parser.hpp.
 // This file handles all top-level constructs: use, module, var, func, struct,
-// enum, trait, impl (with from/method bodies), type alias, and extern.
+// enum, trait, impl (with from/method bodies), type alias, and the
+// '@' compiler directive attributes.
 //
 // Entry points (called from Parser.cpp::parseTopLevelDecl):
+//   parseAttributes()        — zero or more '@' directives
+//   parseAttribute()         — one '@' IDENTIFIER [ '(' args ')' ]
 //   parseUseDecl(vis)
 //   parseVarDecl(vis)
 //   parseFuncDecl(kw, vis)
@@ -30,7 +34,6 @@
 //   parseImplDecl(vis)
 //   parseFromDecl(vis)
 //   parseTypeAliasDecl(vis)
-//   parseExternDecl()
 //
 // Internal helpers used across multiple parsers:
 //   parseParamGroup()        — one '(' param* ')'
@@ -47,6 +50,100 @@
 //
 // Grammar source: LUC_GRAMMAR.md
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// parseAttributes / parseAttribute
+//
+// Grammar:
+//   attributes    := { attribute }
+//   attribute     := '@' IDENTIFIER [ '(' attr_arg_list ')' ]
+//   attr_arg_list := attr_arg { ',' attr_arg }
+//   attr_arg      := STRING_LITERAL
+//                  | INT_LITERAL | HEX_LITERAL | BINARY_LITERAL
+//                  | 'true' | 'false'
+//                  | IDENTIFIER      -- type name used in @sizeof(T)
+//
+// Examples:
+//   @extern("malloc")
+//   @extern("vkCreateInstance", "C")
+//   @inline
+//   @packed
+//   @deprecated("Use newAlloc instead")
+//
+// Parameters are intentionally restricted to compile-time literals and type
+// identifiers — no runtime expressions inside attribute argument lists.
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::vector<AttributePtr> Parser::parseAttributes() {
+    std::vector<AttributePtr> attrs;
+    while (check(TokenType::AT_SIGN)) {
+        AttributePtr attr = parseAttribute();
+        if (attr)
+            attrs.push_back(std::move(attr));
+    }
+    return attrs;
+}
+
+AttributePtr Parser::parseAttribute() {
+    if (!check(TokenType::AT_SIGN))
+        return nullptr;
+
+    SourceLocation loc = currentLoc();
+    advance(); // consume '@'
+
+    if (!check(TokenType::IDENTIFIER)) {
+        errorAt(DiagCode::E2003, "expected attribute name after '@'");
+        return nullptr;
+    }
+
+    auto attr = std::make_unique<AttributeAST>();
+    attr->loc  = loc;
+    attr->name = advance().value; // consume attribute name
+
+    // Optional argument list: '(' attr_arg { ',' attr_arg } ')'
+    if (match(TokenType::LPAREN)) {
+        while (!check(TokenType::RPAREN) && !isAtEnd()) {
+            match(TokenType::COMMA); // optional separator
+            if (check(TokenType::RPAREN)) break;
+
+            SourceLocation argLoc = currentLoc();
+            AttributeArgAST arg;
+            arg.loc = argLoc;
+
+            if (check(TokenType::STRING_LITERAL)) {
+                arg.argKind = AttributeArgAST::ArgKind::StringLit;
+                arg.value   = advance().value;
+            } else if (checkAny({TokenType::INT_LITERAL, TokenType::HEX_LITERAL,
+                                  TokenType::BINARY_LITERAL})) {
+                arg.argKind = AttributeArgAST::ArgKind::IntLit;
+                arg.value   = advance().value;
+            } else if (check(TokenType::TRUE)) {
+                arg.argKind = AttributeArgAST::ArgKind::BoolLit;
+                arg.value   = "true";
+                advance();
+            } else if (check(TokenType::FALSE)) {
+                arg.argKind = AttributeArgAST::ArgKind::BoolLit;
+                arg.value   = "false";
+                advance();
+            } else if (check(TokenType::IDENTIFIER)) {
+                // Type identifier: @sizeof(Vec2), @extern("sym", "C")
+                arg.argKind = AttributeArgAST::ArgKind::TypeIdent;
+                arg.value   = advance().value;
+            } else {
+                errorAt(DiagCode::E2009,
+                        "attribute argument must be a string, integer, boolean, or type name");
+                // Skip to closing paren.
+                while (!check(TokenType::RPAREN) && !isAtEnd()) advance();
+                break;
+            }
+
+            attr->args.push_back(std::move(arg));
+        }
+        consume(TokenType::RPAREN, "expected ')' to close attribute argument list");
+    }
+
+    return attr;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // parsePackageDecl
@@ -195,7 +292,7 @@ std::unique_ptr<VarDeclAST> Parser::parseVarDecl(Visibility vis) {
 // pos_ is on the IDENTIFIER (function name).
 // ─────────────────────────────────────────────────────────────────────────────
 
-std::unique_ptr<FuncDeclAST> Parser::parseFuncDecl(DeclKeyword kw, Visibility vis) {
+std::unique_ptr<FuncDeclAST> Parser::parseFuncDecl(DeclKeyword kw, Visibility vis, std::vector<AttributePtr> attrs) {
     SourceLocation loc = currentLoc();
 
     // Name
@@ -210,6 +307,7 @@ std::unique_ptr<FuncDeclAST> Parser::parseFuncDecl(DeclKeyword kw, Visibility vi
     node->keyword = kw;
     node->name = std::move(name);
     node->visibility = vis;
+    node->attributes = std::move(attrs);
 
     // Optional generic params: '<' T [ : Trait ] { ',' ... } '>'
     if (check(TokenType::LESS)) {
@@ -229,6 +327,28 @@ std::unique_ptr<FuncDeclAST> Parser::parseFuncDecl(DeclKeyword kw, Visibility vi
     // Optional return type — anything that looks like a type but is not '='
     if (looksLikeType() && !check(TokenType::ASSIGN)) {
         node->returnType = parseType();
+    }
+
+    // Check for @extern attribute
+    bool isExtern = false;
+    for (const auto& attr : node->attributes) {
+        if (attr->name == "extern") {
+            isExtern = true;
+            break;
+        }
+    }
+
+    // if @extern, body is OPTIONAL (actually it MUST be absent, but we allow 
+    // the '=' to be absent here and let the semantic pass emit a better error 
+    // if a body IS provided).
+    if (isExtern) {
+        // If there is an '=', it's a syntax error for @extern
+        if (check(TokenType::ASSIGN)) {
+            errorAt(DiagCode::E2002, "'@extern' function '" + node->name + "' must not have a body");
+            // Consume it anyway to recover
+            node->body = parseFuncBody(node->bodyKind, node->isAsync);
+        }
+        return node;
     }
 
     // '=' func_body
@@ -950,47 +1070,6 @@ std::unique_ptr<TypeAliasDeclAST> Parser::parseTypeAliasDecl(Visibility vis) {
     node->aliasedType = parseType();
     if (!node->aliasedType) {
         errorAt(DiagCode::E2005, "expected type on the right-hand side of type alias");
-    }
-
-    return node;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// parseExternDecl
-//
-// Grammar:
-//   extern_decl := 'extern' 'let' IDENTIFIER '(' [ param_list ] ')' [ return_type ]
-//
-// No body — the linker resolves the symbol.
-// No curry groups — extern functions are always single-group.
-// No generics — extern functions have fixed C/Vulkan signatures.
-// ─────────────────────────────────────────────────────────────────────────────
-
-std::unique_ptr<ExternDeclAST> Parser::parseExternDecl() {
-    SourceLocation loc = currentLoc();
-    consume(TokenType::EXTERN, "expected 'extern'");
-
-    // 'extern' must be followed by 'let'
-    if (!check(TokenType::LET)) {
-        errorAt(DiagCode::E2001, "expected 'let' after 'extern'");
-        return nullptr;
-    }
-    advance(); // consume 'let'
-
-    if (!check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected function name after 'extern let'");
-        return nullptr;
-    }
-    std::string name = advance().value;
-
-    auto node = std::make_unique<ExternDeclAST>();
-    node->loc = loc;
-    node->name = std::move(name);
-    node->params = parseParamGroup();
-
-    // Optional return type
-    if (looksLikeType()) {
-        node->returnType = parseType();
     }
 
     return node;
