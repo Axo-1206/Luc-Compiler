@@ -119,26 +119,3 @@ Source (.luc)
     ▼
 [ JIT / Codegen ]   
 ```
-
----
-
-## Semantic Phase — Goals
-
-The semantic pass is the current focus. It must enforce:
-
-- [ ] Symbol table construction and scope resolution
-- [ ] Type checking
-- [ ] Table field validation (typed composites)
-- [ ] Module import resolution (must resolve at semantic time)
-- [ ] Function signature checking
-- [ ] Rejection of class / inheritance constructs (hard language rule)
-- [ ] Nullable type enforcement (non-nullable types reject nil at semantic time)
-
----
-
-## Variable Declaration Model
-
-| Keyword | Reassignable | Mutable in place | Value known at | Nil allowed |
-|---|---|---|---|---|
-| `let` | ✅ | ✅ | runtime | ✅ |
-| `const` | ❌ | ❌ | **compile time** | ❌ |
