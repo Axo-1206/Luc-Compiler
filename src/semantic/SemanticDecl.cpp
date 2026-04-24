@@ -338,11 +338,14 @@ void checkVarDecl(VarDeclAST& node, SymbolTable& symbols, TypeResolver& resolver
     TypeAST* declaredType = resolver.resolveType(node.type.get());
     if (!declaredType) return; // resolver already emitted a diagnostic
 
-    // 2. const requires an initialiser.
+    // 2. const or non-nullable types require an initialiser.
     if (!node.init) {
         if (node.keyword == DeclKeyword::Const) {
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                      "const '" + node.name + "' must have an initialiser");
+        } else if (!TypeChecker::isNullable(declaredType)) {
+            dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                     "variable '" + node.name + "' must have an initial value because it is not nullable");
         }
         return;
     }

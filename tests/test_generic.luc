@@ -1,0 +1,19 @@
+package tests
+
+struct Animal<T> {
+    name string
+    age  int
+}
+
+impl<T> Animal<T> {
+    method (param type) returnType = {
+        
+    }
+}
+
+export const main () int = {
+
+    let a int
+    
+    return 0
+}
