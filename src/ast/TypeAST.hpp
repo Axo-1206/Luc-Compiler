@@ -129,13 +129,30 @@ struct PrimitiveTypeAST : TypeAST {
 // <int> in Buffer<int>. These are TypeAST nodes, not GenericParamAST nodes
 // (which are on declarations). The semantic pass resolves the name against
 // the symbol table and verifies the arg count matches the declaration.
+//
+// isGenericParam (Semantic Phase):
+//   Set to true by TypeResolver::visit(NamedTypeAST) when the name matches a
+//   generic type parameter declared on the enclosing declaration (e.g. T in
+//   struct Box<T> or let process<T>). This distinguishes abstract parameters
+//   like T from concrete types like Circle or int.
+//
+//   Codegen uses this flag in Pass 0 to skip instantiation collection for
+//   abstract uses — InstKey{"Box", ["T"]} is meaningless and must not be
+//   recorded. Only NamedTypeASTs with isGenericParam == false represent
+//   concrete types suitable for monomorphization.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct NamedTypeAST : TypeAST {
     static constexpr ASTKind staticKind = ASTKind::NamedType;
 
-    std::string            name;         // "Vec2", "Buffer", "Map", ...
-    std::vector<TypePtr>   genericArgs;  // concrete type args — empty if non-generic
+    std::string            name;              // "Vec2", "Buffer", "Map", ...
+    std::vector<TypePtr>   genericArgs;       // concrete type args — empty if non-generic
+
+    // ── Semantic annotation (written by TypeResolver, read by codegen) ────────
+    // True when this name refers to a generic type parameter (e.g. T, K, V)
+    // rather than a declared struct, enum, or type alias. Set during Phase 2a
+    // (TypeResolver::visit). Never true after TypeAlias unwrapping.
+    bool isGenericParam = false;
 
     explicit NamedTypeAST(std::string n)
         : TypeAST(ASTKind::NamedType), name(std::move(n)) {}

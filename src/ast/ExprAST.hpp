@@ -374,13 +374,44 @@ struct FieldAccessExprAST : ExprAST {
 //
 // The semantic pass resolves typeName to a struct in the symbol table, then
 // looks up method in its merged impl surface.
+//
+// Codegen annotations (written by checkBehaviorAccessExpr, read by codegen):
+//
+//   concreteTypeArgs — the concrete type argument strings extracted from the
+//     receiver variable's declared type. Empty for non-generic structs.
+//     Example: for  scene:drawAll()  where scene is Scene<Circle>,
+//              concreteTypeArgs = ["Circle"]
+//     Example: for  cache:insert()   where cache is Cache<string, int>,
+//              concreteTypeArgs = ["string", "int"]
+//     Only populated when all type args are concrete (isGenericParam == false).
+//     Abstract uses inside a generic body (T, K, V) produce an empty vector.
+//
+//   resolvedMangledName — the fully qualified LLVM function name that codegen
+//     must look up in the function registry. Built from typeName, concreteTypeArgs,
+//     and method by checkBehaviorAccessExpr.
+//     Example: scene:drawAll()  where scene is Scene<Circle>
+//              → "Scene<Circle>.drawAll"
+//     Example: v:normalize()    where v is Vec2  (non-generic)
+//              → "Vec2.normalize"
+//     Example: inside generic body where receiver is T-typed
+//              → empty string (codegen must use substitution map at runtime)
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct BehaviorAccessExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::BehaviorAccessExpr;
 
-    std::string typeName;   // "Vec2", "Circle"
-    std::string method;     // "normalize", "draw"
+    std::string typeName;   // resolved struct base name: "Vec2", "Scene"
+    std::string method;     // method name: "normalize", "drawAll"
+
+    // ── Codegen annotations (written by semantic Phase 3b) ───────────────────
+    // Concrete type args from the receiver's declared type. Empty for
+    // non-generic structs or when the receiver type is itself abstract (T).
+    std::vector<std::string> concreteTypeArgs;
+
+    // Fully qualified LLVM function name for direct registry lookup.
+    // Empty when the receiver type is abstract (inside a generic body) —
+    // codegen must resolve through the active TypeSubst map in that case.
+    std::string resolvedMangledName;
 
     BehaviorAccessExprAST() : ExprAST(ASTKind::BehaviorAccessExpr) {}
 

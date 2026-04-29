@@ -67,12 +67,21 @@ void TypeResolver::visit(NamedTypeAST& node) {
         for (auto& gp : *genericParams_) {
             if (gp && gp->name == node.name) {
                 // This is a valid generic type parameter. Resolve it as a NamedTypeAST.
-                // The node itself represents the generic param — no further resolution needed.
+                // Stamp isGenericParam so codegen Pass 0 can distinguish abstract uses
+                // (T, K, V) from concrete struct/enum types (Circle, int) without
+                // repeating the symbol table lookup.
+                node.isGenericParam = true;
                 resolved_ = &node;
                 return;
             }
         }
     }
+
+    // If we reach here, this name is NOT a generic parameter.
+    // Explicitly set false — important when the same NamedTypeAST node is
+    // re-resolved in a different generic context (e.g. multiple checkFuncDecl
+    // calls that each set different genericParams_ on the resolver).
+    node.isGenericParam = false;
 
     // CHECK 2: Lookup the identifier in the global symbol table.
     // Lookup the identifier natively defined by the programmer in the symbol table.

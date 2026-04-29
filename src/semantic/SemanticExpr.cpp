@@ -188,9 +188,90 @@ static TypeAST* checkFieldAccessExpr(FieldAccessExprAST& node, SymbolTable& symb
 // call site must be the *inner* type after self is consumed — i.e. the return
 // type of the outer FuncTypeAST.  We strip that one level here so that
 // subsequent CallExpr checks see the correct user-facing signature.
+//
+// Codegen annotations stamped here:
+//   node.concreteTypeArgs    — concrete type arg strings from the receiver's
+//                              declared type (e.g. ["Circle"] for Scene<Circle>).
+//                              Empty for non-generic structs or when the
+//                              receiver type is itself abstract (T inside a
+//                              generic body, identified by isGenericParam).
+//   node.resolvedMangledName — fully qualified LLVM function name for direct
+//                              registry lookup in codegen Pass 0 and Pass 2.
+//                              e.g. "Scene<Circle>.drawAll" or "Vec2.normalize".
+//                              Empty when the receiver type is abstract —
+//                              codegen must use its TypeSubst map in that case.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Helper: map PrimitiveKind to its canonical Luc type name string.
+// Used by checkBehaviorAccessExpr and other semantic helpers that need to
+// produce stable type-name strings for codegen annotations.
+static const char* primitiveKindName(PrimitiveKind k) {
+    switch (k) {
+        case PrimitiveKind::Bool:    return "bool";
+        case PrimitiveKind::Byte:    return "byte";
+        case PrimitiveKind::Short:   return "short";
+        case PrimitiveKind::Int:     return "int";
+        case PrimitiveKind::Long:    return "long";
+        case PrimitiveKind::Ubyte:   return "ubyte";
+        case PrimitiveKind::Ushort:  return "ushort";
+        case PrimitiveKind::Uint:    return "uint";
+        case PrimitiveKind::Ulong:   return "ulong";
+        case PrimitiveKind::Int8:    return "int8";
+        case PrimitiveKind::Int16:   return "int16";
+        case PrimitiveKind::Int32:   return "int32";
+        case PrimitiveKind::Int64:   return "int64";
+        case PrimitiveKind::Uint8:   return "uint8";
+        case PrimitiveKind::Uint16:  return "uint16";
+        case PrimitiveKind::Uint32:  return "uint32";
+        case PrimitiveKind::Uint64:  return "uint64";
+        case PrimitiveKind::Float:   return "float";
+        case PrimitiveKind::Double:  return "double";
+        case PrimitiveKind::Decimal: return "decimal";
+        case PrimitiveKind::String:  return "string";
+        case PrimitiveKind::Char:    return "char";
+        case PrimitiveKind::Any:     return "any";
+    }
+    return "";
+}
+
+// Helper: extract a stable type-name string from a single type arg node.
+// Returns an empty string when the type is abstract (a generic param) or
+// unsupported — callers treat empty as "skip this instantiation".
+static std::string typeArgString(TypeAST* t) {
+    if (!t) return "";
+    if (t->isa<PrimitiveTypeAST>())
+        return primitiveKindName(t->as<PrimitiveTypeAST>()->primitiveKind);
+    if (t->isa<NamedTypeAST>()) {
+        auto* named = t->as<NamedTypeAST>();
+        // isGenericParam is stamped by TypeResolver::visit(NamedTypeAST).
+        // Abstract params (T, K, V) must not produce instantiation keys.
+        if (named->isGenericParam) return "";
+        return named->name;
+    }
+    return "";
+}
+
+// Helper: build the mangled LLVM name for a generic or non-generic method.
+//   Non-generic:  "Vec2.normalize"
+//   Generic:      "Scene<Circle>.drawAll"
+//   Abstract:     "" (empty — receiver type is a generic param, codegen uses TypeSubst)
+static std::string buildMangledMethodName(const std::string& structName,
+                                          const std::vector<std::string>& typeArgs,
+                                          const std::string& method) {
+    if (typeArgs.empty())
+        return structName + "." + method;
+
+    std::string name = structName + "<";
+    for (size_t i = 0; i < typeArgs.size(); ++i) {
+        if (i) name += ",";
+        name += typeArgs[i];
+    }
+    name += ">." + method;
+    return name;
+}
+
 static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable& symbols,
-                                         TypeResolver& resolver, DiagnosticEngine& dc) {
+                                         DiagnosticEngine& dc) {
     Symbol* lhsSym = symbols.lookup(node.typeName);
     if (!lhsSym) {
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
@@ -198,10 +279,10 @@ static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable
         return nullptr;
     }
 
-    // DISALLOW STATIC ACCESS: The ':' operator must be used on an instance (Var, Param, or Field).
-    if (lhsSym->kind != SymbolKind::Var && lhsSym->kind != SymbolKind::Param && lhsSym->kind != SymbolKind::Field) {
+    // DISALLOW STATIC ACCESS: The ':' operator must be used on an instance (Var or Param).
+    if (lhsSym->kind != SymbolKind::Var && lhsSym->kind != SymbolKind::Param) {
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                 "behavior access ':' is only valid on instances; '" + node.typeName + 
+                 "behavior access ':' is only valid on instances; '" + node.typeName +
                  "' is a type name. Use an instance variable instead.");
         return nullptr;
     }
@@ -213,34 +294,8 @@ static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable
         return nullptr;
     }
 
-    std::string actualTypeName = lhsSym->type->as<NamedTypeAST>()->name;
-
-    // ── GENERIC PARAMETER SUPPORT ───────────────────────────────────────────
-    // If the type name is a generic parameter, check its constraints for the method.
-    if (resolver.getGenericParams()) {
-        for (auto& gp : *resolver.getGenericParams()) {
-            if (gp && gp->name == actualTypeName) {
-                // Look for the method in EACH constraint trait.
-                for (auto& constraintName : gp->constraints) {
-                    std::string traitMangled = constraintName + "." + node.method;
-                    Symbol* traitMethodSym = symbols.lookup(traitMangled);
-                    if (traitMethodSym && traitMethodSym->kind == SymbolKind::Method) {
-                        // Strip the outermost self-group (Trait -> ...)
-                        TypeAST* exposedType = traitMethodSym->type;
-                        if (exposedType && exposedType->isa<FuncTypeAST>()) {
-                            TypeAST* inner = exposedType->as<FuncTypeAST>()->returnType.get();
-                            if (inner) exposedType = inner;
-                        }
-                        
-                        node.resolvedType = exposedType;
-                        node.isBehaviorMember = true;
-                        return exposedType;
-                    }
-                }
-            }
-        }
-    }
-
+    auto* receiverNamedType = lhsSym->type->as<NamedTypeAST>();
+    std::string actualTypeName = receiverNamedType->name;
     std::string mangled = actualTypeName + "." + node.method;
 
     Symbol* sym = symbols.lookup(mangled);
@@ -251,6 +306,37 @@ static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable
     }
     node.isBehaviorMember = true;
 
+    // ── Codegen annotations ───────────────────────────────────────────────────
+    // Collect concrete type args from the receiver's declared type.
+    // Only populated when the receiver is a concrete generic instantiation —
+    // e.g. Scene<Circle> gives ["Circle"], Cache<string,int> gives ["string","int"].
+    // Abstract receivers (T inside a generic body, where isGenericParam == true)
+    // produce an empty vector — codegen uses its TypeSubst map in that case.
+    std::vector<std::string> concreteArgs;
+    bool receiverIsAbstract = receiverNamedType->isGenericParam;
+
+    if (!receiverIsAbstract) {
+        for (auto& arg : receiverNamedType->genericArgs) {
+            std::string s = typeArgString(arg.get());
+            if (s.empty()) {
+                // One abstract arg makes the whole instantiation abstract.
+                // Clear whatever we collected and stop.
+                concreteArgs.clear();
+                receiverIsAbstract = true;
+                break;
+            }
+            concreteArgs.push_back(std::move(s));
+        }
+    }
+
+    // Build the fully-resolved mangled name for direct codegen lookup.
+    // Empty when the receiver is abstract — codegen's TypeSubst handles it.
+    node.concreteTypeArgs    = concreteArgs;
+    node.resolvedMangledName = receiverIsAbstract
+        ? ""
+        : buildMangledMethodName(actualTypeName, concreteArgs, node.method);
+
+    // ── Existing resolution (unchanged) ──────────────────────────────────────
     // sym->type is the full (Self) -> ... FuncTypeAST built by SemanticCollector.
     // Strip the outermost self-group so the resolved type reflects what callers
     // actually pass — e.g. p:offset resolves to (dx float) -> (dy float) -> Point.
@@ -261,9 +347,9 @@ static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable
     }
 
     node.resolvedType = exposedType;
-    // Update the node's type name to the resolved struct name for downstream passes.
+    // Update the node's type name to the resolved struct base name.
     node.typeName = actualTypeName;
-    
+
     return exposedType;
 }
 
@@ -1953,7 +2039,7 @@ TypeAST* checkExpr(ExprAST* node, SymbolTable& symbols, TypeResolver& resolver,
 
         case ASTKind::BehaviorAccessExpr:
             return checkBehaviorAccessExpr(*node->as<BehaviorAccessExprAST>(),
-                                           symbols, resolver, dc);
+                                           symbols, dc);
 
         case ASTKind::BinaryExpr:
             return checkBinaryExpr(*node->as<BinaryExprAST>(), symbols, resolver, dc,
