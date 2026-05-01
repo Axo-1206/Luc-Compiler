@@ -79,6 +79,11 @@ bool TypeChecker::isEqual(TypeAST* a, TypeAST* b) {
 bool TypeChecker::isAssignable(TypeAST* from, TypeAST* to) {
     if (!from || !to) return false;
 
+    // 0. If target is 'any', everything is assignable (boxing)
+    if (to->isa<PrimitiveTypeAST>() && to->as<PrimitiveTypeAST>()->primitiveKind == PrimitiveKind::Any) {
+        return true;
+    }
+
     // Quick exit: identical pointer = same allocated node = same type.
     if (from == to) return true;
 
