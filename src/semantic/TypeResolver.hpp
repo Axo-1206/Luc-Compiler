@@ -52,10 +52,18 @@ public:
         return genericParams_;
     }
 
+    // Set substitution map for generic parameters (e.g. { "T": int }).
+    // Used during struct literal checking and method checking to resolve abstract
+    // generic types (T) to concrete types (int).
+    void setSubstitutionMap(const std::unordered_map<std::string, TypeAST*>* map) {
+        substitutionMap_ = map;
+    }
+
 private:
     SymbolTable& symbols_;
     DiagnosticEngine& dc_;
     TypeAST* resolved_ = nullptr;
     bool insideExtern_ = false;
     const std::vector<GenericParamPtr>* genericParams_ = nullptr;
+    const std::unordered_map<std::string, TypeAST*>* substitutionMap_ = nullptr;
 };

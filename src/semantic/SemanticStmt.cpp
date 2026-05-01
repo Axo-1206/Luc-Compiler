@@ -267,8 +267,29 @@ static void checkIfStmt(IfStmtAST& node, SymbolTable& symbols, TypeResolver& res
     }
 
     if (node.thenBranch) {
+        // If the condition is 'x is T', narrow 'x' to 'T' inside the then-branch.
+        bool narrowed = false;
+        if (node.condition->kind == ASTKind::IsExpr) {
+            auto* isExpr = static_cast<IsExprAST*>(node.condition.get());
+            if (isExpr->expr->kind == ASTKind::IdentifierExpr) {
+                auto* ident = static_cast<IdentifierExprAST*>(isExpr->expr.get());
+                Symbol* originalSym = symbols.lookup(ident->name);
+                if (originalSym) {
+                    symbols.pushScope();
+                    narrowed = true;
+                    Symbol narrowedSym = *originalSym;
+                    narrowedSym.type = isExpr->checkType.get();
+                    symbols.declare(narrowedSym);
+                }
+            }
+        }
+
         checkStmt(node.thenBranch.get(), symbols, resolver, dc, expectedReturn,
                   asyncDepth, loopDepth, parallelDepth, insideExtern);
+
+        if (narrowed) {
+            symbols.popScope();
+        }
     }
     if (node.elseBranch) {
         checkStmt(node.elseBranch.get(), symbols, resolver, dc, expectedReturn,

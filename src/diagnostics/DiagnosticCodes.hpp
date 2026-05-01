@@ -79,4 +79,5 @@ enum class DiagCode : uint32_t {
     // Displayed as W3001, W3002, etc. in diagnostic output.
     W3001 = 5001, ///< '@extern' function declared with 'let' — should be 'const'.
     W3002 = 5002, ///< '@extern' function has an empty body '= {}' that will be ignored.
+    W3003 = 5003, ///< Performing operation on nullable type; value may be nil at runtime.
 };

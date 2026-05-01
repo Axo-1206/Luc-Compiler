@@ -91,13 +91,18 @@ int main(int argc, char* argv[]) {
     
     bool success = analyzer.analyze(files);
     
-    if (!success || dc.hasErrors()) {
+    if (dc.hasErrors()) {
         std::cerr << "\n>>> Semantic Analysis FAILED:" << std::endl;
         dc.dumpAll(std::cerr);
         return 1;
     }
 
-    std::cout << ">>> Semantic Analysis SUCCESSFUL!" << std::endl;
+    if (dc.hasWarnings()) {
+        std::cerr << "\n>>> Semantic Analysis SUCCESSFUL with warnings:" << std::endl;
+        dc.dumpAll(std::cerr);
+    } else {
+        std::cout << "\n>>> Semantic Analysis SUCCESSFUL!" << std::endl;
+    }
     
     file.close();
 

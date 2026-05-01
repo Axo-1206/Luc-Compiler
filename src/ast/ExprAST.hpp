@@ -297,6 +297,10 @@ struct StructLiteralExprAST : ExprAST {
     std::vector<TypePtr>             genericArgs;   // empty if non-generic
     std::vector<FieldInitAST>        inits;         // field = expr entries
 
+    /// The synthesized concrete type of this struct literal (e.g., Box<int>).
+    /// Used when the literal is part of a generic instantiation.
+    std::unique_ptr<NamedTypeAST>    instantiatedType;
+
     StructLiteralExprAST() : ExprAST(ASTKind::StructLiteralExpr) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }

@@ -65,14 +65,22 @@ void TypeResolver::visit(NamedTypeAST& node) {
     // requiring a global symbol entry.
     if (genericParams_) {
         for (auto& gp : *genericParams_) {
-            if (gp && gp->name == node.name) {
-                // This is a valid generic type parameter. Resolve it as a NamedTypeAST.
-                // Stamp isGenericParam so codegen Pass 0 can distinguish abstract uses
-                // (T, K, V) from concrete struct/enum types (Circle, int) without
-                // repeating the symbol table lookup.
-                node.isGenericParam = true;
-                resolved_ = &node;
-                return;
+            if (gp) {
+                if (gp->name == node.name) {
+                    // If we have a substitution map and this parameter is in it,
+                    // resolve to the substituted concrete type.
+                    if (substitutionMap_) {
+                        auto it = substitutionMap_->find(node.name);
+                        if (it != substitutionMap_->end()) {
+                            resolved_ = it->second;
+                            return;
+                        }
+                    }
+
+                    node.isGenericParam = true;
+                    resolved_ = &node;
+                    return;
+                }
             }
         }
     }

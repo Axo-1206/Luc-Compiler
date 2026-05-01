@@ -77,11 +77,25 @@ bool TypeChecker::isEqual(TypeAST* a, TypeAST* b) {
 // Uses ASTKind-based isa<>/as<> helpers instead of dynamic_cast — zero RTTI overhead.
 // ─────────────────────────────────────────────────────────────────────────────
 bool TypeChecker::isAssignable(TypeAST* from, TypeAST* to) {
-    if (!from || !to) return false;
+    // 0.1 Handle nil assignment
+    if (!from) {
+        return isNullable(to);
+    }
+    if (!to) return false;
 
-    // 0. If target is 'any', everything is assignable (boxing)
+    // 0.2 Handle target 'any' (boxing)
     if (to->isa<PrimitiveTypeAST>() && to->as<PrimitiveTypeAST>()->primitiveKind == PrimitiveKind::Any) {
         return true;
+    }
+
+    // 0.3 Handle implicit wrapping into nullable (T -> T?)
+    if (to->isa<NullableTypeAST>() && !from->isa<NullableTypeAST>()) {
+        return isAssignable(from, to->as<NullableTypeAST>()->inner.get());
+    }
+
+    // 0.4 Handle nullable to nullable (T? -> T?)
+    if (from->isa<NullableTypeAST>() && to->isa<NullableTypeAST>()) {
+        return isAssignable(from->as<NullableTypeAST>()->inner.get(), to->as<NullableTypeAST>()->inner.get());
     }
 
     // Quick exit: identical pointer = same allocated node = same type.

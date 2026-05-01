@@ -41,6 +41,44 @@ void checkStmt(StmtAST* node, SymbolTable& symbols, TypeResolver& resolver,
                bool insideExtern);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// cloneType — Deep-copy a TypeAST node
+// Required for generic instantiation where we need to synthesize new types
+// (e.g. NamedTypeAST for Box<int> from Box<T>) without taking ownership of 
+// the original template nodes.
+// ─────────────────────────────────────────────────────────────────────────────
+static std::unique_ptr<TypeAST> cloneType(TypeAST* type) {
+    if (!type) return nullptr;
+    if (type->isa<PrimitiveTypeAST>()) {
+        auto* p = type->as<PrimitiveTypeAST>();
+        return std::make_unique<PrimitiveTypeAST>(p->primitiveKind);
+    }
+    if (type->isa<NamedTypeAST>()) {
+        auto* n = type->as<NamedTypeAST>();
+        auto clone = std::make_unique<NamedTypeAST>(n->name);
+        clone->isGenericParam = n->isGenericParam;
+        for (auto& arg : n->genericArgs) {
+            clone->genericArgs.push_back(cloneType(arg.get()));
+        }
+        return clone;
+    }
+    if (type->isa<NullableTypeAST>()) {
+        auto* nl = type->as<NullableTypeAST>();
+        return std::make_unique<NullableTypeAST>(cloneType(nl->inner.get()));
+    }
+    if (type->isa<FuncTypeAST>()) {
+        auto* f = type->as<FuncTypeAST>();
+        auto clone = std::make_unique<FuncTypeAST>(f->isNullable);
+        clone->returnType = cloneType(f->returnType.get());
+        for (auto& p : f->params) {
+            clone->params.push_back(cloneType(p.get()));
+        }
+        return clone;
+    }
+    // Add other type kinds if needed (Arrays, Ptrs, etc).
+    return nullptr;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Helper — make a primitive TypeAST on the fly (unowned, do not delete)
 // We use a static local so callers can return a stable pointer without ownership.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -380,6 +418,20 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
 
     TypeAST* result = nullptr;
 
+    // Helper to warn if an operand is nullable and return its non-nullable version.
+    auto checkAndUnwrapNullable = [&](TypeAST* t, ExprAST* locExpr) -> TypeAST* {
+        if (t && TypeChecker::isNullable(t)) {
+            dc.warning(DiagnosticCategory::Semantic, locExpr->loc, DiagCode::W3003,
+                    "performing operation on nullable type; value may be nil at runtime");
+            if (t->isa<NullableTypeAST>()) {
+                return t->as<NullableTypeAST>()->inner.get();
+            }
+            // For FuncTypeAST with isNullable = true, we could also unwrap, 
+            // but arithmetic on functions is already an error.
+        }
+        return t;
+    };
+
     switch (node.op) {
 
         // ── Logical: and / or ─────────────────────────────────────────────────
@@ -468,11 +520,15 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
             // string + string is valid
             if (lt && lt->isa<PrimitiveTypeAST>() &&
                 lt->as<PrimitiveTypeAST>()->primitiveKind == PrimitiveKind::String) {
+                lt = checkAndUnwrapNullable(lt, node.left.get());
+                rt = checkAndUnwrapNullable(rt, node.right.get());
                 if (rt && !TypeChecker::isAssignable(rt, lt))
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'+' on strings requires string right-hand side");
                 result = primType(PrimitiveKind::String);
             } else {
+                lt = checkAndUnwrapNullable(lt, node.left.get());
+                rt = checkAndUnwrapNullable(rt, node.right.get());
                 result = TypeChecker::unify(lt, rt);
                 if (!result && lt) result = lt;
             }
@@ -485,6 +541,8 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                          "use '@ptrDiff(p1, p2)' or '@ptrOffset(ptr, -n)' instead");
                 return nullptr;
             }
+            lt = checkAndUnwrapNullable(lt, node.left.get());
+            rt = checkAndUnwrapNullable(rt, node.right.get());
             result = TypeChecker::unify(lt, rt);
             if (!result && lt) result = lt;
             break;
@@ -498,6 +556,8 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                          "arithmetic operators are not supported for raw pointer types");
                 return nullptr;
             }
+            lt = checkAndUnwrapNullable(lt, node.left.get());
+            rt = checkAndUnwrapNullable(rt, node.right.get());
             result = TypeChecker::unify(lt, rt);
             if (!result && lt) result = lt;
             break;
@@ -1565,6 +1625,18 @@ static TypeAST* checkStructLiteralExpr(StructLiteralExprAST& node, SymbolTable& 
 
     auto* structDecl = sym->decl->as<StructDeclAST>();
 
+    // Set generic context so field types (like T) resolve correctly instead of throwing E3001.
+    resolver.setGenericParams(&structDecl->genericParams);
+
+    // Build substitution map if the literal provided generic arguments.
+    std::unordered_map<std::string, TypeAST*> substitutionMap;
+    if (!node.genericArgs.empty() && node.genericArgs.size() == structDecl->genericParams.size()) {
+        for (size_t i = 0; i < structDecl->genericParams.size(); ++i) {
+            substitutionMap[structDecl->genericParams[i]->name] = resolver.resolveType(node.genericArgs[i].get());
+        }
+        resolver.setSubstitutionMap(&substitutionMap);
+    }
+
     // Check that every field init matches the declared field type.
     for (auto& init : node.inits) {
         FieldDeclAST* fieldDecl = nullptr;
@@ -1611,6 +1683,10 @@ static TypeAST* checkStructLiteralExpr(StructLiteralExprAST& node, SymbolTable& 
         }
     }
 
+    // Clear generic context and substitution map.
+    resolver.setGenericParams(nullptr);
+    resolver.setSubstitutionMap(nullptr);
+
     // Return the struct type symbol.
     //
     // PRIMARY PATH: Use sym->type (the struct's self-type).
@@ -1624,6 +1700,15 @@ static TypeAST* checkStructLiteralExpr(StructLiteralExprAST& node, SymbolTable& 
     //   let ops MathOps = MathOps { add = ..., transform = ... }
     // Now it correctly compares NamedTypeAST("MathOps") with NamedTypeAST("MathOps").
     if (sym->type) {
+        if (!node.genericArgs.empty()) {
+            node.instantiatedType = std::make_unique<NamedTypeAST>(node.typeName);
+            for (auto& arg : node.genericArgs) {
+                TypeAST* resolvedArg = resolver.resolveType(arg.get());
+                node.instantiatedType->genericArgs.push_back(cloneType(resolvedArg));
+            }
+            node.resolvedType = node.instantiatedType.get();
+            return node.instantiatedType.get();
+        }
         node.resolvedType = sym->type;
         return sym->type;
     }
