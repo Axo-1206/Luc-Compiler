@@ -13,6 +13,7 @@
  */
 
 #include "SymbolTable.hpp"
+#include "debug/DebugMacros.hpp"
 #include <iostream>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -23,12 +24,14 @@
 // when processing open-braces of function bodies or code blocks.
 // ─────────────────────────────────────────────────────────────────────────────
 void SymbolTable::pushScope() {
-    // Pre-reserve capacity to prevent reallocation of the scopes_ vector
-    // when emplace_back is called. This prevents dangling Symbol* pointers
-    // that point into scope map bucket memory from becoming invalid.
-    // Reserve enough for typical programs (this is a defensive measure).
+		LUC_LOG_SEMANTIC_VERBOSE("pushScope: current depth=" << scopes_.size() 
+                           << " -> " << (scopes_.size() + 1));
+    
+    // Pre-reserve capacity to prevent reallocation
     if (scopes_.capacity() == scopes_.size()) {
-        scopes_.reserve(scopes_.size() + 32);
+        size_t newCapacity = scopes_.size() + 32;
+				LUC_LOG_SEMANTIC_EXTREME("\treserving capacity: " << newCapacity);
+        scopes_.reserve(newCapacity);
     }
     scopes_.emplace_back();
 }
@@ -42,7 +45,11 @@ void SymbolTable::pushScope() {
 // ─────────────────────────────────────────────────────────────────────────────
 void SymbolTable::popScope() {
     if (!scopes_.empty()) {
+        size_t oldSize = scopes_.size();
+				LUC_LOG_SEMANTIC_VERBOSE("popScope: depth " << oldSize << " -> " << (oldSize - 1));
         scopes_.pop_back();
+    } else {
+				LUC_LOG_SEMANTIC("popScope: WARNING - attempt to pop empty scope stack");
     }
 }
 
@@ -55,12 +62,24 @@ void SymbolTable::popScope() {
 // within a shared block level.
 // ─────────────────────────────────────────────────────────────────────────────
 bool SymbolTable::declare(const Symbol& sym) {
-    if (scopes_.empty()) pushScope();
-    auto& currentScope = scopes_.back();
-    if (currentScope.find(sym.name) != currentScope.end()) {
-        return false; // Already declared in this scope
+		LUC_LOG_SEMANTIC_VERBOSE("declare: name='" << sym.name 
+                           << "', kind=" << static_cast<int>(sym.kind));
+    
+    if (scopes_.empty()) {
+				LUC_LOG_SEMANTIC_EXTREME("\tscopes empty, pushing new scope");
+        pushScope();
     }
+    
+    auto& currentScope = scopes_.back();
+    auto it = currentScope.find(sym.name);
+    
+    if (it != currentScope.end()) {
+				LUC_LOG_SEMANTIC("\tERROR: symbol '" << sym.name << "' already exists in current scope");
+        return false;
+    }
+    
     currentScope[sym.name] = sym;
+		LUC_LOG_SEMANTIC_EXTREME("\tsymbol declared successfully, scope size=" << currentScope.size());
     return true;
 }
 
@@ -73,13 +92,20 @@ bool SymbolTable::declare(const Symbol& sym) {
 // scope without finding a symbol.
 // ─────────────────────────────────────────────────────────────────────────────
 Symbol* SymbolTable::lookup(const std::string& name) {
+		LUC_LOG_SEMANTIC_VERBOSE("lookup: name='" << name << "', depth=" << scopes_.size());
+    
     for (int i = (int)scopes_.size() - 1; i >= 0; --i) {
         const auto& scope = scopes_[i];
         auto found = scope.find(name);
         if (found != scope.end()) {
+						LUC_LOG_SEMANTIC_EXTREME("\tfound at scope depth " << i 
+                                   << ", kind=" << static_cast<int>(found->second.kind));
             return const_cast<Symbol*>(&found->second);
         }
+				LUC_LOG_SEMANTIC_EXTREME("\tnot found at scope depth " << i);
     }
+    
+		LUC_LOG_SEMANTIC_VERBOSE("\tsymbol '" << name << "' not found in any scope");
     return nullptr;
 }
 
@@ -91,12 +117,21 @@ Symbol* SymbolTable::lookup(const std::string& name) {
 // finalizing a cross-scope lookup. Returns nullptr if the symbol is absent.
 // ─────────────────────────────────────────────────────────────────────────────
 Symbol* SymbolTable::lookupLocal(const std::string& name) {
-    if (scopes_.empty()) return nullptr;
+		LUC_LOG_SEMANTIC_EXTREME("lookupLocal: name='" << name << "'");
+    
+    if (scopes_.empty()) {
+				LUC_LOG_SEMANTIC_EXTREME("\tscopes empty, returning nullptr");
+        return nullptr;
+    }
+    
     auto& currentScope = scopes_.back();
     auto found = currentScope.find(name);
     if (found != currentScope.end()) {
+				LUC_LOG_SEMANTIC_EXTREME("\tfound in current scope");
         return &found->second;
     }
+    
+		LUC_LOG_SEMANTIC_EXTREME("\tnot found in current scope");
     return nullptr;
 }
 
@@ -112,15 +147,26 @@ Symbol* SymbolTable::lookupLocal(const std::string& name) {
 // while holding these pointers.
 // ─────────────────────────────────────────────────────────────────────────────
 std::vector<Symbol*> SymbolTable::findSymbolsByPrefix(const std::string& prefix) {
+		LUC_LOG_SEMANTIC_VERBOSE("findSymbolsByPrefix: prefix='" << prefix << "'");
+    
     std::vector<Symbol*> results;
+    int totalScopes = 0;
+    int matchesFound = 0;
+    
     for (auto& scope : scopes_) {
+        totalScopes++;
         for (auto& [name, sym] : scope) {
             if (name.size() >= prefix.size() &&
                 name.compare(0, prefix.size(), prefix) == 0) {
                 results.push_back(&sym);
+                matchesFound++;
+								LUC_LOG_SEMANTIC_EXTREME("\tmatched: " << name);
             }
         }
     }
+    
+		LUC_LOG_SEMANTIC_VERBOSE("\tfound " << matchesFound << " matches in " 
+                           << totalScopes << " scopes");
     return results;
 }
 
@@ -132,11 +178,14 @@ std::vector<Symbol*> SymbolTable::findSymbolsByPrefix(const std::string& prefix)
 // elements during traversal and code generation.
 // ─────────────────────────────────────────────────────────────────────────────
 int SymbolTable::currentDepth() const {
-    return static_cast<int>(scopes_.size());
+    int depth = static_cast<int>(scopes_.size());
+		LUC_LOG_SEMANTIC_EXTREME("currentDepth: " << depth);
+    return depth;
 }
 
-#include <iostream>
-#include <iomanip>
+// ─────────────────────────────────────────────────────────────────────────────
+// kindToString  — Helper for symbol table dump
+// ─────────────────────────────────────────────────────────────────────────────
 
 static std::string kindToString(SymbolKind kind) {
     switch (kind) {
@@ -157,14 +206,20 @@ static std::string kindToString(SymbolKind kind) {
 }
 
 void SymbolTable::dump() const {
+		LUC_LOG_SEMANTIC("=== SYMBOL TABLE DUMP ===");
+    
     std::cout << "\n--- SYMBOL TABLE DUMP ---" << std::endl;
     if (scopes_.empty()) {
         std::cout << " (empty)" << std::endl;
+				LUC_LOG_SEMANTIC("\t(empty)");
         return;
     }
 
+    int totalSymbols = 0;
     for (int i = 0; i < scopes_.size(); ++i) {
         std::cout << "Scope Depth " << i << ":" << std::endl;
+				LUC_LOG_SEMANTIC_EXTREME("Scope Depth " << i << ":");
+        
         const auto& scope = scopes_[i];
         if (scope.empty()) {
             std::cout << "  (empty)" << std::endl;
@@ -172,11 +227,12 @@ void SymbolTable::dump() const {
         }
 
         for (const auto& [name, sym] : scope) {
+            totalSymbols++;
             std::string kindStr = "[" + kindToString(sym.kind) + "]";
             
             std::cout << "  - " 
-                    << std::left << std::setw(35) << name      // Column 1: Name
-                    << std::left << std::setw(14) << kindStr;  // Column 2: [Kind]
+                    << std::left << std::setw(35) << name
+                    << std::left << std::setw(14) << kindStr;
 
             if (sym.loc.isKnown()) {
                 std::cout << " : " << sym.loc.file << ":" << sym.loc.line;
@@ -188,7 +244,11 @@ void SymbolTable::dump() const {
             }
             
             std::cout << std::endl;
+            
+						LUC_LOG_SEMANTIC_EXTREME("\t\t" << name << " " << kindStr);
         }
     }
     std::cout << "-------------------------\n" << std::endl;
+    
+		LUC_LOG_SEMANTIC("Total symbols: " << totalSymbols);
 }

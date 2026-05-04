@@ -224,11 +224,10 @@ bool Parser::isAssignOp(TokenType t) const {
 // precedence level).  Starts the Pratt loop at PREC_NONE so everything
 // binds.
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseExpr(bool allowStructLiteral) {
-    LUC_LOG_EXPR("=== parseExpr START (allowStructLiteral=" << allowStructLiteral << ") ===");
+		LUC_LOG_EXPR("=== parseExpr START (allowStructLiteral=" << allowStructLiteral << ") ===");
     ExprPtr result = parsePrattExpr(PREC_NONE, allowStructLiteral);
-    LUC_LOG_EXPR("=== parseExpr END ===");
+		LUC_LOG_EXPR("=== parseExpr END ===");
     return result;
 }
 
@@ -248,29 +247,28 @@ ExprPtr Parser::parseExpr(bool allowStructLiteral) {
 //        f. Otherwise                → build BinaryExprAST.
 //   4. Return lhs.
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parsePrattExpr(int minPrec, bool allowStructLiteral) {
-    LUC_LOG_EXPR_VERBOSE("parsePrattExpr: minPrec=" << minPrec << ", token='" << peek().value << "'");
+		LUC_LOG_EXPR_VERBOSE("parsePrattExpr: minPrec=" << minPrec << ", token='" << peek().value << "'");
 
     ExprPtr lhs = parsePrefixExpr(allowStructLiteral);
     if (!lhs) {
-        LUC_LOG_EXPR("parsePrattExpr: prefix parsing failed");
+				LUC_LOG_EXPR("parsePrattExpr: prefix parsing failed");
         return nullptr;
     }
 
     // Apply postfix operators before entering the infix loop.
-    LUC_LOG_EXPR_VERBOSE("parsePrattExpr: lhs kind=" << LucDebug::kindToString(lhs->kind));
+		LUC_LOG_EXPR_VERBOSE("parsePrattExpr: lhs kind=" << LucDebug::kindToString(lhs->kind));
     lhs = parsePostfixExpr(std::move(lhs));
 
     while (true) {
         int prec = infixPrec(peek().type);
         if (prec <= minPrec) {
-            LUC_LOG_EXPR_EXTREME("parsePrattExpr: stopping - prec=" << prec << " <= minPrec=" << minPrec);
+						LUC_LOG_EXPR_EXTREME("parsePrattExpr: stopping - prec=" << prec << " <= minPrec=" << minPrec);
             break;
         }
 
         TokenType opTok = peek().type;
-        LUC_LOG_EXPR_VERBOSE("parsePrattExpr: found infix operator '" 
+				LUC_LOG_EXPR_VERBOSE("parsePrattExpr: found infix operator '" 
                              << LucDebug::tokenTypeToString(opTok) 
                              << "' with prec=" << prec);
 
@@ -293,7 +291,7 @@ ExprPtr Parser::parsePrattExpr(int minPrec, bool allowStructLiteral) {
             node->rhs = std::move(rhs);
             lhs = std::move(node);
             // Assignment is a statement-level expression — stop the loop.
-            LUC_LOG_EXPR_VERBOSE("parsePrattExpr: returning with kind=" << LucDebug::kindToString(lhs->kind));
+						LUC_LOG_EXPR_VERBOSE("parsePrattExpr: returning with kind=" << LucDebug::kindToString(lhs->kind));
             break;
         }
 
@@ -430,9 +428,8 @@ ExprPtr Parser::parsePrattExpr(int minPrec, bool allowStructLiteral) {
 // ─────────────────────────────────────────────────────────────────────────────
 // parsePrefixExpr  — unary prefix operators and primary expressions
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
-    LUC_LOG_EXPR_VERBOSE("parsePrefixExpr: token='" << peek().value << "'");
+		LUC_LOG_EXPR_VERBOSE("parsePrefixExpr: token='" << peek().value << "'");
     SourceLocation loc = currentLoc();
 
     switch (peek().type) {
@@ -498,15 +495,14 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
 // ─────────────────────────────────────────────────────────────────────────────
 // parsePrimaryExpr  — atoms: literals, identifiers, grouped, special forms
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
-    LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: allowStructLiteral=" << allowStructLiteral 
+		LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: allowStructLiteral=" << allowStructLiteral 
                          << ", token='" << peek().value << "'");
     SourceLocation loc = currentLoc();
 
     // ── match expression ──────────────────────────────────────────────────────
     if (check(TokenType::MATCH)) {
-        LUC_LOG_EXPR("parsePrimaryExpr: parsing match expression");
+				LUC_LOG_EXPR("parsePrimaryExpr: parsing match expression");
         return parseMatchExpr();
     }
 
@@ -515,7 +511,7 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
     // The statement version (IfStmtAST) is produced by parseIfStmt() when 'if'
     // appears at the start of a statement.  Here we always produce IfExprAST.
     if (check(TokenType::IF)) {
-        LUC_LOG_EXPR("parsePrimaryExpr: parsing if expression");
+				LUC_LOG_EXPR("parsePrimaryExpr: parsing if expression");
         return parseIfExpr();
     }
 
@@ -523,13 +519,13 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
     // '@' IDENTIFIER '(' args ')'  — compiler-builtin call.
     // Examples:  @sizeof(Vec2)   @memcpy(dst, src, n)   @sqrt(x)
     if (check(TokenType::AT_SIGN)) {
-        LUC_LOG_EXPR("parsePrimaryExpr: parsing @ intrinsic");
+				LUC_LOG_EXPR("parsePrimaryExpr: parsing @ intrinsic");
         return parseIntrinsicCallExpr();
     }
 
     // ── await ─────────────────────────────────────────────────────────────────
     if (check(TokenType::AWAIT)) {
-        LUC_LOG_EXPR("parsePrimaryExpr: await");
+				LUC_LOG_EXPR("parsePrimaryExpr: await");
         return parseAwaitExpr();
     }
 
@@ -769,7 +765,7 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
         auto node = std::make_unique<IdentifierExprAST>(std::move(name));
         node->loc = loc;
 
-        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: returning identifier/struct literal");
+				LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: returning identifier/struct literal");
         return node;
     }
 
@@ -821,13 +817,12 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
 //   '.?' IDENTIFIER     — nullable chain step
 //   '!!'                — not valid here (only inside pipeline steps)
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
-    LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: lhs kind=" << LucDebug::kindToString(lhs->kind));
+		LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: lhs kind=" << LucDebug::kindToString(lhs->kind));
     while (true) {
         // ── Function call: lhs '(' args ')' ──────────────────────────────────
         if (check(TokenType::LPAREN)) {
-            LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: function call");
+						LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: function call");
             lhs = parseCallExpr(std::move(lhs), {});
             continue;
         }
@@ -875,14 +870,14 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
 
         // ── Index / slice: lhs '[' expr ']' or lhs '[' expr '..' expr ']' ────
         if (check(TokenType::LBRACKET)) {
-            LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: index/slice");
+						LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: index/slice");
             lhs = parseIndexExpr(std::move(lhs));
             continue;
         }
 
         // ── Field access: lhs '.' IDENTIFIER ─────────────────────────────────
         if (check(TokenType::DOT)) {
-            LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: field access");
+						LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: field access");
             advance(); // consume '.'
             if (!check(TokenType::IDENTIFIER)) {
                 errorAt(DiagCode::E2003, "expected field name after '.'");
@@ -900,7 +895,7 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
         // ── Nullable chain step: lhs '.?' IDENTIFIER ─────────────────────────
         if (check(TokenType::DOT_QUESTION)) {
             // Start or extend a NullableChainExprAST.
-            LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: nullable chain");
+						LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: nullable chain");
             NullableChainExprAST* existing =
                 lhs->isa<NullableChainExprAST>() ? lhs->as<NullableChainExprAST>() : nullptr;
 
@@ -928,16 +923,15 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
         break;
     }
 
-    LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: returning with " << LucDebug::kindToString(lhs->kind));
+		LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: returning with " << LucDebug::kindToString(lhs->kind));
     return lhs;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // parseLiteralExpr
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseLiteralExpr() {
-    LUC_LOG_EXPR_VERBOSE("parseLiteralExpr: token='" << peek().value << "'");
+		LUC_LOG_EXPR_VERBOSE("parseLiteralExpr: token='" << peek().value << "'");
     SourceLocation loc = currentLoc();
     Token tok = advance();
 
@@ -980,7 +974,7 @@ ExprPtr Parser::parseLiteralExpr() {
 
     auto node = std::make_unique<LiteralExprAST>(kind, tok.value);
     node->loc = loc;
-    LUC_LOG_EXPR_VERBOSE("parseLiteralExpr: created " << LucDebug::kindToString(static_cast<ASTKind>(node->kind)));
+		LUC_LOG_EXPR_VERBOSE("parseLiteralExpr: created " << LucDebug::kindToString(static_cast<ASTKind>(node->kind)));
     return node;
 }
 
@@ -989,9 +983,8 @@ ExprPtr Parser::parseLiteralExpr() {
 //
 // Grammar:  '[' [ expr { ',' expr } ] ']'
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseArrayLiteralExpr() {
-    LUC_LOG_EXPR("parseArrayLiteralExpr: parsing array literal");
+		LUC_LOG_EXPR("parseArrayLiteralExpr: parsing array literal");
     SourceLocation loc = currentLoc();
     consume(TokenType::LBRACKET, "expected '['");
 
@@ -1012,7 +1005,7 @@ ExprPtr Parser::parseArrayLiteralExpr() {
     }
 
     consume(TokenType::RBRACKET, "expected ']' to close array literal");
-    LUC_LOG_EXPR_VERBOSE("parseArrayLiteralExpr: parsed " << node->elements.size() << " elements");
+		LUC_LOG_EXPR_VERBOSE("parseArrayLiteralExpr: parsed " << node->elements.size() << " elements");
     return node;
 }
 
@@ -1023,9 +1016,8 @@ ExprPtr Parser::parseArrayLiteralExpr() {
 //
 // Called after the type name (and optional generic args) have already been read.
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseStructLiteralExpr(std::string typeName, std::vector<TypePtr> genericArgs) {
-    LUC_LOG_EXPR("parseStructLiteralExpr: type='" << typeName << "', genericArgs=" << genericArgs.size());
+		LUC_LOG_EXPR("parseStructLiteralExpr: type='" << typeName << "', genericArgs=" << genericArgs.size());
     SourceLocation loc = currentLoc();
     consume(TokenType::LBRACE, "expected '{' to open struct literal");
 
@@ -1061,7 +1053,7 @@ ExprPtr Parser::parseStructLiteralExpr(std::string typeName, std::vector<TypePtr
     }
 
     consume(TokenType::RBRACE, "expected '}' to close struct literal");
-    LUC_LOG_EXPR_VERBOSE("parseStructLiteralExpr: parsed " << node->inits.size() << " field inits");
+		LUC_LOG_EXPR_VERBOSE("parseStructLiteralExpr: parsed " << node->inits.size() << " field inits");
     return node;
 }
 
@@ -1075,11 +1067,10 @@ ExprPtr Parser::parseStructLiteralExpr(std::string typeName, std::vector<TypePtr
 // Multi-group:    (a int) (b int) int { return a + b }
 // Async:          async (url string) string { return await httpGet(url) }
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseAnonFuncExpr() {
     SourceLocation loc = currentLoc();
     bool isAsync = match(TokenType::ASYNC);
-    LUC_LOG_EXPR("parseAnonFuncExpr: isAsync=" << (isAsync ? "true" : "false"));
+		LUC_LOG_EXPR("parseAnonFuncExpr: isAsync=" << (isAsync ? "true" : "false"));
 
     if (isAsync)
         ++asyncDepth_;
@@ -1110,7 +1101,7 @@ ExprPtr Parser::parseAnonFuncExpr() {
     if (isAsync)
         --asyncDepth_;
 
-    LUC_LOG_EXPR_VERBOSE("parseAnonFuncExpr: paramGroups=" << node->paramGroups.size() 
+		LUC_LOG_EXPR_VERBOSE("parseAnonFuncExpr: paramGroups=" << node->paramGroups.size() 
                         << ", hasReturnType=" << (node->returnType != nullptr));
     return node;
 }
@@ -1133,9 +1124,8 @@ ExprPtr Parser::parseAnonFuncExpr() {
 // Type-parameter intrinsics:  sizeof, alignof
 // Value-argument intrinsics:  sqrt, abs, min, max, memcpy, memset, ...
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseIntrinsicCallExpr() {
-    LUC_LOG_EXPR("parseIntrinsicCallExpr: parsing @ intrinsic");
+		LUC_LOG_EXPR("parseIntrinsicCallExpr: parsing @ intrinsic");
     SourceLocation loc = currentLoc();
     consume(TokenType::AT_SIGN, "expected '@'");
 
@@ -1153,7 +1143,7 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
                 "expected '(' after intrinsic '@" + node->intrinsicName + "'");
         return nullptr;
     }
-    LUC_LOG_EXPR("parseIntrinsicCallExpr: name='" << node->intrinsicName << "'");
+		LUC_LOG_EXPR("parseIntrinsicCallExpr: name='" << node->intrinsicName << "'");
     consume(TokenType::LPAREN, "expected '('");
 
     // ── Decide if the first argument is a type ────────────────────────────────
@@ -1197,7 +1187,7 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
     }
 
     consume(TokenType::RPAREN, "expected ')' to close intrinsic call");
-    LUC_LOG_EXPR_VERBOSE("parseIntrinsicCallExpr: typeArg=" << (node->typeArg != nullptr) 
+		LUC_LOG_EXPR_VERBOSE("parseIntrinsicCallExpr: typeArg=" << (node->typeArg != nullptr) 
                          << ", args=" << node->args.size());
     return node;
 }
@@ -1205,9 +1195,8 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
 // ─────────────────────────────────────────────────────────────────────────────
 // parseAwaitExpr
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseAwaitExpr() {
-    LUC_LOG_EXPR("parseAwaitExpr");
+		LUC_LOG_EXPR("parseAwaitExpr");
     SourceLocation loc = currentLoc();
     consume(TokenType::AWAIT, "expected 'await'");
 
@@ -1226,7 +1215,7 @@ ExprPtr Parser::parseAwaitExpr() {
 
     auto node = std::make_unique<AwaitExprAST>(std::move(inner));
     node->loc = loc;
-    LUC_LOG_EXPR_VERBOSE("parseAwaitExpr: returning await expression");
+		LUC_LOG_EXPR_VERBOSE("parseAwaitExpr: returning await expression");
     return node;
 }
 
@@ -1236,9 +1225,8 @@ ExprPtr Parser::parseAwaitExpr() {
 // Grammar:
 //   match_expr := 'match' expr '{' { match_arm } default_arm '}'
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseMatchExpr() {
-    LUC_LOG_EXPR("parseMatchExpr");
+		LUC_LOG_EXPR("parseMatchExpr");
     SourceLocation loc = currentLoc();
     consume(TokenType::MATCH, "expected 'match'");
 
@@ -1247,7 +1235,7 @@ ExprPtr Parser::parseMatchExpr() {
         errorAt(DiagCode::E2008, "expected expression after 'match'");
         return nullptr;
     }
-    LUC_LOG_EXPR_VERBOSE("parseMatchExpr: subject parsed");
+		LUC_LOG_EXPR_VERBOSE("parseMatchExpr: subject parsed");
 
     consume(TokenType::LBRACE, "expected '{' after match subject");
 
@@ -1267,7 +1255,7 @@ ExprPtr Parser::parseMatchExpr() {
             if (hasDefault) {
                 errorAt(DiagCode::E2007, "duplicate 'default' arm in match expression");
             }
-            LUC_LOG_EXPR_VERBOSE("parseMatchExpr: parsing default arm");
+						LUC_LOG_EXPR_VERBOSE("parseMatchExpr: parsing default arm");
             node->defaultBody = parseDefaultArm();
             if (node->defaultBody) {
                 node->defaultLoc = node->defaultBody->loc;
@@ -1288,7 +1276,7 @@ ExprPtr Parser::parseMatchExpr() {
         error(loc, DiagCode::E2006, "match expression must have a 'default' arm");
     }
 
-    LUC_LOG_EXPR_VERBOSE("parseMatchExpr: " << node->arms.size() << " arms, hasDefault=" << hasDefault);
+		LUC_LOG_EXPR_VERBOSE("parseMatchExpr: " << node->arms.size() << " arms, hasDefault=" << hasDefault);
     return node;
 }
 
@@ -1301,9 +1289,8 @@ ExprPtr Parser::parseMatchExpr() {
 // Expression form requires 'else'. Both branches must return the same type
 // (enforced by the semantic pass).
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseIfExpr() {
-    LUC_LOG_EXPR("parseIfExpr");
+		LUC_LOG_EXPR("parseIfExpr");
     SourceLocation loc = currentLoc();
     consume(TokenType::IF, "expected 'if'");
 
@@ -1313,7 +1300,7 @@ ExprPtr Parser::parseIfExpr() {
         errorAt(DiagCode::E2008, "expected condition after 'if'");
         return nullptr;
     }
-    LUC_LOG_EXPR_VERBOSE("parseIfExpr: condition parsed");
+		LUC_LOG_EXPR_VERBOSE("parseIfExpr: condition parsed");
 
     // Inline if expression: if cond ?? thenExpr else elseExpr
     if (!match(TokenType::QUESTION_QUESTION)) {
@@ -1325,7 +1312,7 @@ ExprPtr Parser::parseIfExpr() {
     if (!thenBranch) {
         errorAt(DiagCode::E2008, "expected expression after '\?\?' in 'if' expression");
     }
-    LUC_LOG_EXPR_VERBOSE("parseIfExpr: then branch parsed");
+		LUC_LOG_EXPR_VERBOSE("parseIfExpr: then branch parsed");
 
     if (!match(TokenType::ELSE)) {
         errorAt(DiagCode::E2006, "expression-form 'if' requires an 'else' branch");
@@ -1336,14 +1323,14 @@ ExprPtr Parser::parseIfExpr() {
     if (!elseBranch) {
         errorAt(DiagCode::E2008, "expected expression after 'else' in 'if' expression");
     }
-    LUC_LOG_EXPR_VERBOSE("parseIfExpr: else branch parsed");
+		LUC_LOG_EXPR_VERBOSE("parseIfExpr: else branch parsed");
 
     auto node = std::make_unique<IfExprAST>();
     node->loc = loc;
     node->condition = std::move(condition);
     node->thenBranch = std::move(thenBranch);
     node->elseBranch = std::move(elseBranch);
-    LUC_LOG_EXPR_VERBOSE("parseIfExpr: returning IfExprAST");
+		LUC_LOG_EXPR_VERBOSE("parseIfExpr: returning IfExprAST");
     return node;
 }
 
@@ -1356,12 +1343,11 @@ ExprPtr Parser::parseIfExpr() {
 //
 // Called after the target type has already been parsed.
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseTypeConvExpr(bool isUnsafe, TypePtr targetType) {
-    LUC_LOG_EXPR("parseTypeConvExpr: isUnsafe=" << (isUnsafe ? "true" : "false"));
+		LUC_LOG_EXPR("parseTypeConvExpr: isUnsafe=" << (isUnsafe ? "true" : "false"));
     SourceLocation loc = currentLoc();
     consume(TokenType::LPAREN, "expected '(' for explicit type cast");
-    LUC_LOG_EXPR_VERBOSE("parseTypeConvExpr: target type parsed");
+		LUC_LOG_EXPR_VERBOSE("parseTypeConvExpr: target type parsed");
 
     ExprPtr expr = parseExpr();
     if (!expr) {
@@ -1370,12 +1356,12 @@ ExprPtr Parser::parseTypeConvExpr(bool isUnsafe, TypePtr targetType) {
     }
 
     consume(TokenType::RPAREN, "expected ')' to close explicit type cast");
-    LUC_LOG_EXPR_VERBOSE("parseTypeConvExpr: expression parsed");
+		LUC_LOG_EXPR_VERBOSE("parseTypeConvExpr: expression parsed");
 
     auto node = std::make_unique<TypeConvExprAST>(
         std::move(targetType), std::move(expr), isUnsafe);
     node->loc = loc;
-    LUC_LOG_EXPR_VERBOSE("parseTypeConvExpr: returning TypeConvExprAST");
+		LUC_LOG_EXPR_VERBOSE("parseTypeConvExpr: returning TypeConvExprAST");
     return node;
 }
 
@@ -1385,29 +1371,28 @@ ExprPtr Parser::parseTypeConvExpr(bool isUnsafe, TypePtr targetType) {
 // Called when '..' is found after lo has been parsed.
 // Grammar:  lo '..' hi
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseRangeExpr(ExprPtr lo) {
-    LUC_LOG_EXPR("parseRangeExpr");
-    LUC_LOG_EXPR_VERBOSE("parseRangeExpr: lo kind=" << LucDebug::kindToString(lo->kind));
+		LUC_LOG_EXPR("parseRangeExpr");
+		LUC_LOG_EXPR_VERBOSE("parseRangeExpr: lo kind=" << LucDebug::kindToString(lo->kind));
     SourceLocation loc = lo->loc;
     consume(TokenType::RANGE, "expected '..'");
 
     bool isExclusive = match(TokenType::LESS);
-    LUC_LOG_EXPR_VERBOSE("parseRangeExpr: isExclusive=" << (isExclusive ? "true" : "false"));
+		LUC_LOG_EXPR_VERBOSE("parseRangeExpr: isExclusive=" << (isExclusive ? "true" : "false"));
 
     ExprPtr hi = parsePrattExpr(PREC_ADD); // stop before low-prec operators
     if (!hi) {
         errorAt(DiagCode::E2008, "expected upper bound after '..'");
         return nullptr;
     }
-    LUC_LOG_EXPR_VERBOSE("parseRangeExpr: hi parsed");
+		LUC_LOG_EXPR_VERBOSE("parseRangeExpr: hi parsed");
 
     auto node = std::make_unique<RangeExprAST>();
     node->loc = loc;
     node->lo = std::move(lo);
     node->hi = std::move(hi);
     node->isExclusive = isExclusive;
-    LUC_LOG_EXPR_VERBOSE("parseRangeExpr: returning RangeExprAST");
+		LUC_LOG_EXPR_VERBOSE("parseRangeExpr: returning RangeExprAST");
     return node;
 }
 
@@ -1416,12 +1401,11 @@ ExprPtr Parser::parseRangeExpr(ExprPtr lo) {
 //
 // Grammar:  callee '(' [ arg_list ] ')'
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseCallExpr(ExprPtr callee, std::vector<TypePtr> genericArgs) {
-    LUC_LOG_EXPR("parseCallExpr");
-    LUC_LOG_EXPR_VERBOSE("parseCallExpr: callee kind=" << LucDebug::kindToString(callee->kind));
+		LUC_LOG_EXPR("parseCallExpr");
+		LUC_LOG_EXPR_VERBOSE("parseCallExpr: callee kind=" << LucDebug::kindToString(callee->kind));
     if (!genericArgs.empty()) {
-        LUC_LOG_EXPR("parseCallExpr: generic args count=" << genericArgs.size());
+				LUC_LOG_EXPR("parseCallExpr: generic args count=" << genericArgs.size());
     }
     
     SourceLocation loc = callee->loc;
@@ -1434,7 +1418,7 @@ ExprPtr Parser::parseCallExpr(ExprPtr callee, std::vector<TypePtr> genericArgs) 
 
     if (!check(TokenType::RPAREN)) {
         node->args = parseArgList();
-        LUC_LOG_EXPR_VERBOSE("parseCallExpr: parsed " << node->args.size() << " arguments");
+				LUC_LOG_EXPR_VERBOSE("parseCallExpr: parsed " << node->args.size() << " arguments");
     }
 
     consume(TokenType::RPAREN, "expected ')' to close argument list");
@@ -1443,10 +1427,10 @@ ExprPtr Parser::parseCallExpr(ExprPtr callee, std::vector<TypePtr> genericArgs) 
     // but we parse it here and set isArgPack; the semantic pass enforces context.
     node->isArgPack = match(TokenType::BANG);
     if (node->isArgPack) {
-        LUC_LOG_EXPR("parseCallExpr: argument pack '!' detected");
+				LUC_LOG_EXPR("parseCallExpr: argument pack '!' detected");
     }
 
-    LUC_LOG_EXPR_VERBOSE("parseCallExpr: returning CallExprAST");
+		LUC_LOG_EXPR_VERBOSE("parseCallExpr: returning CallExprAST");
     return node;
 }
 
@@ -1458,10 +1442,9 @@ ExprPtr Parser::parseCallExpr(ExprPtr callee, std::vector<TypePtr> genericArgs) 
 //   '[' expr '..' expr ']' — inclusive slice
 //   '[' expr '..<' expr ']' — exclusive slice
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseIndexExpr(ExprPtr target) {
-    LUC_LOG_EXPR("parseIndexExpr");
-    LUC_LOG_EXPR_VERBOSE("parseIndexExpr: target kind=" << LucDebug::kindToString(target->kind));
+		LUC_LOG_EXPR("parseIndexExpr");
+		LUC_LOG_EXPR_VERBOSE("parseIndexExpr: target kind=" << LucDebug::kindToString(target->kind));
     SourceLocation loc = currentLoc();
     consume(TokenType::LBRACKET, "expected '['");
 
@@ -1479,7 +1462,7 @@ ExprPtr Parser::parseIndexExpr(ExprPtr target) {
         // Slice: start '..' end or start '..<' end
         advance(); // consume '..'
         bool isExclusive = match(TokenType::LESS);
-        LUC_LOG_EXPR_VERBOSE("parseIndexExpr: slice, isExclusive=" << (isExclusive ? "true" : "false"));
+				LUC_LOG_EXPR_VERBOSE("parseIndexExpr: slice, isExclusive=" << (isExclusive ? "true" : "false"));
         
         ExprPtr endExpr = parseExpr();
         if (!endExpr) {
@@ -1490,16 +1473,16 @@ ExprPtr Parser::parseIndexExpr(ExprPtr target) {
         node->sliceEnd = std::move(endExpr);
         node->kind = IndexKind::Slice;
         node->isExclusive = isExclusive;
-        LUC_LOG_EXPR("parseIndexExpr: slice from index to end");
+				LUC_LOG_EXPR("parseIndexExpr: slice from index to end");
     } else {
         node->index = std::move(startExpr);
         node->kind = IndexKind::Element;
         node->isExclusive = false;
-        LUC_LOG_EXPR_VERBOSE("parseIndexExpr: element access");
+				LUC_LOG_EXPR_VERBOSE("parseIndexExpr: element access");
     }
 
     consume(TokenType::RBRACKET, "expected ']' to close index expression");
-    LUC_LOG_EXPR_VERBOSE("parseIndexExpr: returning IndexExprAST");
+		LUC_LOG_EXPR_VERBOSE("parseIndexExpr: returning IndexExprAST");
     return node;
 }
 
@@ -1508,9 +1491,8 @@ ExprPtr Parser::parseIndexExpr(ExprPtr target) {
 //
 // Parses comma-separated expressions until ')'. Does not consume the ')'.
 // ─────────────────────────────────────────────────────────────────────────────
-
 std::vector<ExprPtr> Parser::parseArgList() {
-    LUC_LOG_EXPR_VERBOSE("parseArgList");
+		LUC_LOG_EXPR_VERBOSE("parseArgList");
     std::vector<ExprPtr> args;
     int argCount = 0;
 
@@ -1522,7 +1504,7 @@ std::vector<ExprPtr> Parser::parseArgList() {
         }
         args.push_back(std::move(arg));
         argCount++;
-        LUC_LOG_EXPR_EXTREME("parseArgList: parsed argument " << argCount);
+				LUC_LOG_EXPR_EXTREME("parseArgList: parsed argument " << argCount);
 
         if (check(TokenType::RPAREN)) break;
 
@@ -1537,7 +1519,7 @@ std::vector<ExprPtr> Parser::parseArgList() {
         }
     }
 
-    LUC_LOG_EXPR_VERBOSE("parseArgList: parsed " << argCount << " arguments");
+		LUC_LOG_EXPR_VERBOSE("parseArgList: parsed " << argCount << " arguments");
     return args;
 }
 
@@ -1550,10 +1532,9 @@ std::vector<ExprPtr> Parser::parseArgList() {
 // Called from parsePrattExpr when '->' is seen. lhs is already parsed as seed.
 // Consumes ALL '->' steps greedily.
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parsePipelineExpr(ExprPtr seed) {
-    LUC_LOG_EXPR("parsePipelineExpr: building pipeline");
-    LUC_LOG_EXPR_VERBOSE("parsePipelineExpr: seed kind=" << LucDebug::kindToString(seed->kind));
+		LUC_LOG_EXPR("parsePipelineExpr: building pipeline");
+		LUC_LOG_EXPR_VERBOSE("parsePipelineExpr: seed kind=" << LucDebug::kindToString(seed->kind));
     SourceLocation loc = seed->loc;
 
     auto node = std::make_unique<PipelineExprAST>();
@@ -1575,7 +1556,7 @@ ExprPtr Parser::parsePipelineExpr(ExprPtr seed) {
         return node->seed ? std::move(node->seed) : nullptr;
     }
 
-    LUC_LOG_EXPR("parsePipelineExpr: " << node->steps.size() << " pipeline steps");
+		LUC_LOG_EXPR("parsePipelineExpr: " << node->steps.size() << " pipeline steps");
     return node;
 }
 
@@ -1589,9 +1570,8 @@ ExprPtr Parser::parsePipelineExpr(ExprPtr seed) {
 //   ArgPack     fn(args)!
 //   AnonFunc    [ async ] '(' params ')' [ ret ] block
 // ─────────────────────────────────────────────────────────────────────────────
-
 PipelineStepPtr Parser::parsePipelineStep() {
-    LUC_LOG_EXPR_VERBOSE("parsePipelineStep: token='" << peek().value << "'");
+		LUC_LOG_EXPR_VERBOSE("parsePipelineStep: token='" << peek().value << "'");
     SourceLocation loc = currentLoc();
     auto step = std::make_unique<PipelineStepAST>();
     step->loc = loc;
@@ -1650,7 +1630,7 @@ PipelineStepPtr Parser::parsePipelineStep() {
     // ── Ident: bare function name ─────────────────────────────────────────────
     step->kind = PipelineStepKind::Ident;
     step->ident = std::move(name);
-    LUC_LOG_EXPR_VERBOSE("parsePipelineStep: kind=" << static_cast<int>(step->kind));
+		LUC_LOG_EXPR_VERBOSE("parsePipelineStep: kind=" << static_cast<int>(step->kind));
     return step;
 }
 
@@ -1662,10 +1642,9 @@ PipelineStepPtr Parser::parsePipelineStep() {
 //
 // Called from parsePrattExpr when '+>' is seen.
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseComposeExpr(ExprPtr lhs) {
-    LUC_LOG_EXPR("parseComposeExpr");
-    LUC_LOG_EXPR_VERBOSE("parseComposeExpr: lhs kind=" << LucDebug::kindToString(lhs->kind));
+		LUC_LOG_EXPR("parseComposeExpr");
+		LUC_LOG_EXPR_VERBOSE("parseComposeExpr: lhs kind=" << LucDebug::kindToString(lhs->kind));
     SourceLocation loc = lhs->loc;
 
     auto node = std::make_unique<ComposeExprAST>();
@@ -1676,7 +1655,7 @@ ExprPtr Parser::parseComposeExpr(ExprPtr lhs) {
     while (check(TokenType::COMPOSE)) {
         advance(); // consume '+>'
         operandCount++;
-        LUC_LOG_EXPR_VERBOSE("parseComposeExpr: parsing operand " << operandCount);
+				LUC_LOG_EXPR_VERBOSE("parseComposeExpr: parsing operand " << operandCount);
         
         ComposeOperandPtr op = parseComposeOperand();
         if (!op) {
@@ -1687,11 +1666,11 @@ ExprPtr Parser::parseComposeExpr(ExprPtr lhs) {
     }
 
     if (node->operands.empty()) {
-        LUC_LOG_EXPR_VERBOSE("parseComposeExpr: no operands, returning left");
+				LUC_LOG_EXPR_VERBOSE("parseComposeExpr: no operands, returning left");
         return std::move(node->left);
     }
 
-    LUC_LOG_EXPR("parseComposeExpr: " << operandCount << " operands");
+		LUC_LOG_EXPR("parseComposeExpr: " << operandCount << " operands");
     return node;
 }
 
@@ -1703,9 +1682,8 @@ ExprPtr Parser::parseComposeExpr(ExprPtr lhs) {
 //   BehaviorRef Type:method
 //   FieldRef    obj.field
 // ─────────────────────────────────────────────────────────────────────────────
-
 ComposeOperandPtr Parser::parseComposeOperand() {
-    LUC_LOG_EXPR_VERBOSE("parseComposeOperand: token='" << peek().value << "'");
+		LUC_LOG_EXPR_VERBOSE("parseComposeOperand: token='" << peek().value << "'");
     SourceLocation loc = currentLoc();
     auto op = std::make_unique<ComposeOperandAST>();
     op->loc = loc;
@@ -1724,7 +1702,7 @@ ComposeOperandPtr Parser::parseComposeOperand() {
         op->kind = ComposeOperandKind::BehaviorRef;
         op->typeName = std::move(name);
         op->method = std::move(method);
-        LUC_LOG_EXPR_VERBOSE("parseComposeOperand: BehaviorRef " << op->typeName << ":" << op->method);
+				LUC_LOG_EXPR_VERBOSE("parseComposeOperand: BehaviorRef " << op->typeName << ":" << op->method);
         return op;
     }
 
@@ -1735,14 +1713,14 @@ ComposeOperandPtr Parser::parseComposeOperand() {
         op->kind = ComposeOperandKind::FieldRef;
         op->ident = std::move(name);
         op->field = std::move(field);
-        LUC_LOG_EXPR_VERBOSE("parseComposeOperand: FieldRef " << op->ident << "." << op->field);
+				LUC_LOG_EXPR_VERBOSE("parseComposeOperand: FieldRef " << op->ident << "." << op->field);
         return op;
     }
 
     // Ident
     op->kind = ComposeOperandKind::Ident;
     op->ident = std::move(name);
-    LUC_LOG_EXPR_VERBOSE("parseComposeOperand: Ident " << op->ident);
+		LUC_LOG_EXPR_VERBOSE("parseComposeOperand: Ident " << op->ident);
     return op;
 }
 
@@ -1750,7 +1728,6 @@ ComposeOperandPtr Parser::parseComposeOperand() {
 // parseNullCoalesceExpr  — handled inline in parsePrattExpr
 // (separate function kept for symmetry; currently unused)
 // ─────────────────────────────────────────────────────────────────────────────
-
 ExprPtr Parser::parseNullCoalesceExpr(ExprPtr lhs) {
     // This path is taken by the parsePrattExpr infix loop directly.
     // Kept as a named function for future refactoring.
@@ -1768,7 +1745,6 @@ ExprPtr Parser::parseNullCoalesceExpr(ExprPtr lhs) {
 // Grammar:
 //   match_arm := pattern { ',' pattern } [ 'if' guard_expr ] '->' arm_body
 // ─────────────────────────────────────────────────────────────────────────────
-
 MatchArmPtr Parser::parseMatchArm() {
     SourceLocation loc = currentLoc();
 
@@ -1813,7 +1789,6 @@ MatchArmPtr Parser::parseMatchArm() {
 //
 // Grammar:  'default' '->' arm_body
 // ─────────────────────────────────────────────────────────────────────────────
-
 DefaultArmPtr Parser::parseDefaultArm() {
     SourceLocation loc = currentLoc();
     consume(TokenType::DEFAULT, "expected 'default'");
@@ -1842,12 +1817,11 @@ DefaultArmPtr Parser::parseDefaultArm() {
 //   IDENTIFIER '{'           → StructPatternAST
 //   IDENTIFIER               → BindPatternAST (or RangePatternAST if '..' follows)
 // ─────────────────────────────────────────────────────────────────────────────
-
 std::unique_ptr<BaseAST> Parser::parsePattern() {
-    LUC_LOG_EXPR_VERBOSE("parsePattern: token='" << peek().value << "'");
+		LUC_LOG_EXPR_VERBOSE("parsePattern: token='" << peek().value << "'");
     // Wildcard
     if (check(TokenType::WILDCARD)) {
-        LUC_LOG_EXPR_VERBOSE("parsePattern: wildcard pattern");
+				LUC_LOG_EXPR_VERBOSE("parsePattern: wildcard pattern");
         return parseWildcardPattern();
     }
 
@@ -1875,7 +1849,7 @@ std::unique_ptr<BaseAST> Parser::parsePattern() {
 
         // Type pattern: IDENTIFIER 'is' type
         if (peekNext().type == TokenType::IS) {
-            LUC_LOG_EXPR_VERBOSE("parsePattern: type pattern (is)");
+						LUC_LOG_EXPR_VERBOSE("parsePattern: type pattern (is)");
             advance(); // consume IDENTIFIER
             return parseTypePattern(std::move(name));
         }
@@ -1904,7 +1878,7 @@ std::unique_ptr<BaseAST> Parser::parsePattern() {
     }
 
     errorAt(DiagCode::E2007, "expected pattern");
-    LUC_LOG_EXPR_VERBOSE("parsePattern: returning nullptr (error)");
+		LUC_LOG_EXPR_VERBOSE("parsePattern: returning nullptr (error)");
     return nullptr;
 }
 
@@ -1914,7 +1888,6 @@ std::unique_ptr<BaseAST> Parser::parsePattern() {
 // Parses a literal token (possibly prefixed with '-' for negatives) and
 // checks if '..' follows to build a RangePatternAST.
 // ─────────────────────────────────────────────────────────────────────────────
-
 std::unique_ptr<BaseAST> Parser::parseLiteralOrRangePattern() {
     SourceLocation loc = currentLoc();
  
@@ -2018,7 +1991,6 @@ std::unique_ptr<BaseAST> Parser::parseLiteralOrRangePattern() {
 // ─────────────────────────────────────────────────────────────────────────────
 // parseBindPattern
 // ─────────────────────────────────────────────────────────────────────────────
-
 std::unique_ptr<BindPatternAST> Parser::parseBindPattern(std::string name) {
     SourceLocation loc = currentLoc();
     auto pat = std::make_unique<BindPatternAST>(std::move(name));
@@ -2032,7 +2004,6 @@ std::unique_ptr<BindPatternAST> Parser::parseBindPattern(std::string name) {
 // Grammar:  IDENTIFIER 'is' type
 // Called after the IDENTIFIER has been consumed.
 // ─────────────────────────────────────────────────────────────────────────────
-
 std::unique_ptr<TypePatternAST> Parser::parseTypePattern(std::string bindName) {
     SourceLocation loc = currentLoc();
     consume(TokenType::IS, "expected 'is' in type pattern");
@@ -2053,7 +2024,6 @@ std::unique_ptr<TypePatternAST> Parser::parseTypePattern(std::string bindName) {
 // ─────────────────────────────────────────────────────────────────────────────
 // parseWildcardPattern
 // ─────────────────────────────────────────────────────────────────────────────
-
 std::unique_ptr<WildcardPatternAST> Parser::parseWildcardPattern() {
     SourceLocation loc = currentLoc();
     consume(TokenType::WILDCARD, "expected '_'");
@@ -2068,9 +2038,8 @@ std::unique_ptr<WildcardPatternAST> Parser::parseWildcardPattern() {
 // Grammar:  IDENTIFIER '{' { field_pattern } '}'
 // Called after the type name has been consumed.
 // ─────────────────────────────────────────────────────────────────────────────
-
 std::unique_ptr<StructPatternAST> Parser::parseStructPattern(std::string typeName) {
-    LUC_LOG_EXPR("parseStructPattern: type='" << typeName << "'");
+		LUC_LOG_EXPR("parseStructPattern: type='" << typeName << "'");
     SourceLocation loc = currentLoc();
     consume(TokenType::LBRACE, "expected '{' in struct pattern");
 
@@ -2089,7 +2058,7 @@ std::unique_ptr<StructPatternAST> Parser::parseStructPattern(std::string typeNam
     }
 
     consume(TokenType::RBRACE, "expected '}' to close struct pattern");
-    LUC_LOG_EXPR_VERBOSE("parseStructPattern: " << pat->fields.size() << " fields");
+		LUC_LOG_EXPR_VERBOSE("parseStructPattern: " << pat->fields.size() << " fields");
     return pat;
 }
 
@@ -2100,7 +2069,6 @@ std::unique_ptr<StructPatternAST> Parser::parseStructPattern(std::string typeNam
 //   field_pattern := IDENTIFIER
 //                  | IDENTIFIER ':' pattern
 // ─────────────────────────────────────────────────────────────────────────────
-
 FieldPatternPtr Parser::parseFieldPattern() {
     SourceLocation loc = currentLoc();
 

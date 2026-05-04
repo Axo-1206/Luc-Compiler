@@ -26,6 +26,7 @@
 #include "ast/DeclAST.hpp"
 #include "ast/StmtAST.hpp"
 #include "ast/TypeAST.hpp"
+#include "debug/DebugMacros.hpp"
 
 #include <string>
 
@@ -48,6 +49,8 @@ void checkStmt(StmtAST* node, SymbolTable& symbols, TypeResolver& resolver,
 // ─────────────────────────────────────────────────────────────────────────────
 static std::unique_ptr<TypeAST> cloneType(TypeAST* type) {
     if (!type) return nullptr;
+    LUC_LOG_SEMANTIC_EXTREME("cloneType: kind=" << (type ? LucDebug::kindToString(type->kind) : "null"));
+
     if (type->isa<PrimitiveTypeAST>()) {
         auto* p = type->as<PrimitiveTypeAST>();
         return std::make_unique<PrimitiveTypeAST>(p->primitiveKind);
@@ -103,6 +106,7 @@ static std::unique_ptr<TypeAST> cloneType(TypeAST* type) {
 // We use a static local so callers can return a stable pointer without ownership.
 // ─────────────────────────────────────────────────────────────────────────────
 static PrimitiveTypeAST* primType(PrimitiveKind k) {
+    LUC_LOG_SEMANTIC_EXTREME("primType: kind=" << static_cast<int>(k));
     // One singleton per kind, lazily constructed.
     static PrimitiveTypeAST singletons[] = {
         PrimitiveTypeAST(PrimitiveKind::Bool),
@@ -133,6 +137,7 @@ static PrimitiveTypeAST* primType(PrimitiveKind k) {
 }
 
 static TypeAST* errorFallback(ExprAST* node) {
+    LUC_LOG_SEMANTIC("errorFallback: setting node type to Any");
     TypeAST* fallback = primType(PrimitiveKind::Any);
     node->resolvedType = fallback;
     return fallback;
@@ -144,6 +149,10 @@ static TypeAST* errorFallback(ExprAST* node) {
 // nil → nullptr (caller handles nil assignability).
 // ─────────────────────────────────────────────────────────────────────────────
 static TypeAST* checkLiteralExpr(LiteralExprAST& node) {
+    LUC_LOG_SEMANTIC_EXTREME("checkLiteralExpr: kind=" << static_cast<int>(node.kind) 
+                           << ", value='" << node.value << "'");
+    
+
     TypeAST* t = nullptr;
     switch (node.kind) {
         case LiteralKind::True:
@@ -158,6 +167,7 @@ static TypeAST* checkLiteralExpr(LiteralExprAST& node) {
         case LiteralKind::Nil:      t = nullptr; break; // nil has no concrete type alone
     }
     node.resolvedType = t;
+    LUC_LOG_SEMANTIC_EXTREME("\tresult type: " << (t ? LucDebug::kindToString(t->kind) : "null (nil)"));
     return t;
 }
 
@@ -168,14 +178,19 @@ static TypeAST* checkLiteralExpr(LiteralExprAST& node) {
 // ─────────────────────────────────────────────────────────────────────────────
 static TypeAST* checkIdentExpr(IdentifierExprAST& node, SymbolTable& symbols,
                                 DiagnosticEngine& dc) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkIdentExpr: name='" << node.name << "'");
+    
     Symbol* sym = symbols.lookup(node.name);
     if (!sym) {
+        LUC_LOG_SEMANTIC("\tERROR: undeclared identifier '" << node.name << "'");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
                  "undeclared identifier '" + node.name + "'");
         return errorFallback(&node);
     }
     node.resolvedType = sym->type;
     node.isBehaviorMember = (sym->kind == SymbolKind::Method);
+    
+    LUC_LOG_SEMANTIC_EXTREME("\tresolved type: " << (sym->type ? LucDebug::kindToString(sym->type->kind) : "null"));
     return sym->type;
 }
 
@@ -198,15 +213,21 @@ static TypeAST* checkFieldAccessExpr(FieldAccessExprAST& node, SymbolTable& symb
                                      TypeResolver& resolver, DiagnosticEngine& dc,
                                      int& asyncDepth, int& loopDepth,
                                      int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkFieldAccessExpr: field='" << node.field << "'");
+    
     TypeAST* objType = checkExpr(node.object.get(), symbols, resolver, dc,
                                  asyncDepth, loopDepth, parallelDepth, insideExtern);
     if (!objType) return errorFallback(&node);
+    
+    LUC_LOG_SEMANTIC_EXTREME("\tobject type: " << LucDebug::kindToString(objType->kind));
 
     // Resolve named types to their struct symbol.
     std::string typeName;
     if (objType->isa<NamedTypeAST>()) {
         typeName = objType->as<NamedTypeAST>()->name;
+        LUC_LOG_SEMANTIC_EXTREME("\ttypeName: " << typeName);
     } else if (objType->isa<PtrTypeAST>()) {
+        LUC_LOG_SEMANTIC("\tERROR: cannot access field on raw pointer type");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "cannot access field '" + node.field + "' on raw pointer type '*T'; "
                  "use '@ptrToRef(T, ptr)' to cross the safety boundary first");
@@ -217,7 +238,7 @@ static TypeAST* checkFieldAccessExpr(FieldAccessExprAST& node, SymbolTable& symb
     if (!typeName.empty()) {
         Symbol* typeSym = symbols.lookup(typeName);
         if (typeSym && typeSym->kind == SymbolKind::Enum) {
-            // The type of Direction.North is Direction itself.
+            LUC_LOG_SEMANTIC_EXTREME("\tEnum variant access");
             node.resolvedType = objType;
             return objType;
         }
@@ -227,18 +248,21 @@ static TypeAST* checkFieldAccessExpr(FieldAccessExprAST& node, SymbolTable& symb
             for (auto& f : structDecl->fields) {
                 if (f->name == node.field) {
                     TypeAST* ft = resolver.resolveType(f->type.get());
+                    LUC_LOG_SEMANTIC_EXTREME("\tfound field, type: " << LucDebug::kindToString(ft->kind));
                     node.resolvedType = ft;
                     return ft;
                 }
             }
+            LUC_LOG_SEMANTIC("\tERROR: struct '" << typeName << "' has no field '" << node.field << "'");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
                      "struct '" + typeName + "' has no field '" + node.field + "'");
             return errorFallback(&node);
         }
     }
 
-    // Fallback: return any for now (e.g. any-typed values).
+    // Fallback
     node.resolvedType = primType(PrimitiveKind::Any);
+    LUC_LOG_SEMANTIC_EXTREME("\tfallback to Any type");
     return primType(PrimitiveKind::Any);
 }
 
@@ -270,6 +294,7 @@ static TypeAST* checkFieldAccessExpr(FieldAccessExprAST& node, SymbolTable& symb
 // Used by checkBehaviorAccessExpr and other semantic helpers that need to
 // produce stable type-name strings for codegen annotations.
 static const char* primitiveKindName(PrimitiveKind k) {
+    LUC_LOG_SEMANTIC_EXTREME("primitiveKindName: kind=" << static_cast<int>(k));
     switch (k) {
         case PrimitiveKind::Bool:    return "bool";
         case PrimitiveKind::Byte:    return "byte";
@@ -302,6 +327,7 @@ static const char* primitiveKindName(PrimitiveKind k) {
 // Returns an empty string when the type is abstract (a generic param) or
 // unsupported — callers treat empty as "skip this instantiation".
 static std::string typeArgString(TypeAST* t) {
+    LUC_LOG_SEMANTIC_EXTREME("typeArgString: type=" << (t ? LucDebug::kindToString(t->kind) : "null"));
     if (!t) return "";
     if (t->isa<PrimitiveTypeAST>())
         return primitiveKindName(t->as<PrimitiveTypeAST>()->primitiveKind);
@@ -322,6 +348,7 @@ static std::string typeArgString(TypeAST* t) {
 static std::string buildMangledMethodName(const std::string& structName,
                                           const std::vector<std::string>& typeArgs,
                                           const std::string& method) {
+    LUC_LOG_SEMANTIC_EXTREME("buildMangledMethodName: " << structName << "." << method);
     if (typeArgs.empty())
         return structName + "." + method;
 
@@ -336,15 +363,19 @@ static std::string buildMangledMethodName(const std::string& structName,
 
 static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable& symbols,
                                          DiagnosticEngine& dc) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkBehaviorAccessExpr: " << node.typeName << ":" << node.method);
+    
     Symbol* lhsSym = symbols.lookup(node.typeName);
     if (!lhsSym) {
+        LUC_LOG_SEMANTIC("\tERROR: undeclared identifier '" << node.typeName << "'");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
                  "undeclared identifier '" + node.typeName + "'");
         return errorFallback(&node);
     }
 
-    // DISALLOW STATIC ACCESS: The ':' operator must be used on an instance (Var or Param).
+    // DISALLOW STATIC ACCESS
     if (lhsSym->kind != SymbolKind::Var && lhsSym->kind != SymbolKind::Param) {
+        LUC_LOG_SEMANTIC("\tERROR: static behavior access");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "behavior access ':' is only valid on instances; '" + node.typeName +
                  "' is a type name. Use an instance variable instead.");
@@ -353,6 +384,7 @@ static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable
 
     // Extract the underlying struct/type name from the instance.
     if (!lhsSym->type || !lhsSym->type->isa<NamedTypeAST>()) {
+        LUC_LOG_SEMANTIC("\tERROR: identifier does not resolve to named struct type");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "identifier '" + node.typeName + "' does not resolve to a named struct type");
         return errorFallback(&node);
@@ -361,21 +393,18 @@ static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable
     auto* receiverNamedType = lhsSym->type->as<NamedTypeAST>();
     std::string actualTypeName = receiverNamedType->name;
     std::string mangled = actualTypeName + "." + node.method;
+    LUC_LOG_SEMANTIC_EXTREME("\tmangled name: " << mangled);
 
     Symbol* sym = symbols.lookup(mangled);
     if (!sym) {
+        LUC_LOG_SEMANTIC("\tERROR: no method '" << node.method << "' on '" << actualTypeName << "'");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
                  "no method '" + node.method + "' found on '" + actualTypeName + "'");
         return errorFallback(&node);
     }
     node.isBehaviorMember = true;
 
-    // ── Codegen annotations ───────────────────────────────────────────────────
-    // Collect concrete type args from the receiver's declared type.
-    // Only populated when the receiver is a concrete generic instantiation —
-    // e.g. Scene<Circle> gives ["Circle"], Cache<string,int> gives ["string","int"].
-    // Abstract receivers (T inside a generic body, where isGenericParam == true)
-    // produce an empty vector — codegen uses its TypeSubst map in that case.
+    // Codegen annotations
     std::vector<std::string> concreteArgs;
     bool receiverIsAbstract = receiverNamedType->isGenericParam;
 
@@ -393,17 +422,12 @@ static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable
         }
     }
 
-    // Build the fully-resolved mangled name for direct codegen lookup.
-    // Empty when the receiver is abstract — codegen's TypeSubst handles it.
-    node.concreteTypeArgs    = concreteArgs;
+    node.concreteTypeArgs = concreteArgs;
     node.resolvedMangledName = receiverIsAbstract
         ? ""
         : buildMangledMethodName(actualTypeName, concreteArgs, node.method);
 
-    // ── Existing resolution (unchanged) ──────────────────────────────────────
-    // sym->type is the full (Self) -> ... FuncTypeAST built by SemanticCollector.
-    // Strip the outermost self-group so the resolved type reflects what callers
-    // actually pass — e.g. p:offset resolves to (dx float) -> (dy float) -> Point.
+    // Strip outermost self-group
     TypeAST* exposedType = sym->type;
     if (exposedType && exposedType->isa<FuncTypeAST>()) {
         TypeAST* inner = exposedType->as<FuncTypeAST>()->returnType.get();
@@ -413,7 +437,8 @@ static TypeAST* checkBehaviorAccessExpr(BehaviorAccessExprAST& node, SymbolTable
     node.resolvedType = exposedType;
     // Update the node's type name to the resolved struct base name.
     node.typeName = actualTypeName;
-
+    
+    LUC_LOG_SEMANTIC_EXTREME("\tresolved type: " << (exposedType ? LucDebug::kindToString(exposedType->kind) : "null"));
     return exposedType;
 }
 
@@ -437,16 +462,23 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                                  TypeResolver& resolver, DiagnosticEngine& dc,
                                  int& asyncDepth, int& loopDepth,
                                  int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkBinaryExpr: op=" << static_cast<int>(node.op));
+    
     TypeAST* lt = checkExpr(node.left.get(),  symbols, resolver, dc,
                             asyncDepth, loopDepth, parallelDepth, insideExtern);
     TypeAST* rt = checkExpr(node.right.get(), symbols, resolver, dc,
                             asyncDepth, loopDepth, parallelDepth, insideExtern);
+    
+    LUC_LOG_SEMANTIC_EXTREME("\tleft type: " << (lt ? LucDebug::kindToString(lt->kind) : "null"));
+    LUC_LOG_SEMANTIC_EXTREME("\tright type: " << (rt ? LucDebug::kindToString(rt->kind) : "null"));
 
     TypeAST* result = nullptr;
 
     // Helper to warn if an operand is nullable and return its non-nullable version.
     auto checkAndUnwrapNullable = [&](TypeAST* t, ExprAST* locExpr) -> TypeAST* {
+        LUC_LOG_SEMANTIC_EXTREME("checkAndUnwrapNullable");
         if (t && TypeChecker::isNullable(t)) {
+            LUC_LOG_SEMANTIC_EXTREME("\tnullable operand detected");
             dc.warning(DiagnosticCategory::Semantic, locExpr->loc, DiagCode::W3003,
                     "performing operation on nullable type; value may be nil at runtime");
             if (t->isa<NullableTypeAST>()) {
@@ -465,94 +497,89 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
         // Semantic pass only validates that operands are bool or nullable.
         case BinaryOp::And:
         case BinaryOp::Or:
-            if (lt && !TypeChecker::isBoolOrNullable(lt))
+            LUC_LOG_SEMANTIC_EXTREME("\tlogical and/or operation");
+            if (lt && !TypeChecker::isBoolOrNullable(lt)) {
+                LUC_LOG_SEMANTIC("\tERROR: 'and'/'or' left operand must be bool or nullable");
                 dc.error(DiagnosticCategory::Semantic, node.left->loc, DiagCode::E3002,
-                         "'and'/'or' left operand must be bool or nullable type; "
-                         "got non-bool value — use an explicit bool expression");
-            if (rt && !TypeChecker::isBoolOrNullable(rt))
+                         "'and'/'or' left operand must be bool or nullable type");
+            }
+            if (rt && !TypeChecker::isBoolOrNullable(rt)) {
+                LUC_LOG_SEMANTIC("\tERROR: 'and'/'or' right operand must be bool or nullable");
                 dc.error(DiagnosticCategory::Semantic, node.right->loc, DiagCode::E3002,
-                         "'and'/'or' right operand must be bool or nullable type; "
-                         "got non-bool value — use an explicit bool expression");
+                         "'and'/'or' right operand must be bool or nullable type");
+            }
             result = primType(PrimitiveKind::Bool);
             break;
 
         // ── Value equality: == and != ─────────────────────────────────────────
         // Strict type rules — struct, function, and array types are forbidden.
         case BinaryOp::Eq:
-        case BinaryOp::Ne: {
-            // Check left side type for forbidden categories
+        case BinaryOp::Ne:
+            LUC_LOG_SEMANTIC_EXTREME("\tEquality comparison");
             if (lt) {
-                // Struct type: emit E3011
                 if (lt->isa<NamedTypeAST>()) {
                     Symbol* sym = symbols.lookup(lt->as<NamedTypeAST>()->name);
                     if (sym && sym->kind == SymbolKind::Struct) {
+                        LUC_LOG_SEMANTIC("\tERROR: struct equality not allowed");
                         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3011,
                                  "cannot use '==' on struct type '" +
                                  lt->as<NamedTypeAST>()->name +
-                                 "'; implement 'Equatable<" +
-                                 lt->as<NamedTypeAST>()->name +
-                                 ">' and use ':equals()' instead");
+                                 "'; implement 'Equatable' and use ':equals()'");
                         return primType(PrimitiveKind::Bool);
                     }
                 }
-                // Function type: emit E3012
                 if (lt->isa<FuncTypeAST>()) {
+                    LUC_LOG_SEMANTIC("\tERROR: function equality not allowed");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3012,
-                             "cannot use '==' on function type; "
-                             "function bodies are incomparable");
+                             "cannot use '==' on function type");
                     return primType(PrimitiveKind::Bool);
                 }
-                // Array types: emit E3013
-                if (lt->isa<FixedArrayTypeAST>() ||
-                    lt->isa<SliceTypeAST>()       ||
-                    lt->isa<DynamicArrayTypeAST>()) {
+                if (lt->isa<FixedArrayTypeAST>() || lt->isa<SliceTypeAST>() || lt->isa<DynamicArrayTypeAST>()) {
+                    LUC_LOG_SEMANTIC("\tERROR: array equality not allowed");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3013,
-                             "cannot use '==' on array type; "
-                             "use a collection library comparison function instead");
+                             "cannot use '==' on array type");
                     return primType(PrimitiveKind::Bool);
                 }
             }
             result = primType(PrimitiveKind::Bool);
             break;
-        }
 
-        // ── Reference equality: === ───────────────────────────────────────────
-        // Only valid on reference types and structs (address comparison).
-        // Primitives are value types — === has no meaningful semantics for them.
-        case BinaryOp::RefEq: {
+        case BinaryOp::RefEq:
+            LUC_LOG_SEMANTIC_EXTREME("\treference equality");
             if (lt && !TypeChecker::isReferenceComparable(lt)) {
+                LUC_LOG_SEMANTIC("\tERROR: reference equality on non-reference type");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "'===' reference equality is not valid on primitive or "
                          "non-reference type; use '==' for value comparison instead");
             }
             result = primType(PrimitiveKind::Bool);
             break;
-        }
 
         // ── Ordering comparisons ──────────────────────────────────────────────
         case BinaryOp::Lt: case BinaryOp::Gt:
         case BinaryOp::Le: case BinaryOp::Ge:
+            LUC_LOG_SEMANTIC_EXTREME("	ordering comparison");
             result = primType(PrimitiveKind::Bool);
             break;
 
         // ── Arithmetic ────────────────────────────────────────────────────────
         case BinaryOp::Add:
+            LUC_LOG_SEMANTIC_EXTREME("\taddition");
             if (lt && lt->isa<PtrTypeAST>()) {
+                LUC_LOG_SEMANTIC("\tERROR: pointer addition not allowed");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "operator '+' is not supported for raw pointer types; "
                          "use '@ptrOffset(ptr, n)' instead");
-                TypeAST* fallback = primType(PrimitiveKind::Any);
-                node.resolvedType = fallback;
-                return fallback;
-            }
-            // string + string is valid
-            if (lt && lt->isa<PrimitiveTypeAST>() &&
-                lt->as<PrimitiveTypeAST>()->primitiveKind == PrimitiveKind::String) {
+                result = primType(PrimitiveKind::Any);
+            } else if (lt && lt->isa<PrimitiveTypeAST>() &&
+                       lt->as<PrimitiveTypeAST>()->primitiveKind == PrimitiveKind::String) {
                 lt = checkAndUnwrapNullable(lt, node.left.get());
                 rt = checkAndUnwrapNullable(rt, node.right.get());
-                if (rt && !TypeChecker::isAssignable(rt, lt))
+                if (rt && !TypeChecker::isAssignable(rt, lt)) {
+                    LUC_LOG_SEMANTIC("\tERROR: string addition requires string RHS");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'+' on strings requires string right-hand side");
+                }
                 result = primType(PrimitiveKind::String);
             } else {
                 lt = checkAndUnwrapNullable(lt, node.left.get());
@@ -563,35 +590,37 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
             break;
 
         case BinaryOp::Sub:
+            LUC_LOG_SEMANTIC_EXTREME("\tsubtraction");
             if (lt && lt->isa<PtrTypeAST>()) {
+                LUC_LOG_SEMANTIC("\tERROR: pointer subtraction not allowed");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "operator '-' is not supported for raw pointer types; "
                          "use '@ptrDiff(p1, p2)' or '@ptrOffset(ptr, -n)' instead");
-                TypeAST* fallback = primType(PrimitiveKind::Any);
-                node.resolvedType = fallback;
-                return fallback;
+                result = primType(PrimitiveKind::Any);
+            } else {
+                lt = checkAndUnwrapNullable(lt, node.left.get());
+                rt = checkAndUnwrapNullable(rt, node.right.get());
+                result = TypeChecker::unify(lt, rt);
+                if (!result && lt) result = lt;
             }
-            lt = checkAndUnwrapNullable(lt, node.left.get());
-            rt = checkAndUnwrapNullable(rt, node.right.get());
-            result = TypeChecker::unify(lt, rt);
-            if (!result && lt) result = lt;
             break;
 
         case BinaryOp::Mul:
         case BinaryOp::Div:
         case BinaryOp::Pow:
         case BinaryOp::Mod:
+            LUC_LOG_SEMANTIC_EXTREME("\tmultiplication/division/power/modulo");
             if ((lt && lt->isa<PtrTypeAST>()) || (rt && rt->isa<PtrTypeAST>())) {
+                LUC_LOG_SEMANTIC("\tERROR: arithmetic on pointer");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "arithmetic operators are not supported for raw pointer types");
-                TypeAST* fallback = primType(PrimitiveKind::Any);
-                node.resolvedType = fallback;
-                return fallback;
+                result = primType(PrimitiveKind::Any);
+            } else {
+                lt = checkAndUnwrapNullable(lt, node.left.get());
+                rt = checkAndUnwrapNullable(rt, node.right.get());
+                result = TypeChecker::unify(lt, rt);
+                if (!result && lt) result = lt;
             }
-            lt = checkAndUnwrapNullable(lt, node.left.get());
-            rt = checkAndUnwrapNullable(rt, node.right.get());
-            result = TypeChecker::unify(lt, rt);
-            if (!result && lt) result = lt;
             break;
 
         // ── Bitwise: && || ~^ << >> ───────────────────────────────────────────
@@ -601,7 +630,9 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
         case BinaryOp::BitXor:
         case BinaryOp::Shl:
         case BinaryOp::Shr: {
+            LUC_LOG_SEMANTIC_EXTREME("\tbitwise operation");
             auto isIntegerType = [](TypeAST* t) -> bool {
+                LUC_LOG_SEMANTIC_EXTREME("isIntegerType");
                 if (!t || !t->isa<PrimitiveTypeAST>()) return false;
                 auto k = t->as<PrimitiveTypeAST>()->primitiveKind;
                 switch (k) {
@@ -618,18 +649,23 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                         return false;
                 }
             };
-            if (lt && !isIntegerType(lt))
+            if (lt && !isIntegerType(lt)) {
+                LUC_LOG_SEMANTIC("\tERROR: bitwise operator requires integer operands (left)");
                 dc.error(DiagnosticCategory::Semantic, node.left->loc, DiagCode::E3002,
                          "bitwise operator requires integer operands; left operand is not an integer type");
-            if (rt && !isIntegerType(rt))
+            }
+            if (rt && !isIntegerType(rt)) {
+                LUC_LOG_SEMANTIC("\tERROR: bitwise operator requires integer operands (right)");
                 dc.error(DiagnosticCategory::Semantic, node.right->loc, DiagCode::E3002,
                          "bitwise operator requires integer operands; right operand is not an integer type");
+            }
             result = lt ? lt : rt;
             break;
         }
     }
 
     node.resolvedType = result;
+    LUC_LOG_SEMANTIC_EXTREME("\tresult type: " << (result ? LucDebug::kindToString(result->kind) : "null"));
     return result;
 }
 
@@ -648,6 +684,7 @@ static TypeAST* checkUnaryExpr(UnaryExprAST& node, SymbolTable& symbols,
                                 TypeResolver& resolver, DiagnosticEngine& dc,
                                 int& asyncDepth, int& loopDepth,
                                 int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkUnaryExpr: op=" << static_cast<int>(node.op));
     TypeAST* inner = checkExpr(node.operand.get(), symbols, resolver, dc,
                                asyncDepth, loopDepth, parallelDepth, insideExtern);
     TypeAST* result = inner;
@@ -659,6 +696,7 @@ static TypeAST* checkUnaryExpr(UnaryExprAST& node, SymbolTable& symbols,
             //   let x int? = nil
             //   if not x { ... }  -- true: x is nil, treated as false
             if (inner && !TypeChecker::isBoolOrNullable(inner)) {
+                LUC_LOG_SEMANTIC("\tERROR: 'not' requires bool or nullable operand");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "'not' requires a bool or nullable operand; "
                          "got non-bool type — use an explicit comparison instead, "
@@ -700,6 +738,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                                TypeResolver& resolver, DiagnosticEngine& dc,
                                int& asyncDepth, int& loopDepth,
                                int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkCallExpr");
     // Check each argument.
     for (auto& arg : node.args) {
         checkExpr(arg.get(), symbols, resolver, dc,
@@ -734,6 +773,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .len()
             if (methodName == "len") {
                 if (!node.args.empty()) {
+                    LUC_LOG_SEMANTIC("\tERROR: .len() takes no arguments");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.len()' takes no arguments");
                     return errorFallback(&node);
@@ -744,6 +784,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .isEmpty()
             if (methodName == "isEmpty") {
                 if (!node.args.empty()) {
+                    LUC_LOG_SEMANTIC("\tERROR: .isEmpty() takes no arguments");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.isEmpty()' takes no arguments");
                     return errorFallback(&node);
@@ -754,11 +795,13 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .cap() — slice and dynamic only
             if (methodName == "cap") {
                 if (!isSlice && !isDynamic) {
+                    LUC_LOG_SEMANTIC("\tERROR: .cap() only on slices/dynamic arrays");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'.cap()' is only available on slices and dynamic arrays");
                     return errorFallback(&node);
                 }
                 if (!node.args.empty()) {
+                    LUC_LOG_SEMANTIC("\tERROR: .cap() takes no arguments");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.cap()' takes no arguments");
                     return errorFallback(&node);
@@ -769,6 +812,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .first() / .last()
             if (methodName == "first" || methodName == "last") {
                 if (!node.args.empty()) {
+                    LUC_LOG_SEMANTIC("\tERROR: .first()/.last() take no arguments");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.first()' / '.last()' take no arguments");
                     return errorFallback(&node);
@@ -779,11 +823,13 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .push(value) — dynamic only
             if (methodName == "push") {
                 if (!isDynamic) {
+                    LUC_LOG_SEMANTIC("\tERROR: .push() only on dynamic arrays");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'.push()' is only available on dynamic arrays [*]T");
                     return errorFallback(&node);
                 }
                 if (node.args.size() != 1) {
+                    LUC_LOG_SEMANTIC("\tERROR: .push() expects one argument");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.push()' expects exactly one argument");
                     return errorFallback(&node);
@@ -791,6 +837,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                 TypeAST* argType = checkExpr(node.args[0].get(), symbols, resolver, dc,
                                              asyncDepth, loopDepth, parallelDepth, insideExtern);
                 if (argType && elemType && !TypeChecker::isAssignable(argType, elemType)) {
+                    LUC_LOG_SEMANTIC("\tERROR: argument type mismatch in .push()");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "argument type mismatch in '.push()'");
                 }
@@ -800,11 +847,13 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .pop() — dynamic only
             if (methodName == "pop") {
                 if (!isDynamic) {
+                    LUC_LOG_SEMANTIC("\tERROR: .pop() only on dynamic arrays");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'.pop()' is only available on dynamic arrays [*]T");
                     return errorFallback(&node);
                 }
                 if (!node.args.empty()) {
+                    LUC_LOG_SEMANTIC("\tERROR: .pop() takes no arguments");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.pop()' takes no arguments");
                     return errorFallback(&node);
@@ -815,11 +864,13 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .insert(index, value) — dynamic only
             if (methodName == "insert") {
                 if (!isDynamic) {
+                    LUC_LOG_SEMANTIC("\tERROR: .insert() only on dynamic arrays");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'.insert()' is only available on dynamic arrays [*]T");
                     return errorFallback(&node);
                 }
                 if (node.args.size() != 2) {
+                    LUC_LOG_SEMANTIC("\tERROR: .insert() expects two arguments");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.insert()' expects two arguments: index and value");
                     return errorFallback(&node);
@@ -829,6 +880,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                 TypeAST* valType = checkExpr(node.args[1].get(), symbols, resolver, dc,
                                              asyncDepth, loopDepth, parallelDepth, insideExtern);
                 if (valType && elemType && !TypeChecker::isAssignable(valType, elemType)) {
+                    LUC_LOG_SEMANTIC("\tERROR: value type mismatch in .insert()");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "value type mismatch in '.insert()'");
                 }
@@ -838,11 +890,13 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .remove(index) — dynamic only
             if (methodName == "remove") {
                 if (!isDynamic) {
+                    LUC_LOG_SEMANTIC("\tERROR: .remove() only on dynamic arrays");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'.remove()' is only available on dynamic arrays [*]T");
                     return errorFallback(&node);
                 }
                 if (node.args.size() != 1) {
+                    LUC_LOG_SEMANTIC("\tERROR: .remove() expects one argument");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.remove()' expects one argument (index)");
                     return errorFallback(&node);
@@ -855,11 +909,13 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .clear() — dynamic only
             if (methodName == "clear") {
                 if (!isDynamic) {
+                    LUC_LOG_SEMANTIC("\tERROR: .clear() only on dynamic arrays");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'.clear()' is only available on dynamic arrays [*]T");
                     return errorFallback(&node);
                 }
                 if (!node.args.empty()) {
+                    LUC_LOG_SEMANTIC("\tERROR: .clear() takes no arguments");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.clear()' takes no arguments");
                     return errorFallback(&node);
@@ -870,11 +926,13 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // .reserve(capacity) — dynamic only
             if (methodName == "reserve") {
                 if (!isDynamic) {
+                    LUC_LOG_SEMANTIC("\tERROR: .reserve() only on dynamic arrays");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'.reserve()' is only available on dynamic arrays [*]T");
                     return errorFallback(&node);
                 }
                 if (node.args.size() != 1) {
+                    LUC_LOG_SEMANTIC("\tERROR: .reserve() expects one argument");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                              "'.reserve()' expects one argument (capacity)");
                     return errorFallback(&node);
@@ -918,16 +976,17 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
         // Flat extern functions (no curry): check args against flat first group.
         
 
-        std::cout << "  ExternFunc: " << calleeSym->name << std::endl;
-        std::cout << "    funcDecl->returnType = " << funcDecl->returnType.get() << std::endl;
+        LUC_LOG_SEMANTIC("\tExternFunc: " << calleeSym->name);
+        LUC_LOG_SEMANTIC("\t\tfuncDecl->returnType = " << funcDecl->returnType.get());
         if (funcDecl->returnType.get()) {
-            std::cout << "    returnType kind = " << static_cast<int>(funcDecl->returnType.get()->kind) << std::endl;
+            LUC_LOG_SEMANTIC("\t\treturnType kind = " << LucDebug::kindToString(funcDecl->returnType.get()->kind));
         }
 
         
         if (!funcDecl->paramGroups.empty()) {
             auto& firstGroup = funcDecl->paramGroups[0];
             if (node.args.size() != firstGroup.size()) {
+                LUC_LOG_SEMANTIC("\tERROR: extern function argument count mismatch");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                          "extern function '" + calleeSym->name +
                          "' expects " + std::to_string(firstGroup.size()) +
@@ -937,6 +996,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                     TypeAST* argType = static_cast<TypeAST*>(node.args[i]->resolvedType);
                     TypeAST* paramType = firstGroup[i]->type.get();
                     if (argType && paramType && !TypeChecker::isAssignable(argType, paramType)) {
+                        LUC_LOG_SEMANTIC("\tERROR: argument type mismatch in call to extern function");
                         dc.error(DiagnosticCategory::Semantic, node.args[i]->loc,
                                  DiagCode::E3002,
                                  "argument " + std::to_string(i + 1) +
@@ -960,6 +1020,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             
             // Check that we're not providing too many arguments for the first group
             if (node.args.size() > firstGroup.size()) {
+                LUC_LOG_SEMANTIC("\tERROR: wrong number of arguments");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                          "wrong number of arguments: expected " +
                          std::to_string(firstGroup.size()) + ", got " +
@@ -972,6 +1033,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                 TypeAST* argType = static_cast<TypeAST*>(node.args[i]->resolvedType);
                 TypeAST* paramType = firstGroup[i]->type.get();
                 if (argType && paramType && !TypeChecker::isAssignable(argType, paramType)) {
+                    LUC_LOG_SEMANTIC("\tERROR: argument type mismatch");
                     dc.error(DiagnosticCategory::Semantic, node.args[i]->loc, DiagCode::E3002,
                              "argument " + std::to_string(i + 1) + " type mismatch");
                 }
@@ -1003,6 +1065,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             // No parameters
             returnType = funcDecl->returnType.get();
             if (node.args.size() > 0) {
+                LUC_LOG_SEMANTIC("\tERROR: wrong number of arguments");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                          "wrong number of arguments: expected 0, got " +
                          std::to_string(node.args.size()));
@@ -1016,6 +1079,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
         // Support partial application: if fewer args provided, we return the return type
         // (which for curried functions is the next function in the chain)
         if (node.args.size() > ft->params.size()) {
+            LUC_LOG_SEMANTIC("\tERROR: wrong number of arguments");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3003,
                      "wrong number of arguments: expected " +
                      std::to_string(ft->params.size()) + ", got " +
@@ -1028,6 +1092,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
             TypeAST* argType = static_cast<TypeAST*>(node.args[i]->resolvedType);
             TypeAST* paramType = ft->params[i].get();
             if (argType && paramType && !TypeChecker::isAssignable(argType, paramType)) {
+                LUC_LOG_SEMANTIC("\tERROR: argument type mismatch");
                 dc.error(DiagnosticCategory::Semantic, node.args[i]->loc, DiagCode::E3002,
                          "argument " + std::to_string(i + 1) + " type mismatch");
             }
@@ -1038,6 +1103,7 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
     } 
     // 3. Not callable.
     else {
+        LUC_LOG_SEMANTIC("\tERROR: expression is not callable");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "expression is not callable");
         return errorFallback(&node);
@@ -1045,11 +1111,11 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
 
     
 
-    std::cout << "  checkCallExpr returning type: " << returnType << std::endl;
+    LUC_LOG_SEMANTIC("\tcheckCallExpr returning type: " << returnType);
     if (returnType) {
-        std::cout << "    returnType kind: " << static_cast<int>(returnType->kind) << std::endl;
+        LUC_LOG_SEMANTIC("\t\treturnType kind: " << LucDebug::kindToString(returnType->kind));
     } else {
-        std::cout << "    returnType is NULL" << std::endl;
+        LUC_LOG_SEMANTIC("\t\treturnType is NULL");
     }
 
     
@@ -1087,8 +1153,11 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                                  TypeResolver& resolver, DiagnosticEngine& dc,
                                  int& asyncDepth, int& loopDepth,
                                  int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkAssignExpr: op=" << static_cast<int>(node.op));
+    
     TypeAST* lhsType = checkExpr(node.lhs.get(), symbols, resolver, dc,
                                  asyncDepth, loopDepth, parallelDepth, insideExtern);
+    LUC_LOG_SEMANTIC_EXTREME("\tlhs type: " << (lhsType ? LucDebug::kindToString(lhsType->kind) : "null"));
 
     // ── Function body reassignment:  f = { ... }  or  f = async { ... } ──────
     // Detect the block-body form: RHS is an AnonFuncExprAST with no params and
@@ -1105,17 +1174,19 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
         if (anonBody->paramGroups.empty() && !anonBody->returnType) {
             auto* ident = node.lhs->as<IdentifierExprAST>();
             Symbol* sym = symbols.lookup(ident->name);
+            LUC_LOG_SEMANTIC_EXTREME("\tfunction body reassignment for '" << ident->name << "'");
 
             if (sym && (sym->kind == SymbolKind::Func) && !sym->isExtern && sym->decl) {
                 // Verify the symbol is let-declared (reassignable).
                 if (sym->declKw != DeclKeyword::Let) {
+                    LUC_LOG_SEMANTIC("\tERROR: cannot reassign const function");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3004,
                              "cannot reassign body of '" + ident->name +
-                             "': declared with " +
-                             "const");
+                             "': declared with const");
                 }
 
                 if (parallelDepth > 0) {
+                    LUC_LOG_SEMANTIC("\tERROR: assignment inside parallel scope");
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "assignment to outer variable inside parallel scope is not allowed");
                 }
@@ -1131,9 +1202,13 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                 // Honour the async flag from either the original declaration or
                 // the new body (= async { ... } sets isAsync on the AnonFuncExprAST).
                 bool bodyIsAsync = funcDecl->isAsync || anonBody->isAsync;
-                if (bodyIsAsync) asyncDepth++;
+                if (bodyIsAsync) {
+                    LUC_LOG_SEMANTIC_EXTREME("\tasync function body");
+                    asyncDepth++;
+                }
 
                 symbols.pushScope();
+                LUC_LOG_SEMANTIC_EXTREME("\tpushing scope for function params");
 
                 // Declare the function's parameters into the body scope.
                 for (auto& group : funcDecl->paramGroups) {
@@ -1150,21 +1225,26 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                         ps.isAsync    = false;
                         ps.loc        = param->loc;
                         if (!symbols.declare(ps)) {
+                            LUC_LOG_SEMANTIC("\tERROR: duplicate param name");
                             dc.error(DiagnosticCategory::Semantic, param->loc,
                                      DiagCode::E3005,
                                      "duplicate parameter name '" + param->name + "'");
+                        } else {
+                            LUC_LOG_SEMANTIC_EXTREME("\t\tdeclared param: " << param->name);
                         }
                     }
                 }
 
                 // Check the body block with the recovered return type.
                 if (anonBody->body) {
+                    LUC_LOG_SEMANTIC_EXTREME("\tchecking function body");
                     checkStmt(anonBody->body.get(), symbols, resolver, dc,
                               returnType, asyncDepth, loopDepth,
                               parallelDepth, insideExtern);
                 }
 
                 symbols.popScope();
+                LUC_LOG_SEMANTIC_EXTREME("\tpopped function scope");
                 if (bodyIsAsync) asyncDepth--;
 
                 node.resolvedType = lhsType;
@@ -1213,13 +1293,15 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
         if (hasExplicitSignature) {
             auto* ident = node.lhs->as<IdentifierExprAST>();
             Symbol* sym = symbols.lookup(ident->name);
+            LUC_LOG_SEMANTIC_EXTREME("\tExplicit anonymous function reassignment for '" << ident->name << "'");
 
             if (sym && (sym->kind == SymbolKind::Func) && !sym->isExtern && sym->decl) {
                 auto* funcDecl = static_cast<FuncDeclAST*>(sym->decl);
                 bool signatureOk = true;
 
-                // ── 1. Curry group count ──────────────────────────────────────
+                // Curry group count check
                 if (anonRhs->paramGroups.size() != funcDecl->paramGroups.size()) {
+                    LUC_LOG_SEMANTIC("\tERROR: param group count mismatch");
                     dc.error(DiagnosticCategory::Semantic, anonRhs->loc,
                              DiagCode::E3003,
                              "anonymous function assigned to '" + ident->name +
@@ -1229,12 +1311,13 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                              std::to_string(funcDecl->paramGroups.size()));
                     signatureOk = false;
                 } else {
-                    // ── 2. Per-group, per-parameter check ─────────────────────
+                    // Per-group, per-parameter check
                     for (size_t g = 0; g < funcDecl->paramGroups.size(); ++g) {
                         const auto& declGroup = funcDecl->paramGroups[g];
                         const auto& anonGroup = anonRhs->paramGroups[g];
 
                         if (anonGroup.size() != declGroup.size()) {
+                            LUC_LOG_SEMANTIC("\tERROR: param count mismatch in group " << g);
                             dc.error(DiagnosticCategory::Semantic, anonRhs->loc,
                                      DiagCode::E3003,
                                      "anonymous function assigned to '" + ident->name +
@@ -1252,40 +1335,33 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
 
                             // Variadic flag must match exactly.
                             if (anonParam->isVariadic != declParam->isVariadic) {
+                                LUC_LOG_SEMANTIC("\tERROR: variadic mismatch for param " << i);
                                 dc.error(DiagnosticCategory::Semantic, anonParam->loc,
                                          DiagCode::E3002,
                                          "group " + std::to_string(g + 1) +
                                          " parameter " + std::to_string(i + 1) +
-                                         " of anonymous function assigned to '" +
-                                         ident->name + "': variadic mismatch");
+                                         " variadic mismatch");
                                 signatureOk = false;
                                 continue;
                             }
 
-                            // Resolve both sides and check type compatibility.
-                            TypeAST* declType =
-                                resolver.resolveType(declParam->type.get());
-                            TypeAST* anonType =
-                                resolver.resolveType(anonParam->type.get());
+                            TypeAST* declType = resolver.resolveType(declParam->type.get());
+                            TypeAST* anonType = resolver.resolveType(anonParam->type.get());
 
-                            if (declType && anonType &&
-                                !TypeChecker::isAssignable(anonType, declType)) {
+                            if (declType && anonType && !TypeChecker::isAssignable(anonType, declType)) {
+                                LUC_LOG_SEMANTIC("\tERROR: type mismatch for param " << i);
                                 dc.error(DiagnosticCategory::Semantic, anonParam->loc,
                                          DiagCode::E3002,
                                          "group " + std::to_string(g + 1) +
                                          " parameter " + std::to_string(i + 1) +
-                                         " of anonymous function assigned to '" +
-                                         ident->name + "': type mismatch");
+                                         " type mismatch");
                                 signatureOk = false;
                             }
                         }
                     }
                 }
 
-                // ── 3. Return type ────────────────────────────────────────────
-                // Both nullptr means void — valid match.
-                // One nullptr and one not — mismatch.
-                // Both non-nullptr — use isAssignable.
+                // Return type check
                 TypeAST* declReturn = funcDecl->returnType
                                        ? resolver.resolveType(funcDecl->returnType.get())
                                        : nullptr;
@@ -1303,6 +1379,7 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                 }
 
                 if (!returnMatches) {
+                    LUC_LOG_SEMANTIC("\tERROR: return type mismatch");
                     dc.error(DiagnosticCategory::Semantic, anonRhs->loc,
                              DiagCode::E3002,
                              "return type of anonymous function assigned to '" +
@@ -1310,28 +1387,29 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                     signatureOk = false;
                 }
 
-                // ── 4. Mutability and parallel context ────────────────────────
+                // Mutability check
                 if (sym->declKw != DeclKeyword::Let) {
+                    LUC_LOG_SEMANTIC("\tERROR: cannot reassign const function");
                     dc.error(DiagnosticCategory::Semantic, node.loc,
                              DiagCode::E3004,
                              "cannot reassign '" + ident->name +
-                             "': declared with " +
-                             "const");
+                             "': declared with const");
                 }
 
                 if (parallelDepth > 0) {
+                    LUC_LOG_SEMANTIC("\tERROR: assignment inside parallel scope");
                     dc.error(DiagnosticCategory::Semantic, node.loc,
                              DiagCode::E3002,
                              "assignment to outer variable inside parallel scope is not allowed");
                 }
 
-                // ── 5. Check the body ─────────────────────────────────────────
-                // Always check the body even when the signature mismatched, so
-                // internal errors surface in a single pass.  Use declReturn as
-                // the expected return type so return statements are validated
-                // against the declaration's intent.
-                if (anonRhs->isAsync) asyncDepth++;
+                // Check the body
+                if (anonRhs->isAsync) {
+                    LUC_LOG_SEMANTIC_EXTREME("	async function body");
+                    asyncDepth++;
+                }
                 symbols.pushScope();
+                LUC_LOG_SEMANTIC_EXTREME("	pushing scope for function params");
 
                 // Declare params using the anon func's own param names (the
                 // programmer writes the new names for this body), but the declared
@@ -1343,11 +1421,10 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                         const auto& anonGroup = anonRhs->paramGroups[g];
                         for (size_t i = 0; i < declGroup.size(); ++i) {
                             const auto& anonParam = anonGroup[i];
-                            TypeAST* pt =
-                                resolver.resolveType(declGroup[i]->type.get());
+                            TypeAST* pt = resolver.resolveType(declGroup[i]->type.get());
                             if (!pt) continue;
                             Symbol ps;
-                            ps.name       = anonParam->name; // use the new name
+                            ps.name       = anonParam->name;
                             ps.kind       = SymbolKind::Param;
                             ps.declKw     = DeclKeyword::Let;
                             ps.visibility = Visibility::Private;
@@ -1356,22 +1433,26 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                             ps.isAsync    = false;
                             ps.loc        = anonParam->loc;
                             if (!symbols.declare(ps)) {
+                                LUC_LOG_SEMANTIC("\tERROR: duplicate param name");
                                 dc.error(DiagnosticCategory::Semantic, anonParam->loc,
                                          DiagCode::E3005,
-                                         "duplicate parameter name '" +
-                                         anonParam->name + "'");
+                                         "duplicate parameter name '" + anonParam->name + "'");
+                            } else {
+                                LUC_LOG_SEMANTIC_EXTREME("		declared param: " << anonParam->name);
                             }
                         }
                     }
                 }
 
                 if (anonRhs->body) {
+                    LUC_LOG_SEMANTIC_EXTREME("	checking function body");
                     checkStmt(anonRhs->body.get(), symbols, resolver, dc,
                               declReturn, asyncDepth, loopDepth,
                               parallelDepth, insideExtern);
                 }
 
                 symbols.popScope();
+                LUC_LOG_SEMANTIC_EXTREME("	popped function scope");
                 if (anonRhs->isAsync) asyncDepth--;
 
                 node.resolvedType = lhsType;
@@ -1383,20 +1464,24 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
     // ── General case ──────────────────────────────────────────────────────────
     TypeAST* rhsType = checkExpr(node.rhs.get(), symbols, resolver, dc,
                                  asyncDepth, loopDepth, parallelDepth, insideExtern);
+    LUC_LOG_SEMANTIC_EXTREME("	rhs type: " << (rhsType ? LucDebug::kindToString(rhsType->kind) : "null"));
 
     // Check the LHS is a let-declared symbol.
     if (node.lhs->isa<IdentifierExprAST>()) {
         auto* ident = node.lhs->as<IdentifierExprAST>();
         Symbol* sym = symbols.lookup(ident->name);
         if (sym && sym->declKw != DeclKeyword::Let) {
+            LUC_LOG_SEMANTIC("\tERROR: cannot assign to const variable");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3004,
-                     "cannot assign to '" + ident->name + "': declared with " +
-                     "const");
+                     "cannot assign to '" + ident->name + "': declared with const");
+        } else {
+            LUC_LOG_SEMANTIC_EXTREME("	LHS is mutable (let)");
         }
     }
 
     // Parallel scope: writing to outer variables is forbidden.
     if (parallelDepth > 0) {
+        LUC_LOG_SEMANTIC("\tERROR: assignment inside parallel scope");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "assignment to outer variable inside parallel scope is not allowed");
     }
@@ -1409,7 +1494,7 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
             // by wrapping node.rhs in a TypeConvExprAST.
             if (lhsType->isa<NamedTypeAST>() &&
                 TypeChecker::isFromCastable(rhsType, lhsType, &symbols)) {
-                // Build the target type node for the cast.
+                LUC_LOG_SEMANTIC_EXTREME("	applying from-casting conversion");
                 auto targetTypeNode = std::make_unique<NamedTypeAST>(
                     lhsType->as<NamedTypeAST>()->name);
                 targetTypeNode->loc = node.rhs->loc;
@@ -1429,16 +1514,18 @@ static TypeAST* checkAssignExpr(AssignExprAST& node, SymbolTable& symbols,
                 checkExpr(node.rhs.get(), symbols, resolver, dc,
                           asyncDepth, loopDepth, parallelDepth, insideExtern);
             } else {
+                LUC_LOG_SEMANTIC("\tERROR: type mismatch in assignment");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "type mismatch in assignment");
             }
+        } else {
+            LUC_LOG_SEMANTIC_EXTREME("	assignment types compatible");
         }
     }
 
     node.resolvedType = lhsType;
     return lhsType;
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // checkIsExpr
 // x is int → produces bool, marks the narrowed type on the node.
@@ -1447,6 +1534,7 @@ static TypeAST* checkIsExpr(IsExprAST& node, SymbolTable& symbols,
                              TypeResolver& resolver, DiagnosticEngine& dc,
                              int& asyncDepth, int& loopDepth,
                              int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkIsExpr");
     checkExpr(node.expr.get(), symbols, resolver, dc,
               asyncDepth, loopDepth, parallelDepth, insideExtern);
     resolver.resolveType(node.checkType.get());
@@ -1463,9 +1551,11 @@ static TypeAST* checkIfExpr(IfExprAST& node, SymbolTable& symbols,
                               TypeAST* expectedReturn,
                               int& asyncDepth, int& loopDepth,
                               int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkIfExpr");
     TypeAST* condType = checkExpr(node.condition.get(), symbols, resolver, dc,
                                   asyncDepth, loopDepth, parallelDepth, insideExtern);
     if (condType && !TypeChecker::isBooleanCompatible(condType)) {
+        LUC_LOG_SEMANTIC("\tERROR: if condition must be bool");
         dc.error(DiagnosticCategory::Semantic, node.condition->loc, DiagCode::E3002,
                  "if condition must be bool");
     }
@@ -1481,12 +1571,14 @@ static TypeAST* checkIfExpr(IfExprAST& node, SymbolTable& symbols,
         elseType = checkExpr(node.elseBranch.get(), symbols, resolver, dc,
                                asyncDepth, loopDepth, parallelDepth, insideExtern);
     } else {
+        LUC_LOG_SEMANTIC("\tERROR: if expression requires else branch");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "if expression requires an else branch");
     }
  
     TypeAST* unified = TypeChecker::unify(thenType, elseType);
     if (!unified && thenType && elseType) {
+        LUC_LOG_SEMANTIC("\tERROR: type mismatch between 'if' and 'else' branches");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "type mismatch between 'if' and 'else' branches (cannot unify types)");
     }
@@ -1505,6 +1597,7 @@ static TypeAST* checkMatchExpr(MatchExprAST& node, SymbolTable& symbols,
                                 TypeAST* expectedReturn,
                                 int& asyncDepth, int& loopDepth,
                                 int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkMatchExpr");
     TypeAST* subjectType = checkExpr(node.subject.get(), symbols, resolver, dc,
                                      asyncDepth, loopDepth, parallelDepth, insideExtern);
  
@@ -1515,6 +1608,7 @@ static TypeAST* checkMatchExpr(MatchExprAST& node, SymbolTable& symbols,
             TypeAST* gt = checkExpr(arm->guard.get(), symbols, resolver, dc,
                                     asyncDepth, loopDepth, parallelDepth, insideExtern);
             if (gt && !TypeChecker::isBooleanCompatible(gt)) {
+                LUC_LOG_SEMANTIC("\tERROR: match arm guard must be bool");
                 dc.error(DiagnosticCategory::Semantic, arm->guard->loc, DiagCode::E3002,
                          "match arm guard must be bool");
             }
@@ -1566,6 +1660,7 @@ static TypeAST* checkMatchExpr(MatchExprAST& node, SymbolTable& symbols,
             unified = defaultType;
         }
     } else {
+        LUC_LOG_SEMANTIC("\tERROR: match expression requires 'default' arm");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "match expression requires a 'default' arm");
     }
@@ -1582,11 +1677,14 @@ static TypeAST* checkAwaitExpr(AwaitExprAST& node, SymbolTable& symbols,
                                 TypeResolver& resolver, DiagnosticEngine& dc,
                                 int& asyncDepth, int& loopDepth,
                                 int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkAwaitExpr");
     if (asyncDepth <= 0) {
+        LUC_LOG_SEMANTIC("\tERROR: 'await' outside async body");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "'await' is only valid inside an async function body");
     }
     if (parallelDepth > 0) {
+        LUC_LOG_SEMANTIC("\tERROR: 'await' inside parallel scope");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "'await' is not allowed inside a parallel scope");
     }
@@ -1608,6 +1706,7 @@ static TypeAST* checkAnonFuncExpr(AnonFuncExprAST& node, SymbolTable& symbols,
                                    TypeResolver& resolver, DiagnosticEngine& dc,
                                    int& asyncDepth, int& loopDepth,
                                    int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkAnonFuncExpr");
     TypeAST* returnType = nullptr;
     if (node.returnType) returnType = resolver.resolveType(node.returnType.get());
 
@@ -1629,6 +1728,7 @@ static TypeAST* checkAnonFuncExpr(AnonFuncExprAST& node, SymbolTable& symbols,
                 ps.isAsync    = false;
                 ps.loc        = param->loc;
                 if (!symbols.declare(ps)) {
+                    LUC_LOG_SEMANTIC("\tERROR: duplicate parameter name");
                     dc.error(DiagnosticCategory::Semantic, param->loc,
                              DiagCode::E3005,
                              "duplicate parameter name '" + param->name + "'");
@@ -1661,9 +1761,11 @@ static TypeAST* checkNullableChainExpr(NullableChainExprAST& node, SymbolTable& 
                                         TypeResolver& resolver, DiagnosticEngine& dc,
                                         int& asyncDepth, int& loopDepth,
                                         int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkNullableChainExpr");
     TypeAST* objType = checkExpr(node.object.get(), symbols, resolver, dc,
                                  asyncDepth, loopDepth, parallelDepth, insideExtern);
     if (objType && !TypeChecker::isNullable(objType)) {
+        LUC_LOG_SEMANTIC("\tERROR: '.?' chain on non-nullable type");
         dc.error(DiagnosticCategory::Semantic, node.object->loc, DiagCode::E3002,
                  "'.?' chain must start on a nullable type");
     }
@@ -1689,6 +1791,7 @@ static TypeAST* checkRangeExpr(RangeExprAST& node, SymbolTable& symbols,
                                 TypeResolver& resolver, DiagnosticEngine& dc,
                                 int& asyncDepth, int& loopDepth,
                                 int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkRangeExpr");
     TypeAST* loType = checkExpr(node.lo.get(), symbols, resolver, dc,
                                 asyncDepth, loopDepth, parallelDepth, insideExtern);
     TypeAST* hiType = checkExpr(node.hi.get(), symbols, resolver, dc,
@@ -1696,6 +1799,7 @@ static TypeAST* checkRangeExpr(RangeExprAST& node, SymbolTable& symbols,
 
     if (loType && hiType && !TypeChecker::isAssignable(loType, hiType) &&
         !TypeChecker::isAssignable(hiType, loType)) {
+        LUC_LOG_SEMANTIC("\tERROR: range bounds must be the same type");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "range bounds must be the same type");
     }
@@ -1713,6 +1817,7 @@ static TypeAST* checkPipelineExpr(PipelineExprAST& node, SymbolTable& symbols,
                                    TypeResolver& resolver, DiagnosticEngine& dc,
                                    int& asyncDepth, int& loopDepth,
                                    int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkPipelineExpr");
     TypeAST* current = checkExpr(node.seed.get(), symbols, resolver, dc,
                                  asyncDepth, loopDepth, parallelDepth, insideExtern);
 
@@ -1721,6 +1826,7 @@ static TypeAST* checkPipelineExpr(PipelineExprAST& node, SymbolTable& symbols,
             case PipelineStepKind::Ident: {
                 Symbol* sym = symbols.lookup(step->ident);
                 if (!sym) {
+                    LUC_LOG_SEMANTIC("\tERROR: undeclared identifier in pipeline");
                     dc.error(DiagnosticCategory::Semantic, step->loc, DiagCode::E3001,
                              "undeclared identifier '" + step->ident + "' in pipeline");
                     current = errorFallback(&node);
@@ -1738,6 +1844,7 @@ static TypeAST* checkPipelineExpr(PipelineExprAST& node, SymbolTable& symbols,
                 std::string mangled = step->typeName + "." + step->method;
                 Symbol* sym = symbols.lookup(mangled);
                 if (!sym) {
+                    LUC_LOG_SEMANTIC("\tERROR: method not found in pipeline");
                     dc.error(DiagnosticCategory::Semantic, step->loc, DiagCode::E3001,
                              "no method '" + step->method + "' on '" + step->typeName + "'");
                     current = nullptr;
@@ -1767,6 +1874,7 @@ static TypeAST* checkIndexExpr(IndexExprAST& node, SymbolTable& symbols,
                                 TypeResolver& resolver, DiagnosticEngine& dc,
                                 int& asyncDepth, int& loopDepth,
                                 int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkIndexExpr");
     TypeAST* targetType = checkExpr(node.target.get(), symbols, resolver, dc,
                                     asyncDepth, loopDepth, parallelDepth, insideExtern);
     TypeAST* idxType = checkExpr(node.index.get(), symbols, resolver, dc,
@@ -1779,6 +1887,7 @@ static TypeAST* checkIndexExpr(IndexExprAST& node, SymbolTable& symbols,
                       k == PrimitiveKind::Uint || k == PrimitiveKind::Ulong ||
                       k == PrimitiveKind::Byte || k == PrimitiveKind::Short);
         if (!isInt) {
+            LUC_LOG_SEMANTIC("\tERROR: array index must be integer");
             dc.error(DiagnosticCategory::Semantic, node.index->loc, DiagCode::E3002,
                      "array index must be an integer type");
         }
@@ -1799,6 +1908,7 @@ static TypeAST* checkIndexExpr(IndexExprAST& node, SymbolTable& symbols,
         else if (targetType->isa<DynamicArrayTypeAST>())
             elemType = targetType->as<DynamicArrayTypeAST>()->element.get();
         else if (targetType->isa<PtrTypeAST>()) {
+            LUC_LOG_SEMANTIC("\tERROR: cannot index raw pointer");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                      "cannot index into raw pointer type '*T'; "
                      "use '@ptrOffset(ptr, i)' for pointer arithmetic or '@ptrToRef' to cross to a safe type");
@@ -1856,8 +1966,10 @@ static TypeAST* checkStructLiteralExpr(StructLiteralExprAST& node, SymbolTable& 
                                         TypeResolver& resolver, DiagnosticEngine& dc,
                                         int& asyncDepth, int& loopDepth,
                                         int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkStructLiteralExpr: typeName='" << node.typeName << "'");
     Symbol* sym = symbols.lookup(node.typeName);
     if (!sym || sym->kind != SymbolKind::Struct) {
+        LUC_LOG_SEMANTIC("\tERROR: '" << node.typeName << "' is not a declared struct");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
                  "'" + node.typeName + "' is not a declared struct");
         return errorFallback(&node);
@@ -1884,6 +1996,7 @@ static TypeAST* checkStructLiteralExpr(StructLiteralExprAST& node, SymbolTable& 
             if (f->name == init.name) { fieldDecl = f.get(); break; }
         }
         if (!fieldDecl) {
+            LUC_LOG_SEMANTIC("\tERROR: struct '" << node.typeName << "' has no field '" << init.name << "'");
             dc.error(DiagnosticCategory::Semantic, init.loc, DiagCode::E3001,
                      "struct '" + node.typeName + "' has no field '" + init.name + "'");
             continue;
@@ -1892,6 +2005,7 @@ static TypeAST* checkStructLiteralExpr(StructLiteralExprAST& node, SymbolTable& 
         TypeAST* vt = checkExpr(init.value.get(), symbols, resolver, dc,
                                 asyncDepth, loopDepth, parallelDepth, insideExtern);
         if (ft && vt && !TypeChecker::isAssignable(vt, ft)) {
+            LUC_LOG_SEMANTIC("\tERROR: type mismatch for field '" << init.name << "' in struct literal");
             dc.error(DiagnosticCategory::Semantic, init.loc, DiagCode::E3002,
                      "type mismatch for field '" + init.name + "' in struct literal");
         }
@@ -1917,6 +2031,7 @@ static TypeAST* checkStructLiteralExpr(StructLiteralExprAST& node, SymbolTable& 
             if (ft && TypeChecker::isNullable(ft)) continue;
 
             // Otherwise, it's a semantic error.
+            LUC_LOG_SEMANTIC("\tERROR: missing required field '" << f->name << "'");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                      "missing required field '" + f->name + "' in struct literal '" +
                      node.typeName + "'");
@@ -1976,6 +2091,7 @@ static TypeAST* checkArrayLiteralExpr(ArrayLiteralExprAST& node, SymbolTable& sy
                                        TypeResolver& resolver, DiagnosticEngine& dc,
                                        int& asyncDepth, int& loopDepth,
                                        int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkArrayLiteralExpr");
     TypeAST* elemType = nullptr;
     for (auto& elem : node.elements) {
         TypeAST* et = checkExpr(elem.get(), symbols, resolver, dc,
@@ -1996,7 +2112,9 @@ static TypeAST* checkTypeConvExpr(TypeConvExprAST& node, SymbolTable& symbols,
                                    TypeResolver& resolver, DiagnosticEngine& dc,
                                    int& asyncDepth, int& loopDepth,
                                    int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkTypeConvExpr");
     if (node.isUnsafe && !insideExtern) {
+        LUC_LOG_SEMANTIC("\tERROR: unsafe reinterpret outside extern");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                  "unsafe type reinterpret '*' is only valid on '@extern'-decorated declarations; "
                  "use '@bitcast(T, x)' for general-purpose bit reinterpretation");
@@ -2055,11 +2173,13 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
                                         DiagnosticEngine& dc,
                                         int& asyncDepth, int& loopDepth,
                                         int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkIntrinsicCallExpr: name='" << node.intrinsicName << "'");
     const std::string& name = node.intrinsicName;
 
     // ── 1. Registry lookup ────────────────────────────────────────────────────
     const IntrinsicEntry* entry = IntrinsicRegistry::lookup(name);
     if (!entry) {
+        LUC_LOG_SEMANTIC("\tERROR: unknown intrinsic '@" << name << "'");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3009,
                  "unknown compiler intrinsic '@" + name + "'; "
                  "known intrinsics: " + IntrinsicRegistry::allNames());
@@ -2078,12 +2198,14 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
         entry->minArgs == 0) {
 
         if (!node.typeArg) {
+            LUC_LOG_SEMANTIC("\tERROR: intrinsic requires type argument");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
                      "'@" + name + "' requires a type argument, e.g. '@" + name + "(int)'");
         } else {
             resolver.resolveType(node.typeArg.get());
         }
         if (!node.args.empty()) {
+            LUC_LOG_SEMANTIC("\tERROR: intrinsic takes only type argument");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
                      "'@" + name + "' takes only a type argument, not value arguments");
         }
@@ -2095,12 +2217,14 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
     // ── 3. @bitcast(T, x) — type arg + one value arg ─────────────────────────
     if (name == "bitcast") {
         if (!node.typeArg) {
+            LUC_LOG_SEMANTIC("\tERROR: @bitcast requires type argument");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
                      "'@bitcast' requires a target type argument: '@bitcast(T, x)'");
         } else {
             resolver.resolveType(node.typeArg.get());
         }
         if (node.args.size() != 1) {
+            LUC_LOG_SEMANTIC("\tERROR: @bitcast requires 1 value argument");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
                      "'@bitcast' requires exactly 1 value argument: '@bitcast(T, x)'");
         } else {
@@ -2117,16 +2241,19 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
     // ── 3b. @ptrToRef(T, ptr) — TypeArg + PtrValue ───────────────────────────
     if (name == "ptrToRef") {
         if (!node.typeArg) {
+            LUC_LOG_SEMANTIC("\tERROR: @ptrToRef requires type argument");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
                      "'@ptrToRef' requires a target type argument: '@ptrToRef(T, ptr)'");
         }
         if (node.args.size() != 1) {
+            LUC_LOG_SEMANTIC("\tERROR: @ptrToRef requires 1 value argument");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
                      "'@ptrToRef' requires exactly 1 value argument: '@ptrToRef(T, ptr)'");
         } else {
             TypeAST* pt = checkExpr(node.args[0].get(), symbols, resolver, dc,
                                     asyncDepth, loopDepth, parallelDepth, insideExtern);
             if (pt && !pt->isa<PtrTypeAST>()) {
+                LUC_LOG_SEMANTIC("\tERROR: @ptrToRef arg must be raw pointer");
                 dc.error(DiagnosticCategory::Semantic, node.args[0]->loc, DiagCode::E3010,
                          "'@ptrToRef' argument 1 must be a raw pointer type '*T'");
             }
@@ -2146,6 +2273,7 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
     // ── 4. Value-argument intrinsics ─────────────────────────────────────────
     // Verify typeArg was NOT supplied for these (they take only values).
     if (node.typeArg) {
+        LUC_LOG_SEMANTIC("\tERROR: intrinsic does not take type argument");
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
                  "'@" + name + "' does not take a type argument");
     }
@@ -2161,6 +2289,7 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
                  "'@" + name + "' expects " + expected + " argument(s), got " +
                  std::to_string(nArgs));
+        LUC_LOG_SEMANTIC("\tERROR: intrinsic argument count mismatch");
         // Walk args anyway to surface nested errors.
         for (auto& arg : node.args)
             checkExpr(arg.get(), symbols, resolver, dc,
@@ -2192,6 +2321,7 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
                     if (k != PrimitiveKind::Float  &&
                         k != PrimitiveKind::Double &&
                         k != PrimitiveKind::Decimal) {
+                        LUC_LOG_SEMANTIC("\tERROR: intrinsic float argument type mismatch");
                         dc.error(DiagnosticCategory::Semantic,
                                  node.args[i]->loc, DiagCode::E3010,
                                  "'@" + name + "' argument " + std::to_string(i+1) +
@@ -2214,6 +2344,7 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
                         k == PrimitiveKind::Uint8 || k == PrimitiveKind::Uint16 ||
                         k == PrimitiveKind::Uint32|| k == PrimitiveKind::Uint64;
                     if (!isInt) {
+                        LUC_LOG_SEMANTIC("\tERROR: intrinsic integer argument type mismatch");
                         dc.error(DiagnosticCategory::Semantic,
                                  node.args[i]->loc, DiagCode::E3010,
                                  "'@" + name + "' argument " + std::to_string(i+1) +
@@ -2232,6 +2363,7 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
                         k == PrimitiveKind::Int32|| k == PrimitiveKind::Int64 ||
                         k == PrimitiveKind::Uint32||k == PrimitiveKind::Uint64;
                     if (!isInt) {
+                        LUC_LOG_SEMANTIC("\tERROR: intrinsic size argument type mismatch");
                         dc.error(DiagnosticCategory::Semantic,
                                  node.args[i]->loc, DiagCode::E3010,
                                  "'@" + name + "' size argument must be an integer type");
@@ -2307,6 +2439,7 @@ static TypeAST* checkComposeExpr(ComposeExprAST& node, SymbolTable& symbols,
                                   TypeResolver& resolver, DiagnosticEngine& dc,
                                   int& asyncDepth, int& loopDepth,
                                   int& parallelDepth, bool insideExtern) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkComposeExpr");
     TypeAST* current = checkExpr(node.left.get(), symbols, resolver, dc,
                                  asyncDepth, loopDepth, parallelDepth, insideExtern);
 
@@ -2322,6 +2455,7 @@ static TypeAST* checkComposeExpr(ComposeExprAST& node, SymbolTable& symbols,
         }
 
         if (opType && !TypeChecker::isCallable(opType)) {
+            LUC_LOG_SEMANTIC("\tERROR: compose operand not callable");
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                      "compose operand must be a function");
         }
@@ -2330,6 +2464,7 @@ static TypeAST* checkComposeExpr(ComposeExprAST& node, SymbolTable& symbols,
             auto* ft = opType->as<FuncTypeAST>();
             if (!ft->params.empty() &&
                 !TypeChecker::isAssignable(current, ft->params[0].get())) {
+                LUC_LOG_SEMANTIC("\tERROR: type mismatch in composition");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "type mismatch in '+>' composition: output type does not match next input");
             }
@@ -2351,13 +2486,10 @@ TypeAST* checkExpr(ExprAST* node, SymbolTable& symbols, TypeResolver& resolver,
                    int& parallelDepth, bool insideExtern) {
     if (!node) return nullptr;
 
-    std::cout << "phase3b" << std::endl;
-        // DEBUG: Print node kind and location before dispatching
-    std::cout << "  Node kind: " << static_cast<int>(node->kind) << std::endl;
-    std::cout << "  Location: line " << node->loc.line << ", col " << node->loc.column << std::endl;
-    
-    // Also print the node's address to see if it's the same as the garbage pointer
-    std::cout << "  Node address: " << node << std::endl;
+    LUC_LOG_SEMANTIC("checkExpr: kind=" << LucDebug::kindToString(node->kind));
+    LUC_LOG_SEMANTIC("\tNode kind: " << LucDebug::kindToString(node->kind));
+    LUC_LOG_SEMANTIC("\tLocation: line " << node->loc.line << ", col " << node->loc.column);
+    LUC_LOG_SEMANTIC("\tNode address: " << node);
 
     switch (node->kind) {
         case ASTKind::LiteralExpr:
@@ -2453,7 +2585,7 @@ TypeAST* checkExpr(ExprAST* node, SymbolTable& symbols, TypeResolver& resolver,
 
         default:
             // Unknown or unhandled expression kind — skip silently.
-            std::cout << "  UNKNOWN NODE KIND: " << static_cast<int>(node->kind) << std::endl;
+            LUC_LOG_SEMANTIC("\tUNKNOWN NODE KIND: " << LucDebug::kindToString(node->kind));
             return nullptr;
     }
 }

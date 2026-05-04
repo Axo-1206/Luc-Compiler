@@ -16,9 +16,12 @@
 #include "diagnostics/DiagnosticEngine.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "diagnostics/Diagnostic.hpp"
+#include "debug/DebugMacros.hpp"
 
 SemanticCollector::SemanticCollector(SymbolTable& symbols, DiagnosticEngine& dc)
-    : symbols_(symbols), dc_(dc) {}
+    : symbols_(symbols), dc_(dc) {
+		LUC_LOG_SEMANTIC("SemanticCollector constructed");
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // extractExternAttr  — Scans an attribute list for @extern and extracts metadata
@@ -56,9 +59,14 @@ static bool extractExternAttr(const std::vector<AttributePtr>& attributes,
 // and register its definitions.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::collectProgram(ProgramAST& program) {
+		LUC_LOG_SEMANTIC_VERBOSE("collectProgram: processing file: " << program.filePath);
+    int declCount = 0;
     for (auto& decl : program.decls) {
+        declCount++;
+				LUC_LOG_SEMANTIC_EXTREME("\tprocessing declaration #" << declCount);
         decl->accept(*this);
     }
+		LUC_LOG_SEMANTIC_VERBOSE("collectProgram: processed " << declCount << " declarations");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,10 +76,16 @@ void SemanticCollector::collectProgram(ProgramAST& program) {
 // identifier in this exact scope, raising `DiagCode::E3005` safely without crashing.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::declareSymbol(const Symbol& sym) {
+		LUC_LOG_SEMANTIC_VERBOSE("declareSymbol: name='" << sym.name 
+                           << "', kind=" << static_cast<int>(sym.kind)
+                           << ", isExtern=" << (sym.isExtern ? "true" : "false"));
+    
     if (!symbols_.declare(sym)) {
-        // Find existing to report properly, though dc_.error is enough here
+				LUC_LOG_SEMANTIC("\tERROR: symbol '" << sym.name << "' already declared in this scope");
         dc_.error(DiagnosticCategory::Semantic, sym.loc, DiagCode::E3005,
                   "symbol '" + sym.name + "' is already declared in this scope");
+    } else {
+				LUC_LOG_SEMANTIC_EXTREME("\tsymbol declared successfully");
     }
 }
 
@@ -82,8 +96,16 @@ void SemanticCollector::declareSymbol(const Symbol& sym) {
 // If @extern is present, the symbol is tagged as linker-resolved.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(VarDeclAST& node) {
+		LUC_LOG_SEMANTIC("visit(VarDeclAST): name='" << node.name 
+                   << "', keyword=" << (node.keyword == DeclKeyword::Const ? "const" : "let"));
+    
     std::string externSym, callingConv;
     bool isExtern = extractExternAttr(node.attributes, externSym, callingConv);
+    
+    if (isExtern) {
+				LUC_LOG_SEMANTIC_VERBOSE("\t@extern detected: sym='" << externSym 
+                               << "', conv='" << callingConv << "'");
+    }
 
     Symbol sym;
     sym.name         = node.name;
@@ -110,9 +132,18 @@ void SemanticCollector::visit(VarDeclAST& node) {
 // SymbolKind::ExternFunc is used so codegen emits an external declaration.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(FuncDeclAST& node) {
-    // Detect @extern attribute on this function before building the symbol.
+		LUC_LOG_SEMANTIC("visit(FuncDeclAST): name='" << node.name 
+                   << "', keyword=" << (node.keyword == DeclKeyword::Const ? "const" : "let")
+                   << ", paramGroups=" << node.paramGroups.size());
+    
+    // Detect @extern attribute on this function
     std::string externSym, callingConv;
     bool isExtern = extractExternAttr(node.attributes, externSym, callingConv);
+    
+    if (isExtern) {
+				LUC_LOG_SEMANTIC_VERBOSE("\t@extern detected: sym='" << externSym 
+                               << "', conv='" << callingConv << "'");
+    }
 
     // Build signature
     TypePtr sig = nullptr;
@@ -120,6 +151,8 @@ void SemanticCollector::visit(FuncDeclAST& node) {
     for (int i = (int)node.paramGroups.size() - 1; i >= 0; --i) {
         auto ft = std::make_unique<FuncTypeAST>();
         ft->loc = node.loc;
+				LUC_LOG_SEMANTIC_EXTREME("\tbuilding param group " << i << " with " 
+                               << node.paramGroups[i].size() << " params");
         for (auto& p : node.paramGroups[i]) {
             // Proxy type: just enough for the type checker. 
             // We use the same name/kind for now. 
@@ -129,8 +162,7 @@ void SemanticCollector::visit(FuncDeclAST& node) {
                     static_cast<PrimitiveTypeAST*>(p->type.get())->primitiveKind));
             } else if (p->type->kind == ASTKind::NamedType) {
                 const auto *named = static_cast<NamedTypeAST*>(p->type.get());
-                ft->params.push_back(std::make_unique<NamedTypeAST>(
-                    named->name));
+                ft->params.push_back(std::make_unique<NamedTypeAST>(named->name));
             } else {
                 // Fallback: just use a dummy any for complex types during Phase 1
                 ft->params.push_back(std::make_unique<PrimitiveTypeAST>(PrimitiveKind::Any));
@@ -152,6 +184,7 @@ void SemanticCollector::visit(FuncDeclAST& node) {
         sig = std::move(ft);
     }
     node.signature = std::move(sig);
+		LUC_LOG_SEMANTIC_EXTREME("\tsignature built");
 
     Symbol sym;
     sym.name         = node.name;
@@ -168,9 +201,11 @@ void SemanticCollector::visit(FuncDeclAST& node) {
     declareSymbol(sym);
 
     // Register params to check for duplicates
+		LUC_LOG_SEMANTIC_EXTREME("\tregistering parameters");
     symbols_.pushScope();
     for (const auto& group : node.paramGroups) {
         for (const auto& param : group) {
+						LUC_LOG_SEMANTIC_EXTREME("\t\tparam: " << param->name);
             declareSymbol({
                 param->name,
                 SymbolKind::Param,
@@ -184,6 +219,7 @@ void SemanticCollector::visit(FuncDeclAST& node) {
         }
     }
     symbols_.popScope();
+		LUC_LOG_SEMANTIC_VERBOSE("\tfunction registered successfully");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -236,33 +272,36 @@ void SemanticCollector::visit(FuncDeclAST& node) {
 // 6. checkVarDecl compares the struct literal type against declared type
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(StructDeclAST& node) {
+		LUC_LOG_SEMANTIC("visit(StructDeclAST): name='" << node.name 
+                   << "', fields=" << node.fields.size());
+    
     // Lazy-initialize the struct's self-type representation.
     // This is mutable to allow initialization from const contexts.
     if (!node.selfType) {
+				LUC_LOG_SEMANTIC_VERBOSE("\tcreating selfType for struct: " << node.name);
         node.selfType = std::make_unique<NamedTypeAST>(node.name);
         node.selfType->loc = node.loc;
+    } else {
+				LUC_LOG_SEMANTIC_EXTREME("\tselfType already exists");
     }
 
-    // Declare the struct symbol with its type (now non-null).
-    // This allows:
-    //   - checkStructLiteralExpr to return the struct's type
-    //   - checkVarDecl to match struct literal assignments
-    //   - Type checker to reason about struct identity
+    // Declare the struct symbol with its type
     declareSymbol({
         node.name,
         SymbolKind::Struct,
-        DeclKeyword::Let, // N/A
+        DeclKeyword::Let,
         node.visibility,
-        node.selfType.get(),  // ← NOW NON-NULL (was nullptr before fix)
+        node.selfType.get(),
         &node,
         false,
         node.loc
     });
 
-    // Register fields to check for duplicates.
-    // This scope is ephemeral — popped before returning.
+    // Register fields to check for duplicates
+		LUC_LOG_SEMANTIC_EXTREME("\tregistering " << node.fields.size() << " fields");
     symbols_.pushScope();
     for (const auto& field : node.fields) {
+				LUC_LOG_SEMANTIC_EXTREME("\t\tfield: " << field->name);
         declareSymbol({
             field->name,
             SymbolKind::Field,
@@ -275,6 +314,7 @@ void SemanticCollector::visit(StructDeclAST& node) {
         });
     }
     symbols_.popScope();
+		LUC_LOG_SEMANTIC_VERBOSE("\tstruct registered successfully");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -284,6 +324,9 @@ void SemanticCollector::visit(StructDeclAST& node) {
 // uniquely labelled variant flags.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(EnumDeclAST& node) {
+		LUC_LOG_SEMANTIC("visit(EnumDeclAST): name='" << node.name 
+                   << "', variants=" << node.variants.size());
+    
     declareSymbol({
         node.name,
         SymbolKind::Enum,
@@ -295,8 +338,10 @@ void SemanticCollector::visit(EnumDeclAST& node) {
         node.loc
     });
 
+		LUC_LOG_SEMANTIC_EXTREME("\tregistering " << node.variants.size() << " variants");
     symbols_.pushScope();
     for (const auto& variant : node.variants) {
+				LUC_LOG_SEMANTIC_EXTREME("\t\tvariant: " << variant->name);
         declareSymbol({
             variant->name,
             SymbolKind::EnumVariant,
@@ -309,6 +354,7 @@ void SemanticCollector::visit(EnumDeclAST& node) {
         });
     }
     symbols_.popScope();
+		LUC_LOG_SEMANTIC_VERBOSE("\tenum registered successfully");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -318,6 +364,9 @@ void SemanticCollector::visit(EnumDeclAST& node) {
 // internal method signatures possess exactly duplicate naming.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(TraitDeclAST& node) {
+		LUC_LOG_SEMANTIC("visit(TraitDeclAST): name='" << node.name 
+                   << "', methods=" << node.methods.size());
+    
     declareSymbol({
         node.name,
         SymbolKind::Trait,
@@ -330,6 +379,8 @@ void SemanticCollector::visit(TraitDeclAST& node) {
     });
 
     for (const auto& method : node.methods) {
+				LUC_LOG_SEMANTIC_VERBOSE("\tprocessing trait method: " << method->name);
+        
         // Build signature for trait method
         TypePtr sig = nullptr;
         
@@ -380,17 +431,19 @@ void SemanticCollector::visit(TraitDeclAST& node) {
         method->signature = std::move(selfGroup);
 
         std::string mangledName = node.name + "." + method->name;
+				LUC_LOG_SEMANTIC_EXTREME("\t\tmangled name: " << mangledName);
         declareSymbol({
             mangledName,
             SymbolKind::Method,
             DeclKeyword::Let,
-            Visibility::Export, // Trait methods are always public
+            Visibility::Export,
             method->signature.get(),
             method.get(),
             method->isAsync,
             method->loc
         });
     }
+		LUC_LOG_SEMANTIC_VERBOSE("\ttrait registered successfully");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -401,13 +454,18 @@ void SemanticCollector::visit(TraitDeclAST& node) {
 // global scope index. It catches multi-impl blocks conflicting via same names.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(ImplDeclAST& node) {
-    // Merge methods onto the struct's namespace by mangling their names.
-    // E.g., StructName.methodName in the global scope.
+		LUC_LOG_SEMANTIC("visit(ImplDeclAST): structName='" << node.structName 
+                   << "', methods=" << node.methods.size()
+                   << ", visibility=" << (node.visibility == Visibility::Export ? "export" :
+                                          node.visibility == Visibility::Package ? "pub" : "private"));
+    
     for (const auto& method : node.methods) {
+				LUC_LOG_SEMANTIC_VERBOSE("\tprocessing impl method: " << method->name);
+        
         // Build signature for method
         TypePtr sig = nullptr;
         
-        // 1. Create the implicit 'self' group for methods (allows p:offset or Point:offset(p))
+        // 1. Create the implicit 'self' group for methods
         auto selfGroup = std::make_unique<FuncTypeAST>();
         selfGroup->loc = method->loc;
         selfGroup->params.push_back(std::make_unique<NamedTypeAST>(node.structName));
@@ -455,17 +513,19 @@ void SemanticCollector::visit(ImplDeclAST& node) {
         method->signature = std::move(selfGroup);
 
         std::string mangledName = node.structName + "." + method->name;
+				LUC_LOG_SEMANTIC_EXTREME("\t\tmangled name: " << mangledName);
         declareSymbol({
             mangledName,
             SymbolKind::Method,
             DeclKeyword::Let,
-            node.visibility, // Inherit impl visibility conceptually
+            node.visibility,
             method->signature.get(),
             method.get(),
             method->isAsync,
             method->loc
         });
     }
+		LUC_LOG_SEMANTIC_VERBOSE("\timpl registered successfully");
 }
  
 // ─────────────────────────────────────────────────────────────────────────────
@@ -477,26 +537,31 @@ void SemanticCollector::visit(ImplDeclAST& node) {
 // True duplicate signature checking is deferred to Phase 3 (SemanticDecl).
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(FromDeclAST& node) {
-    // Collect each casting entry from the block.
-    // Mangled name: TargetType.from.[unique_id]
+		LUC_LOG_SEMANTIC("visit(FromDeclAST): targetType='" << node.targetTypeName 
+                   << "', entries=" << node.entries.size()
+                   << ", visibility=" << (node.visibility == Visibility::Export ? "export" :
+                                          node.visibility == Visibility::Package ? "pub" : "private"));
+    
     for (auto& entry : node.entries) {
         if (!entry) continue;
 
-        // Use pointer address as a phase 1 unique identifier to avert false clashes.
+        // Use pointer address as a phase 1 unique identifier
         std::string mangledName = node.targetTypeName + ".from." + 
             std::to_string(reinterpret_cast<std::uintptr_t>(entry.get()));
-
+        
+				LUC_LOG_SEMANTIC_EXTREME("\tregistering from-entry: " << mangledName);
         declareSymbol({
             mangledName,
             SymbolKind::Casting,
             DeclKeyword::Let,
             node.visibility,
-            nullptr, // resolved in Phase 2
+            nullptr,
             entry.get(),
             false,
             entry->loc
         });
     }
+		LUC_LOG_SEMANTIC_VERBOSE("\tfrom-block registered successfully");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -505,6 +570,9 @@ void SemanticCollector::visit(FromDeclAST& node) {
 // Stores the 'type XYZ = int' alias safely on the central scope.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::visit(TypeAliasDeclAST& node) {
+		LUC_LOG_SEMANTIC("visit(TypeAliasDeclAST): name='" << node.name 
+                   << "', genericParams=" << node.genericParams.size());
+    
     declareSymbol({
         node.name,
         SymbolKind::TypeAlias,
@@ -515,4 +583,5 @@ void SemanticCollector::visit(TypeAliasDeclAST& node) {
         false,
         node.loc
     });
+		LUC_LOG_SEMANTIC_VERBOSE("\ttype alias registered successfully");
 }

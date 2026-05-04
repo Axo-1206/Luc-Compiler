@@ -24,6 +24,7 @@
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "ast/BaseAST.hpp"
 #include "ast/DeclAST.hpp"
+#include "debug/DebugMacros.hpp"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -49,7 +50,9 @@ SemanticAnalyzer::SemanticAnalyzer(DiagnosticEngine& dc)
     : dc_(dc),
       symbols_(std::make_unique<SymbolTable>()),
       typeResolver_(std::make_unique<TypeResolver>(*symbols_, dc)),
-      typeChecker_(std::make_unique<TypeChecker>()) {}
+      typeChecker_(std::make_unique<TypeChecker>()) {
+		LUC_LOG_SEMANTIC("SemanticAnalyzer constructed");
+}
 
 SemanticAnalyzer::~SemanticAnalyzer() = default;
 
@@ -57,145 +60,173 @@ SemanticAnalyzer::~SemanticAnalyzer() = default;
 // analyze  — top-level entry point
 // ─────────────────────────────────────────────────────────────────────────────
 bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
+		LUC_LOG_SEMANTIC("\n=== SEMANTIC_ANALYZE - START ===");
+		LUC_LOG_SEMANTIC_VERBOSE("\tProcessing " << files.size() << " file(s)");
+    
     // Phase 0: Resolve Imports.
-    std::cout << "\n--- Phase 0: Resolve Imports ---" << std::endl;
+		LUC_LOG_SEMANTIC("\n--- Phase 0: Resolve Imports ---");
     resolveImports(files);
-    if (dc_.hasErrors()) return false;
+    if (dc_.hasErrors()) {
+				LUC_LOG_SEMANTIC("Phase 0 FAILED with errors");
+        return false;
+    }
+		LUC_LOG_SEMANTIC("Phase 0 completed successfully");
 
     // Phase 1: Collect Symbols.
-    std::cout << "\n--- Phase 1: Collect Symbols ---" << std::endl;
+		LUC_LOG_SEMANTIC("\n--- Phase 1: Collect Symbols ---");
     collectSymbols(files);
-    if (dc_.hasErrors()) return false;
+    if (dc_.hasErrors()) {
+				LUC_LOG_SEMANTIC("Phase 1 FAILED with errors");
+        return false;
+    }
+		LUC_LOG_SEMANTIC("Phase 1 completed successfully");
 
     dumpSymbols();
 
     // Phase 2: Resolve Types.
-    std::cout << "\n--- Phase 2: Resolve Types ---" << std::endl;
+		LUC_LOG_SEMANTIC("\n--- Phase 2: Resolve Types ---");
     resolveTypes(files);
-    // Don't early-exit on type resolution errors — we can still discover
-    // more semantic errors during the checking pass.
-
+		LUC_LOG_SEMANTIC("Phase 2 completed (warnings may exist)");
+    
     // Phase 3: Check Decls.
-    std::cout << "\n--- Phase 3: Check Decls ---" << std::endl;
+		LUC_LOG_SEMANTIC("\n--- Phase 3: Check Decls ---");
     checkDecls(files);
-    if (dc_.hasErrors()) return false;
+    if (dc_.hasErrors()) {
+				LUC_LOG_SEMANTIC("Phase 3 FAILED with errors");
+        return false;
+    }
+		LUC_LOG_SEMANTIC("Phase 3 completed successfully");
 
-    std::cout << "\n--- Phase 3.5: Entry point detection ---" << std::endl;
+		LUC_LOG_SEMANTIC("\n--- Phase 3.5: Entry point detection ---");
     // Phase 3.5: Entry point detection
     // Validate that a 'main' function exists and has a valid signature.
     // Required format: export const main () int = { ... }
     Symbol* mainSym = symbols_->lookup("main");
     if (!mainSym) {
-        // Points to the start of the first file for a missing entry point error.
+				LUC_LOG_SEMANTIC("\tNo 'main' function found");
         SourceLocation loc = files.empty() ? SourceLocation() : files[0]->loc;
         dc_.error(DiagnosticCategory::Semantic, loc, DiagCode::E3006, 
                   "program is missing a 'main' entry point");
-    } else if (mainSym->kind != SymbolKind::Func) {
-        // ExternFunc (linker-resolved) is never a valid main entry point.
-        std::string kindNote = (mainSym->kind == SymbolKind::ExternFunc)
-            ? " ('@extern' functions cannot be entry points)"
-            : "";
-        dc_.error(DiagnosticCategory::Semantic, mainSym->loc, DiagCode::E3007, 
-                  "'main' must be a regular function" + kindNote);
     } else {
-        auto* func = static_cast<FuncDeclAST*>(mainSym->decl);
-        
-        // 1. MUST be exported: export const main ...
-        if (func->visibility != Visibility::Export) {
-            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
-                      "'main' function must be exported (use 'export const main')");
-        }
-        
-        // 2. MUST be const: const main ...
-        if (func->keyword != DeclKeyword::Const) {
-            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
-                      "'main' function must use 'const' keyword");
-        }
-        
-        // 3. MUST have zero parameters: () or slice of strings: (args []string)
-        bool hasParams = false;
-        bool isValidArgsParam = false;
-        
-        if (func->paramGroups.size() == 1) {
-            const auto& group = func->paramGroups[0];
-            if (!group.empty()) {
-                hasParams = true;
-                if (group.size() == 1) {
-                    auto* param0 = group[0].get();
-                    if (param0->type && param0->type->kind == ASTKind::SliceType) {
-                        auto* slice = static_cast<SliceTypeAST*>(param0->type.get());
-                        if (slice->element && slice->element->kind == ASTKind::PrimitiveType) {
-                            auto* pt = static_cast<PrimitiveTypeAST*>(slice->element.get());
-                            if (pt->primitiveKind == PrimitiveKind::String) {
-                                isValidArgsParam = true;
+				LUC_LOG_SEMANTIC("\tFound 'main' function, validating signature...");
+        if (mainSym->kind != SymbolKind::Func) {
+            std::string kindNote = (mainSym->kind == SymbolKind::ExternFunc)
+                ? " ('@extern' functions cannot be entry points)"
+                : "";
+						LUC_LOG_SEMANTIC("\tERROR: 'main' is not a regular function");
+            dc_.error(DiagnosticCategory::Semantic, mainSym->loc, DiagCode::E3007, 
+                      "'main' must be a regular function" + kindNote);
+        } else {
+            auto* func = static_cast<FuncDeclAST*>(mainSym->decl);
+						LUC_LOG_SEMANTIC_VERBOSE("\tFunction: " << func->name);
+            
+            // 1. MUST be exported: export const main ...
+            if (func->visibility != Visibility::Export) {
+								LUC_LOG_SEMANTIC("\tERROR: main not exported");
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                          "'main' function must be exported (use 'export const main')");
+            }
+            
+            // 2. MUST be const: const main ...
+            if (func->keyword != DeclKeyword::Const) {
+								LUC_LOG_SEMANTIC("\tERROR: main not const");
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                          "'main' function must use 'const' keyword");
+            }
+            
+            // 3. MUST have zero parameters: () or slice of strings: (args []string)
+            bool hasParams = false;
+            bool isValidArgsParam = false;
+            
+            if (func->paramGroups.size() == 1) {
+                const auto& group = func->paramGroups[0];
+                if (!group.empty()) {
+                    hasParams = true;
+                    if (group.size() == 1) {
+                        auto* param0 = group[0].get();
+                        if (param0->type && param0->type->kind == ASTKind::SliceType) {
+                            auto* slice = static_cast<SliceTypeAST*>(param0->type.get());
+                            if (slice->element && slice->element->kind == ASTKind::PrimitiveType) {
+                                auto* pt = static_cast<PrimitiveTypeAST*>(slice->element.get());
+                                if (pt->primitiveKind == PrimitiveKind::String) {
+                                    isValidArgsParam = true;
+																		LUC_LOG_SEMANTIC_VERBOSE("\tValid args parameter: []string");
+                                }
                             }
                         }
                     }
                 }
-            }
-        } else if (func->paramGroups.size() > 1) {
-            for (const auto& group : func->paramGroups) {
-                if (!group.empty()) {
-                    hasParams = true;
-                    break;
+            } else if (func->paramGroups.size() > 1) {
+                for (const auto& group : func->paramGroups) {
+                    if (!group.empty()) {
+                        hasParams = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        if (hasParams && !isValidArgsParam) {
-            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
-                      "'main' function must have no parameters or take a string slice: (args []string)");
-        }
-        
-        // 4. MUST return int
-        bool returnsInt = false;
-        if (func->returnType && func->returnType->kind == ASTKind::PrimitiveType) {
-            auto* pt = static_cast<PrimitiveTypeAST*>(func->returnType.get());
-            if (pt->primitiveKind == PrimitiveKind::Int) {
-                returnsInt = true;
+            if (hasParams && !isValidArgsParam) {
+								LUC_LOG_SEMANTIC("\tERROR: invalid parameter signature for main");
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                          "'main' function must have no parameters or take a string slice: (args []string)");
             }
-        }
-        if (!returnsInt) {
-            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
-                      "'main' function must return 'int'");
-        }
-        
-        // 5. MUST NOT be async
-        if (func->isAsync) {
-            dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
-                      "'main' function cannot be async");
-        }
+            
+            // 4. MUST return int
+            bool returnsInt = false;
+            if (func->returnType && func->returnType->kind == ASTKind::PrimitiveType) {
+                auto* pt = static_cast<PrimitiveTypeAST*>(func->returnType.get());
+                if (pt->primitiveKind == PrimitiveKind::Int) {
+                    returnsInt = true;
+										LUC_LOG_SEMANTIC_VERBOSE("\tReturn type: int");
+                }
+            }
+            if (!returnsInt) {
+								LUC_LOG_SEMANTIC("\tERROR: main does not return int");
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                          "'main' function must return 'int'");
+            }
+            
+            // 5. MUST NOT be async
+            if (func->isAsync) {
+								LUC_LOG_SEMANTIC("\tERROR: main is async");
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                          "'main' function cannot be async");
+            }
 
-        // 6. @aot and @jit validation on main
-        // Both are optional. If present, they must not both appear together.
-        // The mutual exclusion check already runs in checkAttributes during
-        // Phase 3. Here we just record which mode was requested.
-        bool hasAot = false;
-        bool hasJit = false;
-        for (const auto& attr : func->attributes) {
-            if (attr->name == "aot") hasAot = true;
-            if (attr->name == "jit") hasJit = true;
+            // 6. @aot and @jit validation on main
+            bool hasAot = false;
+            bool hasJit = false;
+            for (const auto& attr : func->attributes) {
+                if (attr->name == "aot") hasAot = true;
+                if (attr->name == "jit") hasJit = true;
+            }
+            
+            if (hasAot) {
+								LUC_LOG_SEMANTIC("\tCompilation mode: AOT");
+                compilationMode_ = CompilationMode::AOT;
+            } else if (hasJit) {
+								LUC_LOG_SEMANTIC("\tCompilation mode: JIT");
+                compilationMode_ = CompilationMode::JIT;
+            } else {
+								LUC_LOG_SEMANTIC_VERBOSE("\tCompilation mode: AOT (default)");
+                compilationMode_ = CompilationMode::AOT;
+            }
+            
+						LUC_LOG_SEMANTIC("\tmain signature validation complete");
         }
-        // hasAot and hasJit together is already caught by checkAttributes (E3015).
-        // Record the compilation mode for the driver/codegen to use.
-        // (compilationMode_ is set on SemanticAnalyzer for downstream use.)
-        if (hasAot)      compilationMode_ = CompilationMode::AOT;
-        else if (hasJit) compilationMode_ = CompilationMode::JIT;
-        else             compilationMode_ = CompilationMode::AOT; // fallback if no attributes
     }
 
     // ── Validate that @aot / @jit do not appear on non-main functions ──────────
-    // checkAttributes catches invalid contexts (struct) but cannot check the
-    // function name because it does not have access to the FuncDeclAST name
-    // at that point. We do a targeted sweep here over all top-level functions.
+		LUC_LOG_SEMANTIC_VERBOSE("Checking @aot/@jit on non-main functions...");
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             if (!decl->isa<FuncDeclAST>()) continue;
             auto* func = decl->as<FuncDeclAST>();
-            if (func->name == "main") continue; // already validated above
+            if (func->name == "main") continue;
 
             for (const auto& attr : func->attributes) {
                 if (attr->name == "aot" || attr->name == "jit") {
+										LUC_LOG_SEMANTIC("\tERROR: '@" << attr->name << "' on non-main function '" << func->name << "'");
                     dc_.error(DiagnosticCategory::Semantic, attr->loc,
                               DiagCode::E3016,
                               "'@" + attr->name + "' is only valid on the 'main' "
@@ -206,8 +237,11 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
     }
 
     // Phase 4: Annotate & Optimize.
+		LUC_LOG_SEMANTIC("\n--- Phase 4: Annotate ---");
     annotate(files);
-    std::cout << "  - Semantic Analysis Finished." << std::endl;
+    
+		LUC_LOG_SEMANTIC("\t- Semantic Analysis Finished.");
+		LUC_LOG_SEMANTIC("=== SemanticAnalyzer::analyze END ===");
     return !dc_.hasErrors();
 }
 
@@ -216,8 +250,11 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
 // Detects circular `use` declarations using a simple DFS over the import graph.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::resolveImports(std::vector<ProgramAST*>& files) {
+		LUC_LOG_SEMANTIC_VERBOSE("resolveImports: processing " << files.size() << " files");
+    
     // Build a map from package+file path to its use declarations.
     // For now we do a simple duplicate-use check within each file.
+    int totalUses = 0;
     for (auto* prog : files) {
         std::unordered_set<std::string> seen;
         for (auto& decl : prog->decls) {
@@ -229,11 +266,16 @@ void SemanticAnalyzer::resolveImports(std::vector<ProgramAST*>& files) {
                 path += use->path[i];
             }
             if (!seen.insert(path).second) {
+								LUC_LOG_SEMANTIC("\tduplicate import of '" << path << "'");
                 dc_.error(DiagnosticCategory::Semantic, use->loc, DiagCode::E3005,
                           "duplicate import of '" + path + "'");
+            } else {
+                totalUses++;
+								LUC_LOG_SEMANTIC_EXTREME("\tregistered import: " << path);
             }
         }
     }
+		LUC_LOG_SEMANTIC_VERBOSE("resolveImports: registered " << totalUses << " unique imports");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -241,11 +283,17 @@ void SemanticAnalyzer::resolveImports(std::vector<ProgramAST*>& files) {
 // Runs SemanticCollector over every file to populate the global symbol table.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::collectSymbols(std::vector<ProgramAST*>& files) {
+		LUC_LOG_SEMANTIC_VERBOSE("collectSymbols: building symbol table");
     symbols_->pushScope(); // global scope
     SemanticCollector collector(*symbols_, dc_);
+    
+    int fileCount = 0;
     for (auto* prog : files) {
+        fileCount++;
+				LUC_LOG_SEMANTIC_EXTREME("\tcollecting symbols from file " << fileCount);
         collector.collectProgram(*prog);
     }
+		LUC_LOG_SEMANTIC_VERBOSE("collectSymbols: symbol table built");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -256,6 +304,9 @@ void SemanticAnalyzer::collectSymbols(std::vector<ProgramAST*>& files) {
 // the @extern attribute is detected — no special early pass needed here.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
+		LUC_LOG_SEMANTIC_VERBOSE("resolveTypes: resolving type annotations");
+    
+    int typeAliasCount = 0;
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             // Type resolution is done lazily inside checkTopLevelDecl (Phase 3),
@@ -263,13 +314,19 @@ void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
             // types are available during the check phase.
             if (decl->isa<TypeAliasDeclAST>()) {
                 auto* ta = decl->as<TypeAliasDeclAST>();
-                // Set generic parameters context for generic type aliases like type Transform<T> = (value T) T
+                typeAliasCount++;
+								LUC_LOG_SEMANTIC_VERBOSE("\tresolving type alias: " << ta->name);
+                
+                // Set generic parameters context for generic type aliases
                 typeResolver_->setGenericParams(&ta->genericParams);
                 typeResolver_->resolveType(ta->aliasedType.get());
                 typeResolver_->setGenericParams(nullptr);
+                
+								LUC_LOG_SEMANTIC_EXTREME("\t\talias resolved");
             }
         }
     }
+		LUC_LOG_SEMANTIC_VERBOSE("resolveTypes: resolved " << typeAliasCount << " type aliases");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,13 +334,21 @@ void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
 // Runs the full declaration / expression / statement checkers over every file.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::checkDecls(std::vector<ProgramAST*>& files) {
+		LUC_LOG_SEMANTIC_VERBOSE("checkDecls: checking all declarations");
+    
+    int declCount = 0;
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
+            declCount++;
+						LUC_LOG_SEMANTIC_EXTREME("\tchecking declaration #" << declCount 
+                                   << " kind=" << LucDebug::kindToString(decl->kind));
+            
             checkTopLevelDecl(decl.get(), *symbols_, *typeResolver_, dc_,
                               asyncDepth_, loopDepth_, parallelDepth_,
                               insideExtern_);
         }
     }
+		LUC_LOG_SEMANTIC_VERBOSE("checkDecls: checked " << declCount << " declarations");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,7 +361,9 @@ void SemanticAnalyzer::checkDecls(std::vector<ProgramAST*>& files) {
 // Phase 3 by checkExpr and checkBlock respectively.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::annotate(std::vector<ProgramAST*>& files) {
+		LUC_LOG_SEMANTIC_VERBOSE("annotate: running annotation pass");
     annotateAll(files, *symbols_);
+		LUC_LOG_SEMANTIC_VERBOSE("annotate: annotation complete");
 }
 
 void SemanticAnalyzer::dumpSymbols() const {
