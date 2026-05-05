@@ -36,6 +36,22 @@ public:
     void visit(PtrTypeAST& node)            override;
     void visit(FuncTypeAST& node)           override;
 
+    // ── Visit methods for declarations ──
+    void visit(FuncDeclAST& node)           override;
+    void visit(StructDeclAST& node)         override;
+    void visit(VarDeclAST& node)            override;
+    void visit(ImplDeclAST& node)           override;
+    void visit(FromDeclAST& node)           override;
+    void visit(FromEntryAST& node)          override;
+    void visit(TypeAliasDeclAST& node)      override;
+    
+    void resolveMethodSignature(MethodDeclAST& node);
+    void resolveFunctionSignature(FuncDeclAST& node);
+    TypePtr buildResolvedSignature(FuncDeclAST& node);
+    void resolveStructFields(StructDeclAST& node);
+    void resolveImplMethods(ImplDeclAST& node);
+    void resolveFromEntries(FromDeclAST& node);
+
     // Call this before resolving types in an @extern-decorated declaration
     // so that *T raw pointer types are permitted in that context.
     void setInsideExtern(bool val) { insideExtern_ = val; }

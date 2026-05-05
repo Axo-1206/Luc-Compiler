@@ -12,10 +12,7 @@
  * @related TypeResolver.hpp, SemanticAnalyzer.cpp
  */
 
-#include "TypeResolver.hpp"
-#include "diagnostics/DiagnosticEngine.hpp"
-#include "diagnostics/DiagnosticCodes.hpp"
-#include "debug/DebugMacros.hpp"
+#include "SemanticHelpers.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TypeResolver (constructor)  — Initializes the TypeResolver with core dependencies
@@ -278,4 +275,334 @@ void TypeResolver::visit(FuncTypeAST& node) {
         resolveType(node.returnType.get());
     }
     resolved_ = &node;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// visit(FuncDeclAST)  — Resolves function parameter and return types
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::visit(FuncDeclAST& node) {
+    LUC_LOG_SEMANTIC("visit(FuncDeclAST): name='" << node.name 
+                   << "', paramGroups=" << node.paramGroups.size());
+    
+    resolveFunctionSignature(node);
+    
+    // Update symbol table to point to resolved signature
+    Symbol* sym = symbols_.lookup(node.name);
+    if (sym && node.signature) {
+        sym->type = node.signature.get();
+        LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << node.name 
+                               << "' type to resolved signature");
+    }
+    
+    resolved_ = node.signature.get();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveFunctionSignature  — Core function signature resolution
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::resolveFunctionSignature(FuncDeclAST& node) {
+    // Set generic parameters context
+    auto* savedGenericParams = genericParams_;
+    genericParams_ = &node.genericParams;
+    
+    // Resolve return type
+    TypeAST* returnType = nullptr;
+    if (node.returnType) {
+        returnType = resolveType(node.returnType.get());
+        if (!returnType) {
+            LUC_LOG_SEMANTIC("\tERROR: failed to resolve return type for '" << node.name << "'");
+        }
+    }
+    
+    // Resolve all parameter types
+    for (auto& group : node.paramGroups) {
+        for (auto& param : group) {
+            TypeAST* paramType = resolveType(param->type.get());
+            if (!paramType) {
+                LUC_LOG_SEMANTIC("\tERROR: failed to resolve parameter type for '" 
+                               << param->name << "' in function '" << node.name << "'");
+            }
+        }
+    }
+    
+    // Build the resolved signature
+    node.signature = buildResolvedSignature(node);
+    
+    // Restore generic parameters context
+    genericParams_ = savedGenericParams;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveFunctionSignature  — Core method signature resolution
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::resolveMethodSignature(MethodDeclAST& node) {
+    LUC_LOG_SEMANTIC_VERBOSE("resolveMethodSignature: " << node.name
+                           << ", paramGroups=" << node.paramGroups.size());
+    
+    // Methods don't have their own generic parameters - they inherit from
+    // the impl block's generic parameters, which are already set via
+    // genericParams_ when visit(ImplDeclAST) is called.
+    
+    // Resolve return type
+    if (node.returnType) {
+        TypeAST* returnType = resolveType(node.returnType.get());
+        if (!returnType) {
+            LUC_LOG_SEMANTIC("\tERROR: failed to resolve return type for method '" << node.name << "'");
+        }
+    }
+    
+    // Resolve all parameter types
+    for (auto& group : node.paramGroups) {
+        for (auto& param : group) {
+            if (param->type) {
+                TypeAST* paramType = resolveType(param->type.get());
+                if (!paramType) {
+                    LUC_LOG_SEMANTIC("\tERROR: failed to resolve parameter type for '" 
+                                   << param->name << "' in method '" << node.name << "'");
+                }
+            }
+        }
+    }
+    
+    // Build the resolved signature using SemanticHelpers
+    node.signature = SemanticHelpers::buildResolvedMethodSignature(node);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildResolvedSignature  — Creates a FuncTypeAST from resolved parameter types
+// ─────────────────────────────────────────────────────────────────────────────
+TypePtr TypeResolver::buildResolvedSignature(FuncDeclAST& node) {
+    LUC_LOG_SEMANTIC_VERBOSE("buildResolvedSignature: " << node.name);
+    
+    // Get resolved return type
+    TypeAST* returnType = nullptr;
+    if (node.returnType) {
+        returnType = node.returnType->resolvedType 
+                    ? static_cast<TypeAST*>(node.returnType->resolvedType) 
+                    : node.returnType.get();
+    }
+    
+    if (node.paramGroups.empty()) {
+        // No parameters - signature is just the return type (or void)
+        if (returnType) {
+            return SemanticHelpers::cloneType(returnType);
+        }
+        return nullptr;
+    }
+    
+    // Start with return type as the innermost
+    TypePtr curReturn = returnType ? SemanticHelpers::cloneType(returnType) : nullptr;
+    
+    // Wrap from last parameter group to first
+    for (int i = static_cast<int>(node.paramGroups.size()) - 1; i >= 0; --i) {
+        auto funcType = std::make_unique<FuncTypeAST>();
+        funcType->isNullable = false;
+        funcType->loc = node.loc;
+        
+        // Add resolved parameters for this group
+        for (auto& param : node.paramGroups[i]) {
+            TypeAST* paramType = param->type->resolvedType 
+                     ? static_cast<TypeAST*>(param->type->resolvedType) 
+                     : param->type.get();
+            funcType->params.push_back(SemanticHelpers::cloneType(paramType));
+        }
+        
+        // Set return type
+        if (curReturn) {
+            funcType->returnType = std::move(curReturn);
+        }
+        
+        curReturn = std::move(funcType);
+    }
+    
+    return curReturn;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// visit(StructDeclAST)  — Resolves struct field types
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::visit(StructDeclAST& node) {
+    LUC_LOG_SEMANTIC("visit(StructDeclAST): name='" << node.name 
+                   << "', fields=" << node.fields.size());
+    
+    resolveStructFields(node);
+    
+    // For structs, resolved_ points to selfType (the struct's type)
+    if (!node.selfType) {
+        node.selfType = std::make_unique<NamedTypeAST>(node.name);
+        node.selfType->loc = node.loc;
+    }
+    resolved_ = node.selfType.get();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveStructFields  — Resolves each field's type
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::resolveStructFields(StructDeclAST& node) {
+    // Set generic parameters context for generic structs
+    auto* savedGenericParams = genericParams_;
+    genericParams_ = &node.genericParams;
+    
+    for (auto& field : node.fields) {
+        if (field->type) {
+            TypeAST* resolvedFieldType = resolveType(field->type.get());
+            if (!resolvedFieldType) {
+                LUC_LOG_SEMANTIC("\tERROR: failed to resolve field type for '" 
+                               << field->name << "' in struct '" << node.name << "'");
+            }
+        }
+    }
+    
+    genericParams_ = savedGenericParams;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// visit(VarDeclAST)  — Resolves variable type annotations
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::visit(VarDeclAST& node) {
+    LUC_LOG_SEMANTIC("visit(VarDeclAST): name='" << node.name << "'");
+    
+    if (node.type) {
+        TypeAST* resolvedType = resolveType(node.type.get());
+        if (resolvedType) {
+            node.resolvedType = resolvedType;
+        }
+    }
+    
+   resolved_ = node.resolvedType 
+            ? static_cast<TypeAST*>(node.resolvedType) 
+            : (node.type ? node.type.get() : nullptr);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// visit(ImplDeclAST)  — Resolves method signatures in impl blocks
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::visit(ImplDeclAST& node) {
+    LUC_LOG_SEMANTIC("visit(ImplDeclAST): structName='" << node.structName 
+                   << "', methods=" << node.methods.size());
+    
+    auto* savedGenericParams = genericParams_;
+    genericParams_ = &node.genericParams;
+    
+    // Build substitution map for concrete generic args
+    if (!node.structGenericArgs.empty()) {
+        Symbol* structSym = symbols_.lookup(node.structName);
+        if (structSym && structSym->kind == SymbolKind::Struct) {
+            auto* structDecl = structSym->decl->as<StructDeclAST>();
+            if (structDecl->genericParams.size() == node.structGenericArgs.size()) {
+                std::unordered_map<std::string, TypeAST*> substitutionMap;
+                for (size_t i = 0; i < structDecl->genericParams.size(); ++i) {
+                    TypeAST* concreteType = resolveType(node.structGenericArgs[i].get());
+                    if (concreteType) {
+                        substitutionMap[structDecl->genericParams[i]->name] = concreteType;
+                    }
+                }
+                setSubstitutionMap(&substitutionMap);
+            }
+        }
+    }
+    
+    // Resolve each method's signature
+    for (auto& method : node.methods) {
+        resolveMethodSignature(*method);
+        
+        // CRITICAL: Update the symbol in the symbol table to point to the resolved signature
+        std::string mangledName = node.structName + "." + method->name;
+        Symbol* sym = symbols_.lookup(mangledName);
+        if (sym && method->signature) {
+            sym->type = method->signature.get();
+            LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << mangledName 
+                                   << "' type to resolved signature");
+        }
+    }
+    
+    setSubstitutionMap(nullptr);
+    genericParams_ = savedGenericParams;
+    resolved_ = nullptr;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// visit(FromDeclAST)  — Resolves from-entry parameter and return types
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::visit(FromDeclAST& node) {
+    LUC_LOG_SEMANTIC("visit(FromDeclAST): targetType='" << node.targetTypeName 
+                   << "', entries=" << node.entries.size());
+    
+    resolveFromEntries(node);
+    resolved_ = nullptr;  // From blocks don't produce a type
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveFromEntries  — Resolves each casting entry's types
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::resolveFromEntries(FromDeclAST& node) {
+    for (auto& entry : node.entries) {
+        if (!entry) continue;
+        
+        // Resolve all parameter types
+        for (auto& group : entry->paramGroups) {
+            for (auto& param : group) {
+                if (param->type) {
+                    resolveType(param->type.get());
+                }
+            }
+        }
+        
+        // Return type is the target type, which is a NamedType
+        // No need to resolve separately as it's just the name
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// visit(FromEntryAST)  — Resolves from-entry parameter types
+//
+// FromEntryAST represents a single casting entry inside a from block:
+//   (s Seconds) Minutes = { return Minutes { val = s.val / 60 } }
+//
+// This method resolves the parameter types so they can be type-checked
+// in Phase 3. Return type resolution is handled by the parent FromDeclAST
+// because all entries share the same target type.
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::visit(FromEntryAST& node) {
+    LUC_LOG_SEMANTIC_VERBOSE("visit(FromEntryAST)");
+    
+    // Resolve all parameter types in all curry groups
+    for (auto& group : node.paramGroups) {
+        for (auto& param : group) {
+            if (param->type) {
+                TypeAST* paramType = resolveType(param->type.get());
+                if (!paramType) {
+                    LUC_LOG_SEMANTIC("\tERROR: failed to resolve parameter type for '" 
+                                   << param->name << "' in from entry");
+                }
+            }
+        }
+    }
+    
+    // FromEntryAST doesn't produce a type itself - the parent FromDeclAST
+    // handles the target type. The resolved type is the target NamedType.
+    resolved_ = nullptr;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// visit(TypeAliasDeclAST)  — Properly resolves type alias
+// ─────────────────────────────────────────────────────────────────────────────
+void TypeResolver::visit(TypeAliasDeclAST& node) {
+    LUC_LOG_SEMANTIC("visit(TypeAliasDeclAST): name='" << node.name << "'");
+    
+    // Set generic parameters context for generic type aliases
+    auto* savedGenericParams = genericParams_;
+    genericParams_ = &node.genericParams;
+    
+    if (node.aliasedType) {
+        TypeAST* resolved = resolveType(node.aliasedType.get());
+        if (resolved) {
+            node.resolvedType = resolved;
+        }
+    }
+    
+    genericParams_ = savedGenericParams;
+    resolved_ = node.resolvedType 
+            ? static_cast<TypeAST*>(node.resolvedType) 
+            : (node.aliasedType ? node.aliasedType.get() : nullptr);
 }

@@ -15,18 +15,8 @@
  * @related SemanticAnalyzer.cpp, SemanticDecl.cpp, SemanticStmt.cpp
  */
 
-#include "SemanticSymbol.hpp"
-#include "SymbolTable.hpp"
-#include "TypeResolver.hpp"
-#include "TypeChecker.hpp"
 #include "IntrinsicRegistry.hpp"
-#include "diagnostics/DiagnosticEngine.hpp"
-#include "diagnostics/DiagnosticCodes.hpp"
-#include "ast/ExprAST.hpp"
-#include "ast/DeclAST.hpp"
-#include "ast/StmtAST.hpp"
-#include "ast/TypeAST.hpp"
-#include "debug/DebugMacros.hpp"
+#include "SemanticHelpers.hpp"
 
 #include <string>
 
@@ -41,104 +31,11 @@ void checkStmt(StmtAST* node, SymbolTable& symbols, TypeResolver& resolver,
                int& asyncDepth, int& loopDepth, int& parallelDepth,
                bool insideExtern);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// cloneType — Deep-copy a TypeAST node
-// Required for generic instantiation where we need to synthesize new types
-// (e.g. NamedTypeAST for Box<int> from Box<T>) without taking ownership of 
-// the original template nodes.
-// ─────────────────────────────────────────────────────────────────────────────
-static std::unique_ptr<TypeAST> cloneType(TypeAST* type) {
-    if (!type) return nullptr;
-    LUC_LOG_SEMANTIC_EXTREME("cloneType: kind=" << (type ? LucDebug::kindToString(type->kind) : "null"));
 
-    if (type->isa<PrimitiveTypeAST>()) {
-        auto* p = type->as<PrimitiveTypeAST>();
-        return std::make_unique<PrimitiveTypeAST>(p->primitiveKind);
-    }
-    if (type->isa<NamedTypeAST>()) {
-        auto* n = type->as<NamedTypeAST>();
-        auto clone = std::make_unique<NamedTypeAST>(n->name);
-        clone->isGenericParam = n->isGenericParam;
-        for (auto& arg : n->genericArgs) {
-            clone->genericArgs.push_back(cloneType(arg.get()));
-        }
-        return clone;
-    }
-    if (type->isa<NullableTypeAST>()) {
-        auto* nl = type->as<NullableTypeAST>();
-        return std::make_unique<NullableTypeAST>(cloneType(nl->inner.get()));
-    }
-    if (type->isa<RefTypeAST>()) {
-        auto* r = type->as<RefTypeAST>();
-        return std::make_unique<RefTypeAST>(cloneType(r->inner.get()));
-    }
-    if (type->isa<PtrTypeAST>()) {
-        auto* p = type->as<PtrTypeAST>();
-        return std::make_unique<PtrTypeAST>(cloneType(p->inner.get()));
-    }
-    if (type->isa<FixedArrayTypeAST>()) {
-        auto* a = type->as<FixedArrayTypeAST>();
-        return std::make_unique<FixedArrayTypeAST>(a->size, cloneType(a->element.get()));
-    }
-    if (type->isa<SliceTypeAST>()) {
-        auto* s = type->as<SliceTypeAST>();
-        return std::make_unique<SliceTypeAST>(cloneType(s->element.get()));
-    }
-    if (type->isa<DynamicArrayTypeAST>()) {
-        auto* d = type->as<DynamicArrayTypeAST>();
-        return std::make_unique<DynamicArrayTypeAST>(cloneType(d->element.get()));
-    }
-    if (type->isa<FuncTypeAST>()) {
-        auto* f = type->as<FuncTypeAST>();
-        auto clone = std::make_unique<FuncTypeAST>(f->isNullable);
-        clone->returnType = cloneType(f->returnType.get());
-        for (auto& p : f->params) {
-            clone->params.push_back(cloneType(p.get()));
-        }
-        return clone;
-    }
-    // Fallback: should not be reached for well-formed AST.
-    return nullptr;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper — make a primitive TypeAST on the fly (unowned, do not delete)
-// We use a static local so callers can return a stable pointer without ownership.
-// ─────────────────────────────────────────────────────────────────────────────
-static PrimitiveTypeAST* primType(PrimitiveKind k) {
-    LUC_LOG_SEMANTIC_EXTREME("primType: kind=" << static_cast<int>(k));
-    // One singleton per kind, lazily constructed.
-    static PrimitiveTypeAST singletons[] = {
-        PrimitiveTypeAST(PrimitiveKind::Bool),
-        PrimitiveTypeAST(PrimitiveKind::Byte),
-        PrimitiveTypeAST(PrimitiveKind::Short),
-        PrimitiveTypeAST(PrimitiveKind::Int),
-        PrimitiveTypeAST(PrimitiveKind::Long),
-        PrimitiveTypeAST(PrimitiveKind::Ubyte),
-        PrimitiveTypeAST(PrimitiveKind::Ushort),
-        PrimitiveTypeAST(PrimitiveKind::Uint),
-        PrimitiveTypeAST(PrimitiveKind::Ulong),
-        PrimitiveTypeAST(PrimitiveKind::Int8),
-        PrimitiveTypeAST(PrimitiveKind::Int16),
-        PrimitiveTypeAST(PrimitiveKind::Int32),
-        PrimitiveTypeAST(PrimitiveKind::Int64),
-        PrimitiveTypeAST(PrimitiveKind::Uint8),
-        PrimitiveTypeAST(PrimitiveKind::Uint16),
-        PrimitiveTypeAST(PrimitiveKind::Uint32),
-        PrimitiveTypeAST(PrimitiveKind::Uint64),
-        PrimitiveTypeAST(PrimitiveKind::Float),
-        PrimitiveTypeAST(PrimitiveKind::Double),
-        PrimitiveTypeAST(PrimitiveKind::Decimal),
-        PrimitiveTypeAST(PrimitiveKind::String),
-        PrimitiveTypeAST(PrimitiveKind::Char),
-        PrimitiveTypeAST(PrimitiveKind::Any),
-    };
-    return &singletons[static_cast<int>(k)];
-}
 
 static TypeAST* errorFallback(ExprAST* node) {
     LUC_LOG_SEMANTIC("errorFallback: setting node type to Any");
-    TypeAST* fallback = primType(PrimitiveKind::Any);
+    TypeAST* fallback = SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
     node->resolvedType = fallback;
     return fallback;
 }
@@ -156,14 +53,14 @@ static TypeAST* checkLiteralExpr(LiteralExprAST& node) {
     TypeAST* t = nullptr;
     switch (node.kind) {
         case LiteralKind::True:
-        case LiteralKind::False:    t = primType(PrimitiveKind::Bool);   break;
-        case LiteralKind::Int:      t = primType(PrimitiveKind::Int);    break;
-        case LiteralKind::Hex:      t = primType(PrimitiveKind::Int);    break;
-        case LiteralKind::Binary:   t = primType(PrimitiveKind::Int);    break;
-        case LiteralKind::Float:    t = primType(PrimitiveKind::Float);  break;
+        case LiteralKind::False:    t = SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);   break;
+        case LiteralKind::Int:      t = SemanticHelpers::getPrimitiveType(PrimitiveKind::Int);    break;
+        case LiteralKind::Hex:      t = SemanticHelpers::getPrimitiveType(PrimitiveKind::Int);    break;
+        case LiteralKind::Binary:   t = SemanticHelpers::getPrimitiveType(PrimitiveKind::Int);    break;
+        case LiteralKind::Float:    t = SemanticHelpers::getPrimitiveType(PrimitiveKind::Float);  break;
         case LiteralKind::String:
-        case LiteralKind::RawString:t = primType(PrimitiveKind::String); break;
-        case LiteralKind::Char:     t = primType(PrimitiveKind::Char);   break;
+        case LiteralKind::RawString:t = SemanticHelpers::getPrimitiveType(PrimitiveKind::String); break;
+        case LiteralKind::Char:     t = SemanticHelpers::getPrimitiveType(PrimitiveKind::Char);   break;
         case LiteralKind::Nil:      t = nullptr; break; // nil has no concrete type alone
     }
     node.resolvedType = t;
@@ -261,9 +158,9 @@ static TypeAST* checkFieldAccessExpr(FieldAccessExprAST& node, SymbolTable& symb
     }
 
     // Fallback
-    node.resolvedType = primType(PrimitiveKind::Any);
+    node.resolvedType = SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
     LUC_LOG_SEMANTIC_EXTREME("\tfallback to Any type");
-    return primType(PrimitiveKind::Any);
+    return SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -508,7 +405,7 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                 dc.error(DiagnosticCategory::Semantic, node.right->loc, DiagCode::E3002,
                          "'and'/'or' right operand must be bool or nullable type");
             }
-            result = primType(PrimitiveKind::Bool);
+            result = SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
             break;
 
         // ── Value equality: == and != ─────────────────────────────────────────
@@ -516,32 +413,46 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
         case BinaryOp::Eq:
         case BinaryOp::Ne:
             LUC_LOG_SEMANTIC_EXTREME("\tEquality comparison");
-            if (lt) {
+            
+            // Check both left and right types for value-comparability
+            if (lt && !TypeChecker::isValueComparable(lt, &symbols)) {
                 if (lt->isa<NamedTypeAST>()) {
                     Symbol* sym = symbols.lookup(lt->as<NamedTypeAST>()->name);
                     if (sym && sym->kind == SymbolKind::Struct) {
-                        LUC_LOG_SEMANTIC("\tERROR: struct equality not allowed");
                         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3011,
-                                 "cannot use '==' on struct type '" +
-                                 lt->as<NamedTypeAST>()->name +
-                                 "'; implement 'Equatable' and use ':equals()'");
-                        return primType(PrimitiveKind::Bool);
+                                "cannot use '==' on struct type '" +
+                                lt->as<NamedTypeAST>()->name +
+                                "'; implement 'Equatable' and use ':equals()'");
+                    } else if (lt->isa<FuncTypeAST>()) {
+                        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3012,
+                                "cannot use '==' on function type");
+                    } else if (lt->isa<FixedArrayTypeAST>() || lt->isa<SliceTypeAST>() || lt->isa<DynamicArrayTypeAST>()) {
+                        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3013,
+                                "cannot use '==' on array type");
+                    } else {
+                        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                                "type '" + LucDebug::kindToString(lt->kind) + "' is not value-comparable");
                     }
-                }
-                if (lt->isa<FuncTypeAST>()) {
-                    LUC_LOG_SEMANTIC("\tERROR: function equality not allowed");
-                    dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3012,
-                             "cannot use '==' on function type");
-                    return primType(PrimitiveKind::Bool);
-                }
-                if (lt->isa<FixedArrayTypeAST>() || lt->isa<SliceTypeAST>() || lt->isa<DynamicArrayTypeAST>()) {
-                    LUC_LOG_SEMANTIC("\tERROR: array equality not allowed");
-                    dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3013,
-                             "cannot use '==' on array type");
-                    return primType(PrimitiveKind::Bool);
+                    return SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
                 }
             }
-            result = primType(PrimitiveKind::Bool);
+            
+            if (rt && !TypeChecker::isValueComparable(rt, &symbols)) {
+                // similar error reporting for right side
+                dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                        "right operand type is not value-comparable");
+                return SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
+            }
+            
+            // Also check that left and right types are compatible
+            if (lt && rt && !TypeChecker::isAssignable(lt, rt) && !TypeChecker::isAssignable(rt, lt)) {
+                LUC_LOG_SEMANTIC("\tERROR: type mismatch in equality comparison");
+                dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                        "cannot compare '" + LucDebug::kindToString(lt->kind) +
+                        "' with '" + LucDebug::kindToString(rt->kind) + "'");
+            }
+            
+            result = SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
             break;
 
         case BinaryOp::RefEq:
@@ -552,14 +463,14 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                          "'===' reference equality is not valid on primitive or "
                          "non-reference type; use '==' for value comparison instead");
             }
-            result = primType(PrimitiveKind::Bool);
+            result = SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
             break;
 
         // ── Ordering comparisons ──────────────────────────────────────────────
         case BinaryOp::Lt: case BinaryOp::Gt:
         case BinaryOp::Le: case BinaryOp::Ge:
             LUC_LOG_SEMANTIC_EXTREME("	ordering comparison");
-            result = primType(PrimitiveKind::Bool);
+            result = SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
             break;
 
         // ── Arithmetic ────────────────────────────────────────────────────────
@@ -570,7 +481,7 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "operator '+' is not supported for raw pointer types; "
                          "use '@ptrOffset(ptr, n)' instead");
-                result = primType(PrimitiveKind::Any);
+                result = SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
             } else if (lt && lt->isa<PrimitiveTypeAST>() &&
                        lt->as<PrimitiveTypeAST>()->primitiveKind == PrimitiveKind::String) {
                 lt = checkAndUnwrapNullable(lt, node.left.get());
@@ -580,7 +491,7 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                     dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                              "'+' on strings requires string right-hand side");
                 }
-                result = primType(PrimitiveKind::String);
+                result = SemanticHelpers::getPrimitiveType(PrimitiveKind::String);
             } else {
                 lt = checkAndUnwrapNullable(lt, node.left.get());
                 rt = checkAndUnwrapNullable(rt, node.right.get());
@@ -596,7 +507,7 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "operator '-' is not supported for raw pointer types; "
                          "use '@ptrDiff(p1, p2)' or '@ptrOffset(ptr, -n)' instead");
-                result = primType(PrimitiveKind::Any);
+                result = SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
             } else {
                 lt = checkAndUnwrapNullable(lt, node.left.get());
                 rt = checkAndUnwrapNullable(rt, node.right.get());
@@ -614,7 +525,7 @@ static TypeAST* checkBinaryExpr(BinaryExprAST& node, SymbolTable& symbols,
                 LUC_LOG_SEMANTIC("\tERROR: arithmetic on pointer");
                 dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                          "arithmetic operators are not supported for raw pointer types");
-                result = primType(PrimitiveKind::Any);
+                result = SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
             } else {
                 lt = checkAndUnwrapNullable(lt, node.left.get());
                 rt = checkAndUnwrapNullable(rt, node.right.get());
@@ -702,7 +613,7 @@ static TypeAST* checkUnaryExpr(UnaryExprAST& node, SymbolTable& symbols,
                          "got non-bool type — use an explicit comparison instead, "
                          "e.g. 'n == 0' instead of 'not n'");
             }
-            result = primType(PrimitiveKind::Bool);
+            result = SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
             break;
 
         case UnaryOp::Neg:
@@ -778,8 +689,8 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                              "'.len()' takes no arguments");
                     return errorFallback(&node);
                 }
-                node.resolvedType = primType(PrimitiveKind::Int);
-                return primType(PrimitiveKind::Int);
+                node.resolvedType = SemanticHelpers::getPrimitiveType(PrimitiveKind::Int);
+                return SemanticHelpers::getPrimitiveType(PrimitiveKind::Int);
             }
             // .isEmpty()
             if (methodName == "isEmpty") {
@@ -789,8 +700,8 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                              "'.isEmpty()' takes no arguments");
                     return errorFallback(&node);
                 }
-                node.resolvedType = primType(PrimitiveKind::Bool);
-                return primType(PrimitiveKind::Bool);
+                node.resolvedType = SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
+                return SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
             }
             // .cap() — slice and dynamic only
             if (methodName == "cap") {
@@ -806,8 +717,8 @@ static TypeAST* checkCallExpr(CallExprAST& node, SymbolTable& symbols,
                              "'.cap()' takes no arguments");
                     return errorFallback(&node);
                 }
-                node.resolvedType = primType(PrimitiveKind::Int);
-                return primType(PrimitiveKind::Int);
+                node.resolvedType = SemanticHelpers::getPrimitiveType(PrimitiveKind::Int);
+                return SemanticHelpers::getPrimitiveType(PrimitiveKind::Int);
             }
             // .first() / .last()
             if (methodName == "first" || methodName == "last") {
@@ -1538,8 +1449,8 @@ static TypeAST* checkIsExpr(IsExprAST& node, SymbolTable& symbols,
     checkExpr(node.expr.get(), symbols, resolver, dc,
               asyncDepth, loopDepth, parallelDepth, insideExtern);
     resolver.resolveType(node.checkType.get());
-    node.resolvedType = primType(PrimitiveKind::Bool);
-    return primType(PrimitiveKind::Bool);
+    node.resolvedType = SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
+    return SemanticHelpers::getPrimitiveType(PrimitiveKind::Bool);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1583,7 +1494,7 @@ static TypeAST* checkIfExpr(IfExprAST& node, SymbolTable& symbols,
                  "type mismatch between 'if' and 'else' branches (cannot unify types)");
     }
  
-    node.resolvedType = unified ? unified : primType(PrimitiveKind::Any);
+    node.resolvedType = unified ? unified : SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
     return static_cast<TypeAST*>(node.resolvedType);
 }
 
@@ -1665,7 +1576,7 @@ static TypeAST* checkMatchExpr(MatchExprAST& node, SymbolTable& symbols,
                  "match expression requires a 'default' arm");
     }
  
-    node.resolvedType = unified ? unified : primType(PrimitiveKind::Any);
+    node.resolvedType = unified ? unified : SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
     return static_cast<TypeAST*>(node.resolvedType);
 }
 
@@ -1899,7 +1810,7 @@ static TypeAST* checkIndexExpr(IndexExprAST& node, SymbolTable& symbols,
     }
 
     // Resolve the element type from the target array type.
-    TypeAST* elemType = primType(PrimitiveKind::Any);
+    TypeAST* elemType = SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
     if (targetType) {
         if (targetType->isa<FixedArrayTypeAST>())
             elemType = targetType->as<FixedArrayTypeAST>()->element.get();
@@ -1912,7 +1823,7 @@ static TypeAST* checkIndexExpr(IndexExprAST& node, SymbolTable& symbols,
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                      "cannot index into raw pointer type '*T'; "
                      "use '@ptrOffset(ptr, i)' for pointer arithmetic or '@ptrToRef' to cross to a safe type");
-            TypeAST* fallback = primType(PrimitiveKind::Any);
+            TypeAST* fallback = SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
             node.resolvedType = fallback;
             return fallback;
         }
@@ -1920,7 +1831,7 @@ static TypeAST* checkIndexExpr(IndexExprAST& node, SymbolTable& symbols,
 
     // For slice operations, wrap the element type in a SliceTypeAST.
     if (node.kind == IndexKind::Slice) {
-        node.sliceType = std::make_unique<SliceTypeAST>(cloneType(elemType));
+        node.sliceType = std::make_unique<SliceTypeAST>(SemanticHelpers::cloneType(elemType));
         node.resolvedType = node.sliceType.get();
         return node.sliceType.get();
     }
@@ -2059,7 +1970,7 @@ static TypeAST* checkStructLiteralExpr(StructLiteralExprAST& node, SymbolTable& 
             node.instantiatedType = std::make_unique<NamedTypeAST>(node.typeName);
             for (auto& arg : node.genericArgs) {
                 TypeAST* resolvedArg = resolver.resolveType(arg.get());
-                node.instantiatedType->genericArgs.push_back(cloneType(resolvedArg));
+                node.instantiatedType->genericArgs.push_back(SemanticHelpers::cloneType(resolvedArg));
             }
             node.resolvedType = node.instantiatedType.get();
             return node.instantiatedType.get();
@@ -2209,7 +2120,7 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
             dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3010,
                      "'@" + name + "' takes only a type argument, not value arguments");
         }
-        TypeAST* ret = primType(PrimitiveKind::Uint64);
+        TypeAST* ret = SemanticHelpers::getPrimitiveType(PrimitiveKind::Uint64);
         node.resolvedType = ret;
         return ret;
     }
@@ -2233,7 +2144,7 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
         }
         // Return type is the target type (typeArg).
         TypeAST* ret = node.typeArg ? resolver.resolveType(node.typeArg.get())
-                                     : primType(PrimitiveKind::Any);
+                                     : SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
         node.resolvedType = ret;
         return ret;
     }
@@ -2264,7 +2175,7 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
             // e.g. @ptrToRef(&Player, buf)
             ret = resolver.resolveType(node.typeArg.get());
         } else {
-            ret = primType(PrimitiveKind::Any);
+            ret = SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
         }
         node.resolvedType = ret;
         return ret;
@@ -2395,26 +2306,26 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
             ret = nullptr;
             break;
         case IntrinsicReturnKind::Uint64:
-            ret = primType(PrimitiveKind::Uint64);
+            ret = SemanticHelpers::getPrimitiveType(PrimitiveKind::Uint64);
             break;
         case IntrinsicReturnKind::Float32:
-            ret = primType(PrimitiveKind::Float);
+            ret = SemanticHelpers::getPrimitiveType(PrimitiveKind::Float);
             break;
         case IntrinsicReturnKind::Float64:
-            ret = primType(PrimitiveKind::Double);
+            ret = SemanticHelpers::getPrimitiveType(PrimitiveKind::Double);
             break;
         case IntrinsicReturnKind::SameAsArg0:
-            ret = !argTypes.empty() ? argTypes[0] : primType(PrimitiveKind::Any);
+            ret = !argTypes.empty() ? argTypes[0] : SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
             break;
         case IntrinsicReturnKind::SameAsArg1:
-            ret = argTypes.size() >= 2 ? argTypes[1] : primType(PrimitiveKind::Any);
+            ret = argTypes.size() >= 2 ? argTypes[1] : SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
             break;
         case IntrinsicReturnKind::RefOfTypeArg0:
             // This is handled above in the @ptrToRef special case.
-            ret = node.typeArg ? resolver.resolveType(node.typeArg.get()) : primType(PrimitiveKind::Any);
+            ret = node.typeArg ? resolver.resolveType(node.typeArg.get()) : SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
             break;
         case IntrinsicReturnKind::Int64:
-            ret = primType(PrimitiveKind::Int64);
+            ret = SemanticHelpers::getPrimitiveType(PrimitiveKind::Int64);
             break;
     }
 
@@ -2424,7 +2335,7 @@ static TypeAST* checkIntrinsicCallExpr(IntrinsicCallExprAST& node,
         !argTypes.empty() && argTypes[0] &&
         argTypes[0]->isa<PrimitiveTypeAST>() &&
         argTypes[0]->as<PrimitiveTypeAST>()->primitiveKind == PrimitiveKind::Double) {
-        ret = primType(PrimitiveKind::Double);
+        ret = SemanticHelpers::getPrimitiveType(PrimitiveKind::Double);
     }
 
     node.resolvedType = ret;

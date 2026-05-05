@@ -40,7 +40,7 @@ public:
     //   struct types  → developer must implement Equatable<T> and use :equals()
     //   function types → function bodies are incomparable
     //   array types   → use collection library comparison function
-    static bool isValueComparable(TypeAST* type);
+    static bool isValueComparable(TypeAST* type, SymbolTable* symbols = nullptr);
 
     // isReferenceComparable — returns true when === is valid on this type.
     //

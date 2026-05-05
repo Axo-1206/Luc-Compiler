@@ -47,6 +47,7 @@ add_executable(luc-comp
     src/semantic/SemanticStmt.cpp
     src/semantic/TypeChecker.cpp
     src/semantic/Annotator.cpp
+    src/debug/ASTDumper.cpp
     # src/codegen/CodeGen.cpp
     # src/codegen/CodeGenExpr.cpp
     # src/codegen/CodeGenDecl.cpp
@@ -205,6 +206,7 @@ add_executable(luc-comp
 # | -DLUC_DEBUG_MASTER=ON         | Enable ALL debug logging         | OFF     |
 # | -DLUC_DEBUG_LEXER=ON          | Enable lexer logging             | OFF     |
 # | -DLUC_DEBUG_PARSER=ON         | Enable parser logging            | OFF     |
+# | -DLUC_DEBUG_PARSE_RESULT=ON   | Enable parse result logging      | OFF     |
 # | -DLUC_DEBUG_TYPE=ON           | Enable type parsing logging      | OFF     |
 # | -DLUC_DEBUG_SEMANTIC=ON       | Enable semantic analysis logging | OFF     |
 # | -DLUC_DEBUG_CODEGEN=ON        | Enable codegen logging           | OFF     |
@@ -242,6 +244,7 @@ option(LUC_DEBUG_MASTER "Enable all debug logging (overrides individual flags)" 
 # Component-specific debug flags (only take effect if LUC_DEBUG_MASTER is OFF)
 option(LUC_DEBUG_LEXER   "Enable lexer debug logging" OFF)
 option(LUC_DEBUG_PARSER  "Enable parser debug logging" OFF)
+option(LUC_DEBUG_PARSE_RESULT "Enable parse result debug logging" OFF)
 option(LUC_DEBUG_TYPE    "Enable type parsing debug logging" OFF)
 option(LUC_DEBUG_SEMANTIC "Enable semantic analysis debug logging" OFF)
 option(LUC_DEBUG_CODEGEN "Enable code generation debug logging" OFF)
@@ -263,6 +266,7 @@ message(STATUS "  Master: ${LUC_DEBUG_MASTER}")
 if(NOT LUC_DEBUG_MASTER)
     message(STATUS "  Lexer:   ${LUC_DEBUG_LEXER}")
     message(STATUS "  Parser:  ${LUC_DEBUG_PARSER}")
+    message(STATUS "  Parse Result: ${LUC_DEBUG_PARSE_RESULT}")
     message(STATUS "  Type:    ${LUC_DEBUG_TYPE}")
     message(STATUS "  Semantic: ${LUC_DEBUG_SEMANTIC}")
     message(STATUS "  CodeGen: ${LUC_DEBUG_CODEGEN}")
@@ -286,6 +290,7 @@ if(LUC_DEBUG_MASTER)
     list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_MASTER=1")
     list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_LEXER=1")
     list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_PARSER=1")
+    list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_PARSE_RESULT=1")
     list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_TYPE=1")
     list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_SEMANTIC=1")
     list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_CODEGEN=1")
@@ -296,6 +301,9 @@ else()
     endif()
     if(LUC_DEBUG_PARSER)
         list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_PARSER=1")
+    endif()
+    if(LUC_DEBUG_PARSE_RESULT)
+        list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_PARSE_RESULT=1")
     endif()
     if(LUC_DEBUG_TYPE)
         list(APPEND LUC_DEBUG_DEFINITIONS "LUC_DEBUG_TYPE=1")

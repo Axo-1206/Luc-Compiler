@@ -304,29 +304,98 @@ void SemanticAnalyzer::collectSymbols(std::vector<ProgramAST*>& files) {
 // the @extern attribute is detected — no special early pass needed here.
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
-    LUC_LOG_SEMANTIC_VERBOSE("resolveTypes: resolving type annotations");
+    LUC_LOG_SEMANTIC_VERBOSE("resolveTypes: resolving all type annotations");
     
-    int typeAliasCount = 0;
+    int resolvedCount = 0;
+    
+    // Pass 1: Resolve Type Aliases (they may be referenced by others)
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
-            // Type resolution is done lazily inside checkTopLevelDecl (Phase 3),
-            // but we do a quick pass here for top-level type aliases so their
-            // types are available during the check phase.
             if (decl->isa<TypeAliasDeclAST>()) {
-                auto* ta = decl->as<TypeAliasDeclAST>();
-                typeAliasCount++;
-                LUC_LOG_SEMANTIC_VERBOSE("\tresolving type alias: " << ta->name);
-                
-                // Set generic parameters context for generic type aliases
-                typeResolver_->setGenericParams(&ta->genericParams);
-                typeResolver_->resolveType(ta->aliasedType.get());
-                typeResolver_->setGenericParams(nullptr);
-                
-                LUC_LOG_SEMANTIC_EXTREME("\t\talias resolved");
+                typeResolver_->visit(*decl->as<TypeAliasDeclAST>());
+                resolvedCount++;
+                LUC_LOG_SEMANTIC_EXTREME("\tresolved type alias");
             }
         }
     }
-    LUC_LOG_SEMANTIC_VERBOSE("resolveTypes: resolved " << typeAliasCount << " type aliases");
+    
+    // Pass 2: Resolve Struct Field Types
+    for (auto* prog : files) {
+        for (auto& decl : prog->decls) {
+            if (decl->isa<StructDeclAST>()) {
+                typeResolver_->visit(*decl->as<StructDeclAST>());
+                resolvedCount++;
+                LUC_LOG_SEMANTIC_EXTREME("\tresolved struct: " << decl->as<StructDeclAST>()->name);
+            }
+        }
+    }
+    
+    // Pass 3: Resolve Function Signatures (top-level)
+    for (auto* prog : files) {
+        for (auto& decl : prog->decls) {
+            if (decl->isa<FuncDeclAST>()) {
+                typeResolver_->visit(*decl->as<FuncDeclAST>());
+                resolvedCount++;
+                LUC_LOG_SEMANTIC_EXTREME("\tresolved function: " << decl->as<FuncDeclAST>()->name);
+            }
+        }
+    }
+    
+    // Pass 4: Resolve Impl Block Methods
+    for (auto* prog : files) {
+        for (auto& decl : prog->decls) {
+            if (decl->isa<ImplDeclAST>()) {
+                typeResolver_->visit(*decl->as<ImplDeclAST>());
+                resolvedCount++;
+                LUC_LOG_SEMANTIC_EXTREME("\tresolved impl for: " << decl->as<ImplDeclAST>()->structName);
+            }
+        }
+    }
+    
+    // Pass 5: Resolve From Block Entries
+    for (auto* prog : files) {
+        for (auto& decl : prog->decls) {
+            if (decl->isa<FromDeclAST>()) {
+                typeResolver_->visit(*decl->as<FromDeclAST>());
+                resolvedCount++;
+                LUC_LOG_SEMANTIC_EXTREME("\tresolved from block for: " << decl->as<FromDeclAST>()->targetTypeName);
+            }
+        }
+    }
+    
+    // Pass 6: Resolve Variable Types
+    for (auto* prog : files) {
+        for (auto& decl : prog->decls) {
+            if (decl->isa<VarDeclAST>()) {
+                typeResolver_->visit(*decl->as<VarDeclAST>());
+                resolvedCount++;
+                LUC_LOG_SEMANTIC_EXTREME("\tresolved variable: " << decl->as<VarDeclAST>()->name);
+            }
+        }
+    }
+
+    for (auto* prog : files) {
+        for (auto& decl : prog->decls) {
+            if (decl->isa<FuncDeclAST>()) {
+                auto* func = decl->as<FuncDeclAST>();
+                Symbol* sym = symbols_->lookup(func->name);
+                if (sym && func->signature) {
+                    sym->type = func->signature.get();
+                    LUC_LOG_SEMANTIC_EXTREME("\tupdated symbol '" << func->name << "' type to resolved signature");
+                }
+            }
+            else if (decl->isa<StructDeclAST>()) {
+                auto* structDecl = decl->as<StructDeclAST>();
+                Symbol* sym = symbols_->lookup(structDecl->name);
+                if (sym && structDecl->selfType) {
+                    sym->type = structDecl->selfType.get();
+                    LUC_LOG_SEMANTIC_EXTREME("\tupdated symbol '" << structDecl->name << "' type to selfType");
+                }
+            }
+        }
+    }
+    
+    LUC_LOG_SEMANTIC_VERBOSE("resolveTypes: resolved " << resolvedCount << " type-annotated declarations");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

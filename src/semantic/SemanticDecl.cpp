@@ -20,18 +20,7 @@
  * @related SemanticAnalyzer.cpp, SemanticStmt.cpp, SemanticExpr.cpp
  */
 
-#include "SemanticAnalyzer.hpp"
-#include "SemanticSymbol.hpp"
-#include "SymbolTable.hpp"
-#include "TypeResolver.hpp"
-#include "TypeChecker.hpp"
-#include "diagnostics/DiagnosticEngine.hpp"
-#include "diagnostics/DiagnosticCodes.hpp"
-#include "ast/DeclAST.hpp"
-#include "ast/StmtAST.hpp"
-#include "ast/ExprAST.hpp"
-#include "ast/TypeAST.hpp"
-#include "debug/DebugMacros.hpp"
+#include "SemanticHelpers.hpp"
 
 #include <unordered_set>
 #include <string>
@@ -41,6 +30,36 @@
 // Controls which attribute names are valid in a given position.
 // ─────────────────────────────────────────────────────────────────────────────
 enum class AttributeContext { Func, Var, Struct };
+
+// Local version for SemanticDecl.cpp (static so it doesn't conflict)
+static PrimitiveTypeAST* declPrimType(PrimitiveKind k) {
+    static PrimitiveTypeAST singletons[] = {
+        PrimitiveTypeAST(PrimitiveKind::Bool),
+        PrimitiveTypeAST(PrimitiveKind::Byte),
+        PrimitiveTypeAST(PrimitiveKind::Short),
+        PrimitiveTypeAST(PrimitiveKind::Int),
+        PrimitiveTypeAST(PrimitiveKind::Long),
+        PrimitiveTypeAST(PrimitiveKind::Ubyte),
+        PrimitiveTypeAST(PrimitiveKind::Ushort),
+        PrimitiveTypeAST(PrimitiveKind::Uint),
+        PrimitiveTypeAST(PrimitiveKind::Ulong),
+        PrimitiveTypeAST(PrimitiveKind::Int8),
+        PrimitiveTypeAST(PrimitiveKind::Int16),
+        PrimitiveTypeAST(PrimitiveKind::Int32),
+        PrimitiveTypeAST(PrimitiveKind::Int64),
+        PrimitiveTypeAST(PrimitiveKind::Uint8),
+        PrimitiveTypeAST(PrimitiveKind::Uint16),
+        PrimitiveTypeAST(PrimitiveKind::Uint32),
+        PrimitiveTypeAST(PrimitiveKind::Uint64),
+        PrimitiveTypeAST(PrimitiveKind::Float),
+        PrimitiveTypeAST(PrimitiveKind::Double),
+        PrimitiveTypeAST(PrimitiveKind::Decimal),
+        PrimitiveTypeAST(PrimitiveKind::String),
+        PrimitiveTypeAST(PrimitiveKind::Char),
+        PrimitiveTypeAST(PrimitiveKind::Any),
+    };
+    return &singletons[static_cast<int>(k)];
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // checkAttributes
@@ -520,13 +539,6 @@ void checkFuncDecl(FuncDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
         resolver.setGenericParams(nullptr);
 
         // ── Body classification ───────────────────────────────────────────────
-        // The parser always produces a body node.  Determine whether the
-        // programmer actually wrote one, and how serious it is.
-        //
-        //   No body (nullptr)                 — ideal; nothing to report.
-        //   Body is a BlockStmt with 0 stmts  — empty: = {}  → W3002 (warning)
-        //   Body is a BlockStmt with statements — non-empty        → E3002 (error)
-        //
         if (node.body) {
             bool bodyEmpty = false;
             if (node.body->isa<BlockStmtAST>()) {
@@ -534,14 +546,12 @@ void checkFuncDecl(FuncDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
             }
 
             if (bodyEmpty) {
-                // Empty body `= {}` — warn: the body is silently ignored.
                 dc.warning(DiagnosticCategory::Semantic, node.body->loc,
                            DiagCode::W3002,
                            "'@extern(\"" + attrExternSym + "\")' function '" + node.name +
                            "' has an empty body '= {}' — the body is ignored and the "
                            "linker symbol is used; remove the body to suppress this warning");
-            } else {
-                // Non-empty body — hard error: code exists that will never run.
+            } else if (!bodyEmpty && node.body->isa<BlockStmtAST>()) {
                 dc.error(DiagnosticCategory::Semantic, node.body->loc,
                          DiagCode::E3002,
                          "'@extern(\"" + attrExternSym + "\")' function '" + node.name +
@@ -565,43 +575,51 @@ void checkFuncDecl(FuncDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
         }
     }
 
+    // Build signature using shared helper
+    node.signature = SemanticHelpers::buildResolvedFunctionSignature(node);
+
     // async increments depth so nested await checks work correctly.
     if (node.isAsync) asyncDepth++;
 
     symbols.pushScope();
 
-    // Resolve param types and declare params in scope.
+    // Declare parameters (types are already resolved)
     for (auto& group : node.paramGroups) {
         for (auto& param : group) {
-            TypeAST* pt = resolver.resolveType(param->type.get());
-            if (!pt) {
-                symbols.popScope();
-                if (node.isAsync) asyncDepth--;
-                resolver.setGenericParams(nullptr);
-                return;
-            }
+            // param->type should already have resolvedType set from Phase 2
+            TypeAST* pt = param->type->resolvedType 
+              ? static_cast<TypeAST*>(param->type->resolvedType) 
+              : param->type.get();
             Symbol ps;
-            ps.name       = param->name;
-            ps.kind       = SymbolKind::Param;
-            ps.declKw     = DeclKeyword::Let;
+            ps.name = param->name;
+            ps.kind = SymbolKind::Param;
+            ps.declKw = DeclKeyword::Let;
             ps.visibility = Visibility::Private;
-            ps.type       = pt;
-            ps.decl       = param.get();
-            ps.isAsync    = false;
-            ps.loc        = param->loc;
-            if (!symbols.declare(ps)) {
-                dc.error(DiagnosticCategory::Semantic, param->loc, DiagCode::E3005,
-                         "duplicate parameter name '" + param->name + "'");
-            }
+            ps.type = pt;
+            ps.decl = param.get();
+            ps.isAsync = false;
+            ps.loc = param->loc;
+            symbols.declare(ps);
         }
     }
 
-    // Check the body.
+    // Check the body - use the pre-resolved signature
     if (node.body) {
-        checkStmt(node.body.get(), symbols, resolver, dc, returnType,
+        TypeAST* expectedReturnType = nullptr;
+        
+        // For expression bodies that return functions, use the full signature
+        if (node.bodyKind == FuncBodyKind::ExprBody && node.paramGroups.size() > 0) {
+            expectedReturnType = node.signature.get();
+        } else if (node.returnType) {
+            expectedReturnType = node.returnType->resolvedType 
+                     ? static_cast<TypeAST*>(node.returnType->resolvedType) 
+                     : node.returnType.get();
+        }
+        
+        checkStmt(node.body.get(), symbols, resolver, dc, expectedReturnType,
                   asyncDepth, loopDepth, parallelDepth, insideExtern);
     }
-
+    
     symbols.popScope();
     if (node.isAsync) asyncDepth--;
     

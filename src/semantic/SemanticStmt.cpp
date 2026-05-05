@@ -24,17 +24,7 @@
  * @related SemanticAnalyzer.cpp, SemanticDecl.cpp, SemanticExpr.cpp
  */
 
-#include "SemanticSymbol.hpp"
-#include "SymbolTable.hpp"
-#include "TypeResolver.hpp"
-#include "TypeChecker.hpp"
-#include "diagnostics/DiagnosticEngine.hpp"
-#include "diagnostics/DiagnosticCodes.hpp"
-#include "ast/StmtAST.hpp"
-#include "ast/DeclAST.hpp"
-#include "ast/ExprAST.hpp"
-#include "ast/TypeAST.hpp"
-#include "debug/DebugMacros.hpp"
+#include "SemanticHelpers.hpp"
 
 #include <iostream>
 #include <iterator>
@@ -105,29 +95,14 @@ static TypePtr buildLocalFuncSignature(FuncDeclAST& node) {
                                << " with " << node.paramGroups[i].size() << " params");
         
         for (auto& p : node.paramGroups[i]) {
-            if (p->type->kind == ASTKind::PrimitiveType) {
-                ft->params.push_back(std::make_unique<PrimitiveTypeAST>(
-                    static_cast<PrimitiveTypeAST*>(p->type.get())->primitiveKind));
-            } else if (p->type->kind == ASTKind::NamedType) {
-                const auto* named = static_cast<NamedTypeAST*>(p->type.get());
-                ft->params.push_back(std::make_unique<NamedTypeAST>(named->name));
-            } else {
-                ft->params.push_back(std::make_unique<PrimitiveTypeAST>(PrimitiveKind::Any));
-            }
+            // Use cloneType instead of manual creation
+            ft->params.push_back(SemanticHelpers::cloneType(p->type.get()));
         }
 
         if (sig) {
             ft->returnType = std::move(sig);
         } else if (node.returnType) {
-            if (node.returnType->kind == ASTKind::PrimitiveType) {
-                ft->returnType = std::make_unique<PrimitiveTypeAST>(
-                    static_cast<PrimitiveTypeAST*>(node.returnType.get())->primitiveKind);
-            } else if (node.returnType->kind == ASTKind::NamedType) {
-                ft->returnType = std::make_unique<NamedTypeAST>(
-                    static_cast<NamedTypeAST*>(node.returnType.get())->name);
-            } else {
-                ft->returnType = std::make_unique<PrimitiveTypeAST>(PrimitiveKind::Any);
-            }
+            ft->returnType = SemanticHelpers::cloneType(node.returnType.get());
         }
         sig = std::move(ft);
     }
@@ -135,7 +110,6 @@ static TypePtr buildLocalFuncSignature(FuncDeclAST& node) {
     LUC_LOG_SEMANTIC_EXTREME("\tsignature built");
     return sig;
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // checkStmt — main dispatcher (defined after all helpers)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -376,7 +350,7 @@ static void checkForStmt(ForStmtAST& node, SymbolTable& symbols, TypeResolver& r
     LUC_LOG_SEMANTIC_EXTREME("\titerable type checked");
 
     // Infer element type from the iterable.
-    TypeAST* elemType = stmtPrimType(PrimitiveKind::Int); // default for range
+    TypeAST* elemType = SemanticHelpers::getPrimitiveType(PrimitiveKind::Int); // default for range
     if (iterType) {
         if (iterType->isa<FixedArrayTypeAST>()) {
             elemType = iterType->as<FixedArrayTypeAST>()->element.get();
@@ -627,7 +601,7 @@ static void checkParallelForStmt(ParallelForStmtAST& node, SymbolTable& symbols,
                                   asyncDepth, loopDepth, parallelDepth, insideExtern);
     LUC_LOG_SEMANTIC_EXTREME("\titerable type checked");
 
-    TypeAST* elemType = stmtPrimType(PrimitiveKind::Int);
+    TypeAST* elemType = SemanticHelpers::getPrimitiveType(PrimitiveKind::Int);
     if (iterType) {
         if (iterType->isa<FixedArrayTypeAST>()) {
             elemType = iterType->as<FixedArrayTypeAST>()->element.get();

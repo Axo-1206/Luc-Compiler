@@ -12,8 +12,8 @@
  * @related TypeChecker.hpp
  */
 
-#include "TypeChecker.hpp"
-#include "debug/DebugMacros.hpp"
+#include "SemanticHelpers.hpp"
+
 #include <iostream>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,61 +123,6 @@ bool TypeChecker::isEqual(TypeAST* a, TypeAST* b) {
     return false;
 }
 
-
-static void printTypeAST(const std::string& label, TypeAST* t, int indent = 0) {
-    if (!t) {
-        LUC_LOG_SEMANTIC_EXTREME(std::string(indent, ' ') << label << " = nullptr");
-        return;
-    }
-    
-    std::string indentStr(indent, ' ');
-    
-    switch (t->kind) {
-        case ASTKind::PrimitiveType: {
-            auto* p = t->as<PrimitiveTypeAST>();
-            std::string typeName;
-            switch (p->primitiveKind) {
-                case PrimitiveKind::Bool:   typeName = "bool"; break;
-                case PrimitiveKind::Int:    typeName = "int"; break;
-                case PrimitiveKind::Float:  typeName = "float"; break;
-                case PrimitiveKind::Double: typeName = "double"; break;
-                case PrimitiveKind::String: typeName = "string"; break;
-                case PrimitiveKind::Uint8:  typeName = "uint8"; break;
-                case PrimitiveKind::Uint64: typeName = "uint64"; break;
-                case PrimitiveKind::Any:    typeName = "any"; break;
-                default: typeName = "other(" + std::to_string(static_cast<int>(p->primitiveKind)) + ")";
-            }
-            LUC_LOG_SEMANTIC_EXTREME(indentStr << label << " = PrimitiveType(" << typeName << ")");
-            break;
-        }
-        case ASTKind::NamedType: {
-            auto* n = t->as<NamedTypeAST>();
-            std::string msg = indentStr + label + " = NamedType(" + n->name + ")";
-            if (n->isGenericParam) msg += " [generic param]";
-            LUC_LOG_SEMANTIC_EXTREME(msg);
-            break;
-        }
-        case ASTKind::NullableType: {
-            LUC_LOG_SEMANTIC_EXTREME(indentStr << label << " = NullableType");
-            printTypeAST("  inner", t->as<NullableTypeAST>()->inner.get(), indent + 2);
-            break;
-        }
-        case ASTKind::PtrType: {
-            LUC_LOG_SEMANTIC_EXTREME(indentStr << label << " = PtrType");
-            printTypeAST("  inner", t->as<PtrTypeAST>()->inner.get(), indent + 2);
-            break;
-        }
-        case ASTKind::FuncType: {
-            auto* f = t->as<FuncTypeAST>();
-            LUC_LOG_SEMANTIC_EXTREME(indentStr << label << " = FuncType(nullable=" << f->isNullable << ")");
-            break;
-        }
-        default:
-            LUC_LOG_SEMANTIC_EXTREME(indentStr << label << " = " << LucDebug::kindToString(t->kind));
-            break;
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // isAssignable  — Validates if one type can securely pipe into another configuration
 //
@@ -188,9 +133,8 @@ static void printTypeAST(const std::string& label, TypeAST* t, int indent = 0) {
 // Uses ASTKind-based isa<>/as<> helpers instead of dynamic_cast — zero RTTI overhead.
 // ─────────────────────────────────────────────────────────────────────────────
 bool TypeChecker::isAssignable(TypeAST* from, TypeAST* to) {
-    LUC_LOG_SEMANTIC("isAssignable: validate type ");
-    printTypeAST("from", from);
-    printTypeAST("to", to);
+    SemanticHelpers::printTypeAST("from", from);
+    SemanticHelpers::printTypeAST("to", to);
 
     // 0.1 Handle nil assignment
     if (!from) {
@@ -359,8 +303,8 @@ bool TypeChecker::isNullable(TypeAST* type) {
 // ─────────────────────────────────────────────────────────────────────────────
 TypeAST* TypeChecker::unify(TypeAST* a, TypeAST* b) {
     LUC_LOG_SEMANTIC_VERBOSE("unify: trying to unify types");
-    printTypeAST("  a", a);
-    printTypeAST("  b", b);
+    SemanticHelpers::printTypeAST("  a", a);
+    SemanticHelpers::printTypeAST("  b", b);
     
     if (!a && !b) {
         LUC_LOG_SEMANTIC_VERBOSE("unify: both null -> nullptr");
@@ -675,7 +619,7 @@ bool TypeChecker::isFromCastable(TypeAST* src, TypeAST* target, SymbolTable* sym
 // Valid:    primitives, enums, nullable types
 // Invalid:  structs (use Equatable<T>), functions, arrays
 // ─────────────────────────────────────────────────────────────────────────────
-bool TypeChecker::isValueComparable(TypeAST* type) {
+bool TypeChecker::isValueComparable(TypeAST* type, SymbolTable* symbols) {
     if (!type) {
         LUC_LOG_SEMANTIC_EXTREME("isValueComparable: type is null -> false");
         return false;
@@ -687,16 +631,32 @@ bool TypeChecker::isValueComparable(TypeAST* type) {
         return true;
     }
 
-    // Named types: only enums are comparable via ==
-    if (type->isa<NamedTypeAST>()) {
-        LUC_LOG_SEMANTIC_EXTREME("isValueComparable: NamedType -> true (enums, structs handled later)");
-        return true;
-    }
-
-    // Nullable types: valid
+    // Nullable types: valid (compare the inner type)
     if (type->isa<NullableTypeAST>()) {
         LUC_LOG_SEMANTIC_EXTREME("isValueComparable: NullableType -> true");
         return true;
+    }
+
+    // Named types: only enums are comparable via ==, structs are NOT
+    if (type->isa<NamedTypeAST>()) {
+        auto* named = type->as<NamedTypeAST>();
+        
+        // If we have a symbol table, check if this is an enum
+        if (symbols) {
+            Symbol* sym = symbols->lookup(named->name);
+            if (sym && sym->kind == SymbolKind::Enum) {
+                LUC_LOG_SEMANTIC_EXTREME("isValueComparable: enum -> true");
+                return true;
+            }
+            if (sym && sym->kind == SymbolKind::Struct) {
+                LUC_LOG_SEMANTIC_EXTREME("isValueComparable: struct -> false (use === or implement Equatable)");
+                return false;
+            }
+        }
+        
+        // Without symbol table, be conservative: assume not comparable
+        LUC_LOG_SEMANTIC_EXTREME("isValueComparable: NamedType (unknown) -> false");
+        return false;
     }
 
     // Function types: NOT comparable

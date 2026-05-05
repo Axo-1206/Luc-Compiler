@@ -25,6 +25,9 @@ namespace LucDebug {
             #ifdef LUC_DEBUG_PARSER
                 if (std::string(component) == "PARSER") return true;
             #endif
+            #ifdef LUC_DEBUG_PARSE_RESULT
+                if (std::string(component) == "PARSE_RESULT") return true;
+            #endif
             #ifdef LUC_DEBUG_TYPE
                 if (std::string(component) == "TYPE") return true;
             #endif
@@ -127,6 +130,15 @@ namespace LucDebug {
 #define LUC_LOG_PARSER(x)           LUC_LOG_CORE("PARSER", LUC_VERB_NORMAL, x)
 #define LUC_LOG_PARSER_VERBOSE(x)   LUC_LOG_CORE("PARSER", LUC_VERB_VERBOSE, x)
 #define LUC_LOG_PARSER_EXTREME(x)   LUC_LOG_CORE("PARSER", LUC_VERB_EXTREME, x)
+
+// =============================================================================
+// PARSE_RESULT logging macros (with verbosity levels)
+// =============================================================================
+
+#define LUC_LOG_PARSE_RESULT_MINIMAL(x) LUC_LOG_CORE("PARSE_RESULT", LUC_VERB_MINIMAL, x)
+#define LUC_LOG_PARSE_RESULT(x)         LUC_LOG_CORE("PARSE_RESULT", LUC_VERB_NORMAL, x)
+#define LUC_LOG_PARSE_RESULT_VERBOSE(x) LUC_LOG_CORE("PARSE_RESULT", LUC_VERB_VERBOSE, x)
+#define LUC_LOG_PARSE_RESULT_EXTREME(x) LUC_LOG_CORE("PARSE_RESULT", LUC_VERB_EXTREME, x)
 
 // =============================================================================
 // TYPE logging macros (with verbosity levels)

@@ -9,6 +9,7 @@
 #include "semantic/SemanticAnalyzer.hpp"
 #include "diagnostics/DiagnosticEngine.hpp"
 #include "debug/DebugMacros.hpp"
+#include "debug/ASTDumper.hpp"
 
 // Helper to get absolute path (Windows)
 std::string getAbsolutePath(const std::string& path) {
@@ -40,6 +41,9 @@ int main(int argc, char* argv[]) {
     #endif
     #ifdef LUC_DEBUG_SEMANTIC
         std::cout << "[DEBUG] LUC_DEBUG_SEMANTIC is ENABLED" << std::endl;
+    #endif
+    #ifdef LUC_DEBUG_PARSE_RESULT
+        std::cout << "[DEBUG] LUC_DEBUG_PARSE_RESULT is ENABLED" << std::endl;
     #endif
     #ifdef LUC_DEBUG_TO_FILE
         std::cout << "[DEBUG] LUC_DEBUG_TO_FILE is ENABLED" << std::endl;
@@ -121,6 +125,13 @@ int main(int argc, char* argv[]) {
     std::cout << "[MAIN] Starting syntax analysis..." << std::endl;
     Parser parser(tokens, dc, filePath);
     std::unique_ptr<ProgramAST> program = parser.parse();
+    
+    if (program && LucDebug::isDebugEnabled("PARSE_RESULT")) {
+        LucDebug::ASTDumper dumper(LucDebug::getVerbosity());
+        program->accept(dumper);
+        LUC_LOG_PARSE_RESULT_MINIMAL("\n" << dumper.getOutput());
+    }
+
     std::cout << "[MAIN] Syntax analysis complete" << std::endl;
     
     if (dc.hasErrors()) {

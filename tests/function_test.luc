@@ -79,10 +79,6 @@ export const main () int = {
     -- Method Assignment and Currying via ':' operator
     let p Point = Point { x = 1.0, y = 2.0 }
     
-    -- ':' as a postfix operator (as per grammar) references the method.
-    -- For an instance method, it curries 'self'.
-    -- If offset is (self Point) (dx float) (dy float) Point
-    -- Then p:offset is (dx float) (dy float) Point
     let movePoint (dx float) (dy float) Point = p:offset
     
     -- Partial apply one more level
