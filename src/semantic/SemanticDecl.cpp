@@ -21,6 +21,7 @@
  */
 
 #include "SemanticHelpers.hpp"
+#include "registry/AttributeRegistry.hpp"
 
 #include <unordered_set>
 #include <string>
@@ -167,12 +168,6 @@ static TypeAST* getReturnTypeFromFunctionType(FuncTypeAST& type, TypeResolver& r
     return nullptr;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AttributeContext — which kind of declaration owns the attribute list.
-// Controls which attribute names are valid in a given position.
-// ─────────────────────────────────────────────────────────────────────────────
-enum class AttributeContext { Func, Var, Struct };
-
 // Local version for SemanticDecl.cpp (static so it doesn't conflict)
 static PrimitiveTypeAST* declPrimType(PrimitiveKind k) {
     static PrimitiveTypeAST singletons[] = {
@@ -232,207 +227,90 @@ static PrimitiveTypeAST* declPrimType(PrimitiveKind k) {
 //   outExternSym   — the C symbol name from @extern("name"), empty if not @extern.
 //   outCallingConv — the calling convention string, defaults to "C".
 // ─────────────────────────────────────────────────────────────────────────────
-static void checkAttributes(const std::vector<AttributePtr>& attributes,
-                             AttributeContext ctx,
-                             DeclKeyword declKw,
-                             DiagnosticEngine& dc,
-                             bool& outIsExtern,
-                             std::string& outExternSym,
-                             std::string& outCallingConv) {
-    LUC_LOG_SEMANTIC_VERBOSE("checkAttributes: count=" << attributes.size());
-    outIsExtern    = false;
-    outExternSym   = "";
-    outCallingConv = "C"; // default calling convention
-
-    // Track which attribute names we have already seen to catch duplicates.
-    std::unordered_set<std::string> seen;
-
+static void checkAttributes(const std::vector<AttributePtr>& attributes, AttributeContext ctx, 
+                            const std::string& declName, DeclKeyword declKw, DiagnosticEngine& dc,
+                            bool& outIsExtern, std::string& outExternSym, std::string& outCallingConv) {
+    LUC_LOG_SEMANTIC_VERBOSE("checkAttributes: count=" << attributes.size()
+                             << ", ctx=" << static_cast<int>(ctx) << ", declName='" << declName << "'");
+    
+    outIsExtern = false;
+    outExternSym = "";
+    outCallingConv = "C";
+    
+    auto& registry = AttributeRegistry::instance();
+    std::vector<std::string> seen;  // Track order for mutual exclusion
+    
     for (const auto& attr : attributes) {
-        const std::string& n = attr->name;
-
-        if (!seen.insert(n).second) {
-            LUC_LOG_SEMANTIC("\tERROR: duplicate attribute '@" << n << "'");
-            dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E3005,
-                     "duplicate attribute '@" + n + "'");
+        const std::string& name = attr->name;
+        LUC_LOG_SEMANTIC_EXTREME("checking attribute: @" << name);
+        
+        // Check for duplicate
+        bool isDuplicate = false;
+        for (const auto& seenName : seen) {
+            if (seenName == name) {
+                LUC_LOG_SEMANTIC("\tERROR: duplicate attribute @" << name);
+                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E3005,
+                         "duplicate attribute '@" + name + "'");
+                isDuplicate = true;
+                break;
+            }
+        }
+        if (isDuplicate) continue;
+        
+        // Check mutual exclusion with previously seen attributes
+        bool mutuallyExclusive = false;
+        for (const auto& seenName : seen) {
+            if (!registry.checkMutualExclusion(name, seenName, dc, attr->loc)) {
+                mutuallyExclusive = true;
+                break;
+            }
+        }
+        if (mutuallyExclusive) continue;
+        
+        // Convert AttributeContext enum to registry's context
+        AttributeContext registryCtx;
+        switch (ctx) {
+            case AttributeContext::Func: 
+                registryCtx = AttributeContext::Func; 
+                break;
+            case AttributeContext::Var: 
+                registryCtx = AttributeContext::Var; 
+                break;
+            case AttributeContext::Struct: 
+                registryCtx = AttributeContext::Struct; 
+                break;
+            default:
+                registryCtx = AttributeContext::None;
+                break;
+        }
+        
+        // Check if this is main function (for main-only attributes)
+        if (declName == "main") {
+            registryCtx = registryCtx | AttributeContext::Main;
+        }
+        
+        // Validate the attribute using registry
+        if (!registry.validateAttribute(*attr, registryCtx, declName, declKw, dc)) {
             continue;
         }
-
-        // ── @extern ──────────────────────────────────────────────────────────
-        if (n == "extern") {
-            if (ctx != AttributeContext::Func && ctx != AttributeContext::Var) {
-                LUC_LOG_SEMANTIC("\tERROR: @extern on invalid context");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
-                         "'@extern' is only valid on function or variable declarations");
-                continue;
+        
+        seen.push_back(name);
+        
+        // Handle @extern specially (needs to set out params for codegen)
+        if (name == "extern") {
+            outIsExtern = true;
+            if (!attr->args.empty() && attr->args[0].argKind == AttributeArgAST::ArgKind::StringLit) {
+                outExternSym = attr->args[0].value;
             }
-            if (attr->args.empty()) {
-                LUC_LOG_SEMANTIC("\tERROR: @extern missing symbol name");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
-                         "'@extern' requires at least one string argument: the C symbol name");
-                continue;
+            if (attr->args.size() >= 2 && attr->args[1].argKind == AttributeArgAST::ArgKind::StringLit) {
+                outCallingConv = attr->args[1].value;
             }
-            if (attr->args[0].argKind != AttributeArgAST::ArgKind::StringLit) {
-                LUC_LOG_SEMANTIC("\tERROR: @extern first arg must be string");
-                dc.error(DiagnosticCategory::Semantic, attr->args[0].loc, DiagCode::E2011,
-                         "'@extern' first argument must be a string literal (the C symbol name)");
-                continue;
-            }
-            outIsExtern  = true;
-            outExternSym = attr->args[0].value;
-
-            // Optional second argument: calling convention string.
-            if (attr->args.size() >= 2) {
-                if (attr->args[1].argKind != AttributeArgAST::ArgKind::StringLit) {
-                    LUC_LOG_SEMANTIC("\tERROR: @extern second arg must be string");
-                    dc.error(DiagnosticCategory::Semantic, attr->args[1].loc, DiagCode::E2011,
-                             "'@extern' second argument must be a string literal (calling convention)");
-                } else {
-                    outCallingConv = attr->args[1].value;
-                }
-            }
-            if (attr->args.size() > 2) {
-                LUC_LOG_SEMANTIC("\tERROR: @extern too many args");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
-                         "'@extern' takes at most 2 arguments: (symbol_name, calling_convention)");
-            }
-
-            // ── Enforce 'const' for @extern ───────────────────────────────────
-            // @extern bindings are resolved by the linker — they are fixed at
-            // link time and cannot be reassigned. Using 'let' allows body
-            // reassignment (f = { ... }) which is meaningless for an extern symbol.
-            // Emit W3001 so the developer knows, but continue compilation.
-            if (declKw == DeclKeyword::Let) {
-                LUC_LOG_SEMANTIC("\tWARNING: @extern with 'let'");
-                dc.warning(DiagnosticCategory::Semantic, attr->loc, DiagCode::W3001,
-                           "'@extern(\"" + outExternSym + "\")' should use 'const', not 'let' — "
-                           "extern bindings are permanently resolved by the linker and cannot "
-                           "be reassigned; change 'let' to 'const'");
-            }
-            continue;
+            LUC_LOG_SEMANTIC_EXTREME("\t@extern: sym='" << outExternSym 
+                                     << "', conv='" << outCallingConv << "'");
         }
-
-        // ── @inline ──────────────────────────────────────────────────────────
-        if (n == "inline") {
-            if (ctx != AttributeContext::Func) {
-                LUC_LOG_SEMANTIC("\tERROR: @inline on non-function");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
-                         "'@inline' is only valid on function declarations");
-            }
-            if (!attr->args.empty()) {
-                LUC_LOG_SEMANTIC("\tERROR: @inline takes no args");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
-                         "'@inline' takes no arguments");
-            }
-            continue;
-        }
-
-        // ── @noinline ────────────────────────────────────────────────────────
-        if (n == "noinline") {
-            if (ctx != AttributeContext::Func) {
-                LUC_LOG_SEMANTIC("\tERROR: @noinline on non-function");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
-                         "'@noinline' is only valid on function declarations");
-            }
-            if (!attr->args.empty()) {
-                LUC_LOG_SEMANTIC("\tERROR: @noinline takes no args");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
-                         "'@noinline' takes no arguments");
-            }
-            // @inline and @noinline are mutually exclusive.
-            if (seen.count("inline")) {
-                LUC_LOG_SEMANTIC("\tERROR: @inline and @noinline are mutually exclusive");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
-                         "'@inline' and '@noinline' cannot both appear on the same declaration");
-            }
-            continue;
-        }
-
-        // ── @packed ──────────────────────────────────────────────────────────
-        if (n == "packed") {
-            if (ctx != AttributeContext::Struct) {
-                LUC_LOG_SEMANTIC("\tERROR: @packed on non-struct");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
-                         "'@packed' is only valid on struct declarations");
-            }
-            if (!attr->args.empty()) {
-                LUC_LOG_SEMANTIC("\tERROR: @packed takes no args");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
-                         "'@packed' takes no arguments");
-            }
-            continue;
-        }
-
-        // ── @deprecated ──────────────────────────────────────────────────────
-        if (n == "deprecated") {
-            if (attr->args.size() > 1) {
-                LUC_LOG_SEMANTIC("\tERROR: @deprecated too many args");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
-                         "'@deprecated' takes at most one string argument (the message)");
-            }
-            if (!attr->args.empty() &&
-                attr->args[0].argKind != AttributeArgAST::ArgKind::StringLit) {
-                LUC_LOG_SEMANTIC("\tERROR: @deprecated arg must be string");
-                dc.error(DiagnosticCategory::Semantic, attr->args[0].loc, DiagCode::E2011,
-                         "'@deprecated' argument must be a string literal message");
-            }
-            continue;
-        }
-
-        // ── @aot ─────────────────────────────────────────────────────────────
-        // Ahead-of-time compilation directive. Only valid on the main entry point.
-        // The actual entry point name check is done in SemanticAnalyzer (Phase 3.5)
-        // where we have access to the function name. Here we validate the
-        // attribute itself: no args, not on struct context.
-        if (n == "aot") {
-            if (ctx == AttributeContext::Struct) {
-                LUC_LOG_SEMANTIC("\tERROR: @aot on struct");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E3016,
-                         "'@aot' is only valid on the 'main' entry point function");
-            }
-            if (!attr->args.empty()) {
-                LUC_LOG_SEMANTIC("\tERROR: @aot takes no args");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
-                         "'@aot' takes no arguments");
-            }
-            // Mutually exclusive with @jit
-            if (seen.count("jit")) {
-                LUC_LOG_SEMANTIC("\tERROR: @aot and @jit are mutually exclusive");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E3015,
-                         "'@aot' and '@jit' are mutually exclusive on the same declaration; "
-                         "choose one compilation mode");
-            }
-            continue;
-        }
-
-        // ── @jit ─────────────────────────────────────────────────────────────
-        // Just-in-time compilation directive. Only valid on the main entry point.
-        if (n == "jit") {
-            if (ctx == AttributeContext::Struct) {
-                LUC_LOG_SEMANTIC("\tERROR: @jit on struct");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E3016,
-                         "'@jit' is only valid on the 'main' entry point function");
-            }
-            if (!attr->args.empty()) {
-                LUC_LOG_SEMANTIC("\tERROR: @jit takes no args");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2011,
-                         "'@jit' takes no arguments");
-            }
-            // Mutually exclusive with @aot
-            if (seen.count("aot")) {
-                LUC_LOG_SEMANTIC("\tERROR: @aot and @jit are mutually exclusive");
-                dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E3015,
-                         "'@aot' and '@jit' are mutually exclusive on the same declaration; "
-                         "choose one compilation mode");
-            }
-            continue;
-        }
-
-        // ── Unknown attribute ─────────────────────────────────────────────────
-        LUC_LOG_SEMANTIC("\tERROR: unknown attribute '@" << n << "'");
-        dc.error(DiagnosticCategory::Semantic, attr->loc, DiagCode::E2010,
-                 "unknown attribute '@" + n + "'; "
-                 "known attributes: extern, inline, noinline, packed, deprecated, aot, jit");
     }
+    
+    LUC_LOG_SEMANTIC_VERBOSE("checkAttributes: complete, isExtern=" << outIsExtern);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -518,8 +396,8 @@ void checkVarDecl(VarDeclAST& node, SymbolTable& symbols, TypeResolver& resolver
     // 0. Validate '@' attributes on this variable declaration.
     bool attrIsExtern = false;
     std::string attrExternSym, attrCallingConv;
-    checkAttributes(node.attributes, AttributeContext::Var, node.keyword, dc,
-                    attrIsExtern, attrExternSym, attrCallingConv);
+    checkAttributes(node.attributes, AttributeContext::Var, node.name, node.keyword, 
+                dc, attrIsExtern, attrExternSym, attrCallingConv);
     // @extern on a variable: it must have no initialiser (linker provides the value).
     if (attrIsExtern && node.init) {
         LUC_LOG_SEMANTIC("\tERROR: @extern variable with initialiser");
@@ -644,8 +522,8 @@ void checkFuncDecl(FuncDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
     // Validate '@' attributes
     bool attrIsExtern = false;
     std::string attrExternSym, attrCallingConv;
-    checkAttributes(node.attributes, AttributeContext::Func, node.keyword, dc,
-                    attrIsExtern, attrExternSym, attrCallingConv);
+    checkAttributes(node.attributes, AttributeContext::Func, node.name, node.keyword, 
+                dc, attrIsExtern, attrExternSym, attrCallingConv);
 
     // Handle @extern functions
     if (attrIsExtern) {
@@ -682,8 +560,8 @@ void checkStructDecl(StructDeclAST& node, SymbolTable& symbols, TypeResolver& re
     std::string attrExternSym, attrCallingConv;
     // Structs use Let as a neutral keyword — @extern is not valid here and
     // checkAttributes will report an error for it regardless of the keyword.
-    checkAttributes(node.attributes, AttributeContext::Struct, DeclKeyword::Let, dc,
-                    attrIsExtern, attrExternSym, attrCallingConv);
+    checkAttributes(node.attributes, AttributeContext::Struct, node.name, DeclKeyword::Let,
+                dc, attrIsExtern, attrExternSym, attrCallingConv);
     // @extern is not valid on structs — checkAttributes already reported the error.
     // We continue with normal struct checking regardless.
 

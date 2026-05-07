@@ -16,7 +16,7 @@
 
 #include "BaseAST.hpp"
 #include "Tokens.hpp"
-#include "QualifierRegistry.hpp"
+#include "registry/QualifierRegistry.hpp"
 
 #include <string>
 #include <vector>

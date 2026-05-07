@@ -40,13 +40,14 @@ luc/
 ├── .vscode/
 ├── build/
 ├── src/
-│   ├── main.cpp            # compiler entry point
-│   ├── Tokens.hpp          # all token definitions
+│   ├── main.cpp                # compiler entry point
+│   ├── Tokens.hpp              # all token definitions
+│   ├── QualifierRegistry.hpp   # qualifier management
 │   ├── lexer/
 │   │   ├── Lexer.hpp
 │   │   └── Lexer.cpp
 │   ├── ast/
-│   │   ├── BaseAST.hpp     # foundation + ASTVisitor
+│   │   ├── BaseAST.hpp         # foundation + ASTVisitor
 │   │   ├── TypeAST.hpp
 │   │   ├── DeclAST.hpp
 │   │   ├── ExprAST.hpp
@@ -55,7 +56,7 @@ luc/
 │   │   ├── Diagnostic.hpp
 │   │   ├── DiagnosticCodes.hpp
 │   │   ├── DiagnosticEngine.cpp
-│   │   ├── DiagnosticEngine.hpp
+│   │   └── DiagnosticEngine.hpp
 │   ├── parser/
 │   │   ├── Parser.hpp
 │   │   ├── Parser.cpp
@@ -63,35 +64,51 @@ luc/
 │   │   ├── ParserDecl.cpp
 │   │   ├── ParserExpr.cpp
 │   │   └── ParserStmt.cpp
-│   ├── semantic/           # phase 1-4 implementation
-│   │   ├── SemanticAnalyzer.hpp/cpp  # driver
-│   │   ├── SymbolTable.hpp/cpp       # scope management
-│   │   ├── SemanticCollector.hpp/cpp # phase 1 & 2
-│   │   ├── SemanticDecl.cpp          # phase 3 (declarations)
-│   │   ├── SemanticExpr.cpp          # phase 3 (expressions)
-│   │   ├── SemanticStmt.cpp          # phase 3 (statements)
-│   │   ├── TypeResolver.hpp/cpp      # type resolution
-│   │   ├── TypeChecker.hpp/cpp       # type compatibility
-│   │   └── Annotator.cpp             # phase 4 (annotations)
-│   └── codegen/
-│       ├── CodeGen.hpp
-│       ├── CodeGen.cpp
-│       ├── CodeGenDecl.cpp
-│       ├── CodeGenExpr.cpp
-│       ├── CodeGenStmt.cpp
-│       ├── ValueEnv.hpp
-│       └── luc_runtime.c
+│   ├── semantic/               # phase 1-4 implementation
+│   │   ├── SemanticAnalyzer.hpp/cpp    # driver
+│   │   ├── SymbolTable.hpp/cpp         # scope management
+│   │   ├── SemanticCollector.hpp/cpp   # phase 1 & 2
+│   │   ├── SemanticDecl.cpp            # phase 3 (declarations)
+│   │   ├── SemanticExpr.cpp            # phase 3 (expressions)
+│   │   ├── SemanticStmt.cpp            # phase 3 (statements)
+│   │   ├── TypeResolver.hpp/cpp        # type resolution
+│   │   ├── TypeChecker.hpp/cpp         # type compatibility
+│   │   ├── Annotator.cpp               # phase 4 (annotations)
+│   │   ├── BuiltinMethodRegistry.hpp/cpp
+│   │   ├── Intrinsicregistry.hpp
+│   │   ├── SemanticHelpers.hpp
+│   │   └── SemanticSymbol.hpp
+│   ├── codegen/
+│   │   ├── CodeGen.hpp
+│   │   ├── CodeGen.cpp
+│   │   ├── CodeGenDecl.cpp
+│   │   ├── CodeGenExpr.cpp
+│   │   ├── CodeGenStmt.cpp
+│   │   ├── ValueEnv.hpp
+│   │   └── luc_runtime.c
+│   └── debug/
+│       ├── ASTDumper.hpp/cpp
+│       ├── DebugMacros.hpp
+│       └── DebugUtils.hpp
 ├── docs/
 │   ├── LUC_PROJECT_OVERVIEW.md      ← identity + architecture (this file)
-│   ├── LUC_SEMANTIC.md              ← detailed semantic documentation
-│   ├── LUC_ERROR.md                 ← error library
-│   ├── LUC_IO.md                    ← io library
-│   ├── LUC_EXAMPLES.md              ← annotated code examples
-│   └── LUC_GRAMMAR.md               ← syntax + grammar rules
-├── language_support/luc-syntax-highlighter/
-├── tests/
+│   ├── LUC_GRAMMAR.md               ← syntax + grammar rules
+│   ├── LUC_DIAGNOSTIC_CODES.md      ← diagnostic code definitions
+│   ├── TASK_LOG.md                 ← project task tracking
+│   ├── phases/                      ← detailed implementation docs
+│   │   ├── ASTNODE.md
+│   │   ├── LEXER.md
+│   │   ├── PARSER.md
+│   │   ├── SEMANTIC.md
+│   │   └── CODEGEN.md
+│   ├── std_libraries/               ← standard library docs
+│   │   ├── LUC_ERROR.md
+│   │   ├── LUC_IO.md
+│   │   └── LUC_REGEX.md
+│   └── examples/                    ← code examples
+├── language_support/               # IDE extensions/syntax highlighting
+├── tests/                          # test suite
 └── CMakeLists.txt
-
 ```
 
 ---
