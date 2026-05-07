@@ -39,7 +39,6 @@
 // Context depth counters (declared on Parser) are maintained here:
 //   loopDepth_     — incremented/decremented around for/while/do bodies
 //   parallelDepth_ — incremented/decremented around parallel bodies
-//   asyncDepth_    — managed in ParserDecl.cpp::parseFuncBody and
 //                    ParserExpr.cpp::parseAnonFuncExpr / parseAwaitExpr
 //
 // Grammar source: LUC_GRAMMAR.md §Statements

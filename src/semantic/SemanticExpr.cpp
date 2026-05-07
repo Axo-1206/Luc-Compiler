@@ -15,9 +15,10 @@
  * @related SemanticAnalyzer.cpp, SemanticDecl.cpp, SemanticStmt.cpp
  */
 
-#include "IntrinsicRegistry.hpp"
+#include "registry/IntrinsicRegistry.hpp"
 #include "SemanticHelpers.hpp"
-#include "BuiltinMethodRegistry.hpp"
+#include "ast/BaseAST.hpp"
+#include "registry/BuiltinMethodRegistry.hpp"
 
 #include <string>
 
@@ -1424,13 +1425,28 @@ static TypeAST* checkMatchExpr(MatchExprAST& node, SymbolTable& symbols,
 
 // ─────────────────────────────────────────────────────────────────────────────
 // checkAwaitExpr
-// Valid only inside an async body and not inside a parallel scope.
+// Valid only inside an async function and not inside a parallel scope.
+// Uses FunctionContext to check if current function has the ~async qualifier.
 // ─────────────────────────────────────────────────────────────────────────────
 static TypeAST* checkAwaitExpr(AwaitExprAST& node, SymbolTable& symbols,
                                 TypeResolver& resolver, DiagnosticEngine& dc,
                                 int& loopDepth, int& parallelDepth, bool insideExtern) {
     
-    // Check the inner expression
+    // ── 1. Check we're inside an async function using FunctionContext ─────────
+    if (!SemanticHelpers::isInsideAsyncFunction()) {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                 "'await' can only be used inside an async function (marked with ~async)");
+        return errorFallback(&node);
+    }
+    
+    // ── 2. Check parallel scope ───────────────────────────────────────────────
+    if (parallelDepth > 0) {
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E2006,
+                 "'await' is not valid inside a 'parallel' block");
+        return errorFallback(&node);
+    }
+    
+    // ── 3. Check the inner expression is an async call ────────────────────────
     TypeAST* innerType = checkExpr(node.inner.get(), symbols, resolver, dc,
                                    loopDepth, parallelDepth, insideExtern);
     
@@ -1438,27 +1454,52 @@ static TypeAST* checkAwaitExpr(AwaitExprAST& node, SymbolTable& symbols,
         return errorFallback(&node);
     }
     
-    // Check if inner is an async call
-    bool isAsyncCall = false;
-    if (node.inner->isa<CallExprAST>()) {
-        isAsyncCall = node.inner->as<CallExprAST>()->isAsyncCall;
-    }
-    
-    // Also check type as fallback (for expressions like `await someAsyncFunc`)
-    if (!isAsyncCall && innerType->isa<FuncTypeAST>()) {
-        isAsyncCall = innerType->as<FuncTypeAST>()->isAsync();
-    }
-    
-    if (!isAsyncCall) {
+    // Must be a CallExpr (await someAsyncFunc())
+    if (!node.inner->isa<CallExprAST>()) {
         dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                 "'await' can only be used on async function calls");
+                 "'await' can only be used on async function calls, e.g., 'await httpGet(url)'");
         return errorFallback(&node);
     }
     
-    // Extract return type
-    TypeAST* returnType = innerType;
-    if (innerType->isa<FuncTypeAST>()) {
+    auto* callExpr = node.inner->as<CallExprAST>();
+    
+    if (!callExpr->isAsyncCall) {
+        dc.error(DiagnosticCategory::Semantic, node.inner->loc, DiagCode::E3002,
+                 "cannot 'await' a non-async function call; the function must be declared with '~async'");
+        return errorFallback(&node);
+    }
+    
+    // ── 4. Extract return type from the async call ────────────────────────────
+    TypeAST* returnType = nullptr;
+    
+    // First, try to get return type from the callee's function type
+    if (callExpr->callee && callExpr->callee->resolvedType) {
+        TypeAST* calleeType = static_cast<TypeAST*>(callExpr->callee->resolvedType);
+        if (calleeType && calleeType->isa<FuncTypeAST>()) {
+            returnType = calleeType->as<FuncTypeAST>()->returnType.get();
+        }
+    }
+    
+    // Fallback: use the resolved type of the entire call expression
+    if (!returnType && callExpr->resolvedType) {
+        TypeAST* callResolvedType = static_cast<TypeAST*>(callExpr->resolvedType);
+        if (callResolvedType && callResolvedType->isa<FuncTypeAST>()) {
+            returnType = callResolvedType->as<FuncTypeAST>()->returnType.get();
+        } else {
+            returnType = callResolvedType;
+        }
+    }
+    
+    // Final fallback: use innerType
+    if (!returnType && innerType->isa<FuncTypeAST>()) {
         returnType = innerType->as<FuncTypeAST>()->returnType.get();
+    } else if (!returnType) {
+        returnType = innerType;
+    }
+    
+    // If still no return type, default to Any
+    if (!returnType) {
+        returnType = SemanticHelpers::getPrimitiveType(PrimitiveKind::Any);
     }
     
     node.resolvedType = returnType;
@@ -1497,6 +1538,16 @@ static TypeAST* checkAnonFuncExpr(AnonFuncExprAST& node, SymbolTable& symbols,
     if (node.type.returnType) {
         returnType = resolver.resolveType(node.type.returnType.get());
     }
+
+    // ── Track anonymous function if async using FunctionContext ───────────────
+    bool isAsync = node.type.isAsync();
+    Symbol tempSymbol;
+    if (isAsync) {
+        tempSymbol.name = "<anon>";
+        tempSymbol.kind = SymbolKind::Func;
+        tempSymbol.type = &node.type;
+        SemanticHelpers::pushFunction("<anon>", &tempSymbol);
+    }
     
     symbols.pushScope();
     
@@ -1528,6 +1579,10 @@ static TypeAST* checkAnonFuncExpr(AnonFuncExprAST& node, SymbolTable& symbols,
     }
     
     symbols.popScope();
+
+    if (isAsync) {
+        SemanticHelpers::popFunction();
+    }
     
     node.resolvedType = nullptr;
     return nullptr;
@@ -1535,8 +1590,8 @@ static TypeAST* checkAnonFuncExpr(AnonFuncExprAST& node, SymbolTable& symbols,
 
 // ─────────────────────────────────────────────────────────────────────────────
 // checkNullableChainExpr
-// player.?weapon.?damage ?? 0
-// Every .? step must be on a nullable type. The ?? fallback must match.
+// player?.weapon?.damage ?? 0
+// Every ?. step must be on a nullable type. The ?? fallback must match.
 // ─────────────────────────────────────────────────────────────────────────────
 static TypeAST* checkNullableChainExpr(NullableChainExprAST& node, SymbolTable& symbols,
                                         TypeResolver& resolver, DiagnosticEngine& dc,
@@ -1545,9 +1600,9 @@ static TypeAST* checkNullableChainExpr(NullableChainExprAST& node, SymbolTable& 
     TypeAST* objType = checkExpr(node.object.get(), symbols, resolver, dc,
                                  loopDepth, parallelDepth, insideExtern);
     if (objType && !TypeChecker::isNullable(objType)) {
-        LUC_LOG_SEMANTIC("\tERROR: '.?' chain on non-nullable type");
+        LUC_LOG_SEMANTIC("\tERROR: '?.' chain on non-nullable type");
         dc.error(DiagnosticCategory::Semantic, node.object->loc, DiagCode::E3002,
-                 "'.?' chain must start on a nullable type");
+                 "'?.' chain must start on a nullable type");
     }
 
     TypeAST* fallbackType = nullptr;

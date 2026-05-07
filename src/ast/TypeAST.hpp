@@ -171,8 +171,8 @@ struct NamedTypeAST : TypeAST {
 //
 // Grammar rules enforced by the semantic pass:
 //   - val declarations forbid ? anywhere in the entire type tree
-//   - .? chain operator is only valid on NullableTypeAST targets
-//   - every .? chain must be terminated by ??
+//   - ?. chain operator is only valid on NullableTypeAST targets
+//   - every ?. chain must be terminated by ??
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct NullableTypeAST : TypeAST {

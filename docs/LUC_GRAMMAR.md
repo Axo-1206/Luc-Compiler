@@ -189,9 +189,6 @@ primitive_type  := 'bool'
 -- Nullable suffix
 nullable_suffix := '?'
 
--- Union type  (int | string)
-
-
 -- Reference   (&T)
 ref_type        := '&' type
 
@@ -919,10 +916,6 @@ type Score  = float
 -- Named alias
 type UserID = ID
 type Mesh   = Vertex
-
--- Union alias
-type Number  = int | float
-type Result  = string | int | nil
 
 -- Array alias
 type Matrix  = [][*]float   -- slice of dynamic float arrays
@@ -1842,8 +1835,8 @@ postfix_expr    := primary_expr { postfix_op }
 
 postfix_op      := '.' IDENTIFIER                     -- data field access: v.x
                  | ':' IDENTIFIER                     -- impl method reference: Vec2:normalize
-                 | '.?' IDENTIFIER                    -- nullable chain
-                 | '??' expr                          -- nil fallback (terminates .? chain)
+                 | '?.' IDENTIFIER                    -- nullable chain
+                 | '??' expr                          -- nil fallback (terminates ?. chain)
                  | '[' expr ']'                       -- index access: nums[2]
                  | '[' expr '..' expr ']'             -- slice inclusive end: nums[1..3]  = elements 1,2,3
                  | '[' expr '..<' expr ']'            -- slice exclusive end: nums[1..<3] = elements 1,2
@@ -3329,11 +3322,7 @@ let asFloat float = @bitcast(float, bits)   -- interpret uint32 bits as float32
 
 ## Choice and Fallback Operators
 
-Luc provides unified operators for handling "Choice" types (unions like `T?` or `Expect<T>`).
-
 ### Standard Fallback (`??`)
-
-The `??` operator extracts the "Success / Value" variant from a union. If the value is the "Error / Nil" variant, it evaluates and returns the right-hand side.
 
 ```
 fallback_expr   := expr '??' expr
@@ -3360,7 +3349,7 @@ To ensure safety, any function returning `Expect<T>` **cannot be discarded**. If
 
 | Level | Operators | Associativity |
 |---|---|---|
-| 1 (highest) | `()` `.` `:` `.?` `[…]` `!` calls | left |
+| 1 (highest) | `()` `.` `:` `?.` `[…]` `!` calls | left |
 | 2 | unary `-` `not` `~` `&` | right |
 | 3 | `^` (power) | right |
 | 4 | `*` `/` `%` | left |

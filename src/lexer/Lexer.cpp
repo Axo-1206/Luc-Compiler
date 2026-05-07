@@ -491,10 +491,6 @@ Token Lexer::getNextToken() {
     switch (c) {
     // ── Access ─────────────────────────────────────────────────────────────────
     case '.':
-        if (match('?')) {
-            LUC_LOG_LEXER_EXTREME("getNextToken: '.?'");
-            return makeToken(TokenType::DOT_QUESTION, ".?");
-        }
         if (match('.')) {
             if (match('.')) {
                 LUC_LOG_LEXER_EXTREME("getNextToken: '...' (variadic)");
@@ -511,6 +507,10 @@ Token Lexer::getNextToken() {
         return makeToken(TokenType::COLON, ":");
 
     case '?':
+        if (match('.')) {
+            LUC_LOG_LEXER_EXTREME("getNextToken: '?.'");
+            return makeToken(TokenType::QUESTION_DOT, "?.");
+        }
         if (match('?')) {
             LUC_LOG_LEXER_EXTREME("getNextToken: '\?\?'");
             return makeToken(TokenType::QUESTION_QUESTION, "??");
@@ -526,6 +526,10 @@ Token Lexer::getNextToken() {
             }
             LUC_LOG_LEXER_EXTREME("getNextToken: '=='");
             return makeToken(TokenType::EQUAL_EQUAL, "==");
+        }
+        if (peekNext() == '>') {
+            advance();
+            return Token{TokenType::FAT_ARROW, "=>", line, column};
         }
         LUC_LOG_LEXER_EXTREME("getNextToken: '='");
         return makeToken(TokenType::ASSIGN, "=");

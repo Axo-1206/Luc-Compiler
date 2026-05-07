@@ -41,6 +41,92 @@
 namespace SemanticHelpers {
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FunctionContext - Tracks the current function being analyzed for async validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @class FunctionContext
+ * @brief Tracks the function currently being semantic-checked
+ * 
+ * This is separate from SymbolTable because it tracks the function being
+ * checked (semantic call stack), not variable/type scoping.
+ * 
+ * Usage in checkFuncDecl:
+ *   FunctionContext::instance().push(node.name, funcSym);
+ *   // ... check function body ...
+ *   FunctionContext::instance().pop();
+ * 
+ * Usage in checkAwaitExpr:
+ *   if (!FunctionContext::instance().isInsideAsync()) { error; }
+ */
+class FunctionContext {
+public:
+    static FunctionContext& instance() {
+        static FunctionContext ctx;
+        return ctx;
+    }
+    
+    void push(const std::string& name, Symbol* sym) {
+        LUC_LOG_SEMANTIC_VERBOSE("FunctionContext::push: " << name);
+        stack_.push_back(sym);
+        current_ = sym;
+    }
+    
+    void pop() {
+        if (!stack_.empty()) {
+            stack_.pop_back();
+            current_ = stack_.empty() ? nullptr : stack_.back();
+            LUC_LOG_SEMANTIC_VERBOSE("FunctionContext::pop");
+        } else {
+            LUC_LOG_SEMANTIC("FunctionContext::pop: WARNING - stack empty");
+            current_ = nullptr;
+        }
+    }
+    
+    Symbol* current() const { return current_; }
+    
+    bool isInsideAsync() const {
+        if (!current_ || !current_->type) {
+            LUC_LOG_SEMANTIC_EXTREME("isInsideAsync: no current function -> false");
+            return false;
+        }
+        
+        if (!current_->type->isa<FuncTypeAST>()) {
+            LUC_LOG_SEMANTIC_EXTREME("isInsideAsync: not a FuncTypeAST -> false");
+            return false;
+        }
+        
+        bool isAsync = current_->type->as<FuncTypeAST>()->isAsync();
+        LUC_LOG_SEMANTIC_EXTREME("isInsideAsync: " << current_->name 
+                                 << " -> " << (isAsync ? "true" : "false"));
+        return isAsync;
+    }
+    
+    void clear() {
+        stack_.clear();
+        current_ = nullptr;
+    }
+    
+private:
+    FunctionContext() = default;
+    Symbol* current_ = nullptr;
+    std::vector<Symbol*> stack_;
+};
+
+// Convenience inline helpers (optional - for cleaner code)
+inline void pushFunction(const std::string& name, Symbol* sym) {
+    FunctionContext::instance().push(name, sym);
+}
+
+inline void popFunction() {
+    FunctionContext::instance().pop();
+}
+
+inline bool isInsideAsyncFunction() {
+    return FunctionContext::instance().isInsideAsync();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Print utilities
 // ─────────────────────────────────────────────────────────────────────────────
 

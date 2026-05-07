@@ -63,10 +63,8 @@ static bool validateExternArgs(const std::vector<AttributeArgAST>& args,
     return true;
 }
 
-static bool validateDeprecatedArgs(const std::vector<AttributeArgAST>& args,
-                                    const std::string& declName,
-                                    DiagnosticEngine& dc,
-                                    const SourceLocation& loc) {
+static bool validateDeprecatedArgs(const std::vector<AttributeArgAST>& args,  const std::string& declName,
+                                    DiagnosticEngine& dc, const SourceLocation& loc) {
     LUC_LOG_SEMANTIC_VERBOSE("validateDeprecatedArgs: declName='" << declName 
                              << "', argCount=" << args.size());
     
@@ -90,10 +88,8 @@ static bool validateDeprecatedArgs(const std::vector<AttributeArgAST>& args,
     return true;
 }
 
-static bool validateMainOnlyArgs(const std::vector<AttributeArgAST>& args,
-                                  const std::string& declName,
-                                  DiagnosticEngine& dc,
-                                  const SourceLocation& loc) {
+static bool validateMainOnlyArgs(const std::vector<AttributeArgAST>& args, const std::string& declName,
+                                  DiagnosticEngine& dc, const SourceLocation& loc) {
     LUC_LOG_SEMANTIC_VERBOSE("validateMainOnlyArgs: declName='" << declName 
                              << "', argCount=" << args.size());
     
@@ -258,10 +254,8 @@ std::string AttributeRegistry::allNames() const {
     return result;
 }
 
-bool AttributeRegistry::validateAttribute(const AttributeAST& attr,
-                                           AttributeContext ctx,
-                                           const std::string& declName,
-                                           DeclKeyword declKw,
+bool AttributeRegistry::validateAttribute(const AttributeAST& attr, AttributeContext ctx,
+                                           const std::string& declName, DeclKeyword declKw,
                                            DiagnosticEngine& dc) const {
     LUC_LOG_SEMANTIC_VERBOSE("validateAttribute: @" << attr.name 
                              << " on declaration '" << declName << "'");
@@ -368,10 +362,8 @@ bool AttributeRegistry::validateAttribute(const AttributeAST& attr,
     return true;
 }
 
-bool AttributeRegistry::checkMutualExclusion(const std::string& name1, 
-                                               const std::string& name2,
-                                               DiagnosticEngine& dc,
-                                               const SourceLocation& loc) const {
+bool AttributeRegistry::checkMutualExclusion(const std::string& name1, const std::string& name2,
+                                               DiagnosticEngine& dc, const SourceLocation& loc) const {
     const AttributeInfo* info1 = lookup(name1);
     const AttributeInfo* info2 = lookup(name2);
     

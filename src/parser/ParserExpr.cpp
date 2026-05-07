@@ -43,7 +43,7 @@
 // Levels are deliberately spaced so a "one higher than current" right-recursive
 // call for right-associative operators is just minPrec + 1.
 //
-// Postfix operations (call, index, '.', ':', '.?') are handled at the top of
+// Postfix operations (call, index, '.', ':', '?.') are handled at the top of
 // parsePrattExpr via parsePostfixExpr rather than as infix operators in the
 // precedence table — they are always left-associative and bind tighter than
 // any binary op.
@@ -347,7 +347,7 @@ ExprPtr Parser::parsePrattExpr(int minPrec, bool allowStructLiteral) {
                     chain->fallback = std::move(fallback);
                 }
             } else {
-                // Standalone ?? not part of a .? chain — still valid as a
+                // Standalone ?? not part of a ?. chain — still valid as a
                 // general nil-coalescing expression.
                 SourceLocation loc = lhs->loc;
                 auto node = std::make_unique<NullableChainExprAST>();
@@ -782,7 +782,7 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
 //   '.' IDENTIFIER      — field access (data)
 //   ':' IDENTIFIER      — NOT handled here (already parsed in parsePrimaryExpr
 //                          via BehaviorAccessExprAST when lhs is IDENTIFIER)
-//   '.?' IDENTIFIER     — nullable chain step
+//   '?.' IDENTIFIER     — nullable chain step
 //   '!!'                — not valid here (only inside pipeline steps)
 // ─────────────────────────────────────────────────────────────────────────────
 ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
@@ -860,8 +860,8 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
             continue;
         }
 
-        // ── Nullable chain step: lhs '.?' IDENTIFIER ─────────────────────────
-        if (check(TokenType::DOT_QUESTION)) {
+        // ── Nullable chain step: lhs '?.' IDENTIFIER ─────────────────────────
+        if (check(TokenType::QUESTION_DOT)) {
             // Start or extend a NullableChainExprAST.
             LUC_LOG_EXPR_VERBOSE("parsePostfixExpr: nullable chain");
             NullableChainExprAST* existing =
@@ -876,10 +876,10 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
                 existing = static_cast<NullableChainExprAST *>(lhs.get());
             }
 
-            advance(); // consume '.?'
+            advance(); // consume '?.'
 
             if (!check(TokenType::IDENTIFIER)) {
-                errorAt(DiagCode::E2003, "expected field name after '.?'");
+                errorAt(DiagCode::E2003, "expected field name after '?.'");
                 break;
             }
             existing->steps.push_back(advance().value);
@@ -1172,15 +1172,16 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // parseAwaitExpr
+//
+// await is only valid inside a function that has the ~async type qualifier.
+// The semantic pass will enforce this by checking the function's type.
+// The parser only performs basic syntax checks.
 // ─────────────────────────────────────────────────────────────────────────────
 ExprPtr Parser::parseAwaitExpr() {
     LUC_LOG_EXPR("parseAwaitExpr");
     SourceLocation loc = currentLoc();
     consume(TokenType::AWAIT, "expected 'await'");
 
-    if (asyncDepth_ == 0) {
-        error(loc, DiagCode::E2006, "'await' is only valid inside an 'async' function");
-    }
     if (parallelDepth_ > 0) {
         error(loc, DiagCode::E2006, "'await' is not valid inside a 'parallel' block");
     }
@@ -1712,7 +1713,7 @@ ExprPtr Parser::parseNullCoalesceExpr(ExprPtr lhs) {
 // parseMatchArm
 //
 // Grammar:
-//   match_arm := pattern { ',' pattern } [ 'if' guard_expr ] '->' arm_body
+//   match_arm := pattern { ',' pattern } [ 'if' guard_expr ] '=>' arm_body
 // ─────────────────────────────────────────────────────────────────────────────
 MatchArmPtr Parser::parseMatchArm() {
     SourceLocation loc = currentLoc();
@@ -1741,7 +1742,8 @@ MatchArmPtr Parser::parseMatchArm() {
         }
     }
 
-    consume(TokenType::ARROW, "expected '->' after match pattern");
+    // Use FAT_ARROW (=>) instead of ARROW (->)
+    consume(TokenType::FAT_ARROW, "expected '=>' after match pattern");
 
     // Parse one or more result expressions
     do {
@@ -1761,7 +1763,7 @@ MatchArmPtr Parser::parseMatchArm() {
 DefaultArmPtr Parser::parseDefaultArm() {
     SourceLocation loc = currentLoc();
     consume(TokenType::DEFAULT, "expected 'default'");
-    consume(TokenType::ARROW, "expected '->' after 'default'");
+    consume(TokenType::FAT_ARROW, "expected '=>' after 'default'");
 
     auto arm = std::make_unique<DefaultArmAST>();
     arm->loc = loc;

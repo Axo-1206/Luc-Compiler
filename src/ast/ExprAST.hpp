@@ -63,7 +63,7 @@
 //     IsExprAST               — x is int, shape is Circle  (type check + narrowing)
 //
 //   Nullable chain
-//     NullableChainExprAST    — player.?weapon.?damage ?? 0
+//     NullableChainExprAST    — player?.weapon?.damage ?? 0
 //
 //   Pipeline & composition
 //     PipelineExprAST         — seed -> step -> step
@@ -618,17 +618,17 @@ struct IsExprAST : ExprAST {
 // ─────────────────────────────────────────────────────────────────────────────
 // NullableChainExprAST
 //
-// A .? chain terminated by a ?? fallback.
-//   player.?weapon.?damage ?? 0
-//   getSession(token).?user.?profile.?displayName ?? "anonymous"
+// A ?. chain terminated by a ?? fallback.
+//   player?.weapon?.damage ?? 0
+//   getSession(token)?.user?.profile?.displayName ?? "anonymous"
 //
-// The grammar enforces that every .? chain MUST be terminated by ??.
+// The grammar enforces that every ?. chain MUST be terminated by ??.
 // Standalone '.' (non-nullable field access) never needs ?? and never
 // produces a NullableChainExprAST — it becomes a FieldAccessExprAST.
 //
-// object  — the root expression before the first .?
-// steps   — the field names accessed via .? in order
-//   e.g. player.?weapon.?damage  →  object=player, steps=["weapon","damage"]
+// object  — the root expression before the first ?.
+// steps   — the field names accessed via ?. in order
+//   e.g. player?.weapon?.damage  →  object=player, steps=["weapon","damage"]
 // fallback — the expression after ??
 //
 // The semantic pass verifies that:
@@ -640,7 +640,7 @@ struct NullableChainExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::NullableChainExpr;
 
     ExprPtr                  object;    // root expression
-    std::vector<std::string> steps;     // field names accessed via .?
+    std::vector<std::string> steps;     // field names accessed via ?.
     ExprPtr                  fallback;  // the ?? value
 
     NullableChainExprAST() : ExprAST(ASTKind::NullableChainExpr) {}

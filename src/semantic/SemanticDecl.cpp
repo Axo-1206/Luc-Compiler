@@ -515,6 +515,7 @@ void checkVarDecl(VarDeclAST& node, SymbolTable& symbols, TypeResolver& resolver
 //   - Body is checked via SemanticStmt with the resolved return type as context.
 //   - Curried multi-group functions: each group creates a nested function scope.
 // ─────────────────────────────────────────────────────────────────────────────
+// In SemanticDecl.cpp - update checkFuncDecl
 void checkFuncDecl(FuncDeclAST& node, SymbolTable& symbols, TypeResolver& resolver,
                    DiagnosticEngine& dc, int& loopDepth,
                    int& parallelDepth, bool insideExtern) {
@@ -535,11 +536,26 @@ void checkFuncDecl(FuncDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
         return;
     }
 
+    // Get the function symbol (should already exist from Phase 1)
+    Symbol* funcSym = symbols.lookup(node.name);
+    if (!funcSym) {
+        LUC_LOG_SEMANTIC("\tERROR: Function symbol not found for '" << node.name << "'");
+        dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
+                 "internal error: function symbol '" + node.name + "' not found");
+        return;
+    }
+
+    // ── Track current function for await checking using FunctionContext ──────
+    SemanticHelpers::pushFunction(node.name, funcSym);
+
     // Use unified helper for normal functions
     checkFunctionLikeDeclaration(
         node.type, node.genericParams, node.bodyKind,
         node.body, node.exprBody, symbols, resolver, dc,
         loopDepth, parallelDepth, insideExtern, node.name);
+
+    // Pop the function from the stack after body checking is complete
+    SemanticHelpers::popFunction();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -805,6 +821,12 @@ void checkImplDecl(ImplDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
  
         TypeAST* returnType = getReturnTypeFromFunctionType(method->type, resolver);
 
+        std::string mangledName = node.structName + "." + method->name;
+        Symbol* methodSym = symbols.lookup(mangledName);
+        if (methodSym && method->type.isAsync()) {
+            SemanticHelpers::pushFunction(method->name, methodSym);
+        }
+
         symbols.pushScope();
 
         // RE-LOOKUP struct symbol inside the loop AFTER pushScope.
@@ -873,6 +895,10 @@ void checkImplDecl(ImplDeclAST& node, SymbolTable& symbols, TypeResolver& resolv
         }
  
         symbols.popScope();
+
+        if (methodSym && method->type.isAsync()) {
+            SemanticHelpers::popFunction();
+        }
     }
  
     // Trait conformance check. Re-lookup after all scope mutations are complete.

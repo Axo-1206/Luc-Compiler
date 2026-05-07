@@ -336,7 +336,7 @@ class Parser {
     ExprPtr parsePrimaryExpr(bool allowStructLiteral = true);
 
     // Parse all postfix operations on an already-parsed lhs:
-    // '.' field, ':' method, '.?' chain, '??' fallback,
+    // '.' field, ':' method, '?.' chain, '??' fallback,
     // '[' index / slice, '(' call, '!' arg-pack suffix.
     // Returns the fully-decorated expression.
     ExprPtr parsePostfixExpr(ExprPtr lhs);
@@ -520,10 +520,6 @@ class Parser {
     // The semantic pass re-checks them against the full AST, but early
     // detection here gives better error messages.
     // ─────────────────────────────────────────────────────────────────────────
-
-    // Incremented when entering an async function body; decremented on exit.
-    // parseAwaitExpr() records an error if this is 0.
-    int asyncDepth_ = 0;
 
     // Incremented when entering a loop body (for/while/do); decremented on exit.
     // parseBreakStmt() / parseContinueStmt() record an error if this is 0.

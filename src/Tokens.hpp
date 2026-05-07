@@ -101,12 +101,13 @@ enum class TokenType {
     // ─── Operators ────────────────────────────────────────────────────────────
     ASSIGN,  // =
     ARROW,   // ->        - runtime pipeline: fn1(args) -> fn2 -> fn3
+    FAT_ARROW,    // => (match arm)
     COMPOSE, // +>        - compile-time function composition: f +> g +> h
 
     // Nullable operators
     QUESTION,          // ?      - nullable type suffix: int?
-    DOT_QUESTION,      // .?     - nullable field chain, propagates nil: player.?weapon.?damage
-    QUESTION_QUESTION, // ??     - nil fallback, terminates a .? chain: .?field ?? default
+    QUESTION_DOT,      // ?.     - nullable field chain, propagates nil: player?.weapon?.damage
+    QUESTION_QUESTION, // ??     - nil fallback, terminates a ?. chain: ?.field ?? default
 
     // Reference & FFI
     AMPERSAND, // &         - reference type: &T  (safe, managed)

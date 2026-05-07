@@ -12,7 +12,7 @@
  * @related TypeResolver.hpp, SemanticAnalyzer.cpp
  */
 
-#include "QualifierRegistry.hpp"
+#include "registry/QualifierRegistry.hpp"
 #include "SemanticHelpers.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
