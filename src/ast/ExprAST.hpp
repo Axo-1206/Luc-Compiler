@@ -274,6 +274,34 @@ struct ArrayLiteralExprAST : ExprAST {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FieldInitAST
+//
+// One field initializer inside a struct literal expression.
+//   x = 1.0
+//   name = "hello"
+//   position = Vec2 { x = 0 y = 0 }
+//
+// Now a proper BaseAST node so the semantic pass and tools can walk the
+// field-to-expression binding uniformly. The field name is part of the node,
+// not buried in a separate structure.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct FieldInitAST : BaseAST {
+    static constexpr ASTKind staticKind = ASTKind::FieldInit;
+
+    std::string name;   // field name being initialized
+    ExprPtr     value;  // initializer expression
+
+    FieldInitAST() : BaseAST(ASTKind::FieldInit) {}
+    FieldInitAST(std::string n, ExprPtr v)
+        : BaseAST(ASTKind::FieldInit), name(std::move(n)), value(std::move(v)) {}
+
+    void accept(ASTVisitor& v) override { v.visit(*this); }
+};
+
+using FieldInitPtr = std::unique_ptr<FieldInitAST>;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // StructLiteralExprAST
 //
 // Constructs a value of a named struct type.
@@ -292,21 +320,12 @@ struct ArrayLiteralExprAST : ExprAST {
 // — the semantic pass matches by name against the struct's field declarations.
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct FieldInitAST {
-    std::string  name;    // field name
-    ExprPtr      value;   // initialiser expression
-    SourceLocation loc;   // for error reporting
-};
-
 struct StructLiteralExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::StructLiteralExpr;
 
     std::string                      typeName;      // "Vec2", "Color", "Pair"
     std::vector<TypePtr>             genericArgs;   // empty if non-generic
-    std::vector<FieldInitAST>        inits;         // field = expr entries
-
-    /// The synthesized concrete type of this struct literal (e.g., Box<int>).
-    /// Used when the literal is part of a generic instantiation.
+    std::vector<FieldInitPtr>        inits;         // field = expr entries (NOW visitable)
     std::unique_ptr<NamedTypeAST>    instantiatedType;
 
     StructLiteralExprAST() : ExprAST(ASTKind::StructLiteralExpr) {}
@@ -1140,31 +1159,24 @@ struct TypePatternAST : PatternAST {
 // ─────────────────────────────────────────────────────────────────────────────
 // FieldPatternAST
 //
-// One field entry inside a struct pattern — a plain struct, not a PatternAST.
-// Never appears independently — always owned by StructPatternAST.
-//
-// Two syntactic forms:
+// One field entry inside a struct pattern.
 //   x        — shorthand: matches field 'x' and binds it to name 'x'
-//              field="x",  subPattern=nullptr  (bind name = field name)
 //   x: 0.0   — full form: matches field 'x' against sub-pattern 0.0
-//              field="x",  subPattern=LiteralExprAST(0.0)
 //   x: Vec2 { ... } — nested: field 'x' matched against a nested struct pattern
-//              field="x",  subPattern=StructPatternAST(...)
 //
-// When subPattern is nullptr the field is bound by name (shorthand form).
-// When subPattern is present the field value must match the sub-pattern.
-// subPattern is unique_ptr<PatternAST> because PatternExprAST wraps literal
-// and range nodes (LiteralExprAST, RangeExprAST) as PatternAST subclasses,
-// providing a common type for all valid pattern nodes.
-//
-// Note: struct patterns use ':' as the field separator — this is pattern
-// syntax only. Struct literals always use '=' (never ':').
+// Now a proper BaseAST node with visitor support, allowing the semantic pass
+// and tools to walk struct pattern fields uniformly.
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct FieldPatternAST {
-    std::string                  field;        // field name from the struct
-    std::unique_ptr<PatternAST>  subPattern;   // nullptr → shorthand bind by name
-    SourceLocation               loc;
+struct FieldPatternAST : BaseAST {
+    static constexpr ASTKind staticKind = ASTKind::FieldPattern;
+
+    std::string field;
+    std::unique_ptr<PatternAST> subPattern;
+
+    FieldPatternAST() : BaseAST(ASTKind::FieldPattern) {}
+
+    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using FieldPatternPtr = std::unique_ptr<FieldPatternAST>;
@@ -1196,11 +1208,10 @@ using FieldPatternPtr = std::unique_ptr<FieldPatternAST>;
 struct StructPatternAST : PatternAST {
     static constexpr ASTKind staticKind = ASTKind::StructPattern;
 
-    std::string                   typeName;  // "Vec2", "Player"
-    std::vector<FieldPatternPtr>  fields;    // field patterns in source order
+    std::string typeName;                      // "Vec2", "Player"
+    std::vector<FieldPatternPtr> fields;       // field patterns in source order
 
     StructPatternAST() : PatternAST(ASTKind::StructPattern) {}
-
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
@@ -1213,12 +1224,12 @@ struct StructPatternAST : PatternAST {
 // MatchArmAST
 //
 // One non-default arm in a match expression.
-//   200           -> "ok"
-//   200, 201, 202 -> "success"
-//   1..10         -> "light"
-//   n if n < 0    -> "invalid: " + string(n)
-//   s is Circle   -> s.radius * s.radius * 3.14159
-//   Vec2 { x, y } -> "at " + string(x) + ", " + string(y)
+//   200           => "ok"
+//   200, 201, 202 => "success"
+//   1..10         => "light"
+//   n if n < 0    => "invalid: " + string(n)
+//   s is Circle   => s.radius * s.radius * 3.14159
+//   Vec2 { x, y } => "at " + string(x) + ", " + string(y)
 //
 // patterns — one or more patterns, comma-separated in source. Stored as
 //   vector<unique_ptr<PatternAST>> — all valid pattern nodes are now
@@ -1269,8 +1280,8 @@ using  MatchArmPtr = std::unique_ptr<MatchArmAST>;
 // DefaultArmAST
 //
 // The required final fallback arm — always present on every match expression.
-//   default -> "unknown"
-//   default -> "unknown", "no detail available"
+//   default => "unknown"
+//   default => "unknown", "no detail available"
 //
 // The 'default' arm has no pattern and no guard — it always matches.
 // It must be the last arm in the match. The semantic pass reports an error

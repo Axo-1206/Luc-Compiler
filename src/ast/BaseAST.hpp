@@ -97,6 +97,7 @@ enum class ASTKind : uint16_t {
     LiteralExpr,
     ArrayLiteralExpr,
     StructLiteralExpr,
+    FieldInit,
     IdentifierExpr,
     FieldAccessExpr,
     BehaviorAccessExpr,
@@ -140,6 +141,7 @@ enum class ASTKind : uint16_t {
     WildcardPattern,
     TypePattern,
     StructPattern,
+    FieldPattern,
     PatternExpr,
     MatchArm,
     DefaultArm,
@@ -149,6 +151,7 @@ enum class ASTKind : uint16_t {
 
     // ── Compiler Directives (@) ───────────────────────────────────────────────
     Attribute,          // @extern("name"), @inline, @packed, @deprecated("msg")
+    AttributeArg,       // argument inside an attribute's parentheses
     IntrinsicCallExpr,  // @sizeof(T), @memcpy(dest, src, len), @sqrt(x)
 };
 
@@ -166,7 +169,6 @@ struct FuncTypeAST;
 // DeclAST.hpp
 struct PackageDeclAST;
 struct UseDeclAST;
-struct ModuleDeclAST;
 struct VarDeclAST;
 struct ParamAST;
 struct GenericParamAST;
@@ -189,6 +191,7 @@ struct LiteralExprAST;
 struct IdentifierExprAST;
 struct ArrayLiteralExprAST;
 struct StructLiteralExprAST;
+struct FieldInitAST;
 struct BinaryExprAST;
 struct UnaryExprAST;
 struct CallExprAST;
@@ -215,6 +218,7 @@ struct BindPatternAST;
 struct WildcardPatternAST;
 struct TypePatternAST;
 struct StructPatternAST;
+struct FieldPatternAST;
 struct PatternExprAST;
 struct MatchArmAST;
 struct DefaultArmAST;
@@ -247,6 +251,7 @@ struct UnknownTypeAST;
 // ── Compiler Directive nodes (@) ──────────────────────────────────────────────
 // Defined in DeclAST.hpp and ExprAST.hpp respectively.
 struct AttributeAST;         // @name or @name(args) — attached to declarations
+struct AttributeArgAST;      // argument inside an attribute's parentheses
 struct IntrinsicCallExprAST; // @name(args) — in expression position
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -341,7 +346,6 @@ struct ASTVisitor {
     // ── Declaration nodes ─────────────────────────────────────────────────────
     virtual void visit(PackageDeclAST&)     {}
     virtual void visit(UseDeclAST&)         {}
-    virtual void visit(ModuleDeclAST&)      {}
     virtual void visit(VarDeclAST&)         {}
     virtual void visit(FuncDeclAST&)        {}
     virtual void visit(StructDeclAST&)      {}
@@ -365,6 +369,7 @@ struct ASTVisitor {
     virtual void visit(IdentifierExprAST&)      {}
     virtual void visit(ArrayLiteralExprAST&)    {}
     virtual void visit(StructLiteralExprAST&)   {}
+    virtual void visit(FieldInitAST&)           {}
     virtual void visit(BinaryExprAST&)          {}
     virtual void visit(UnaryExprAST&)           {}
     virtual void visit(CallExprAST&)            {}
@@ -391,6 +396,7 @@ struct ASTVisitor {
     virtual void visit(WildcardPatternAST&)     {}
     virtual void visit(TypePatternAST&)         {}
     virtual void visit(StructPatternAST&)       {}
+    virtual void visit(FieldPatternAST&)        {}
     virtual void visit(PatternExprAST&)         {}
     virtual void visit(MatchArmAST&)            {}
     virtual void visit(DefaultArmAST&)          {}
@@ -416,6 +422,7 @@ struct ASTVisitor {
 
     // ── Compiler Directive nodes (@) ──────────────────────────────────────────
     virtual void visit(AttributeAST&)           {}
+    virtual void visit(AttributeArgAST&)        {}
     virtual void visit(IntrinsicCallExprAST&)   {}
 
     // ── Unknown / Recovery nodes ──────────────────────────────────────────────

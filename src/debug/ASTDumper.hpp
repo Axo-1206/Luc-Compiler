@@ -59,8 +59,7 @@ public:
     void visit(TypeAliasDeclAST& node) override;
     void visit(GenericParamAST& node) override;
     void visit(ParamAST& node) override;
-    void visit(ModuleDeclAST& node) override;
-    
+
     // ── Expression nodes ──────────────────────────────────────────────────────
     void visit(LiteralExprAST& node) override;
     void visit(IdentifierExprAST& node) override;
@@ -110,6 +109,12 @@ public:
     void visit(ContinueStmtAST& node) override;
     void visit(ParallelForStmtAST& node) override;
     void visit(ParallelBlockStmtAST& node) override;
+
+    // ── Unknown / Recovery nodes ──────────────────────────────────────────────
+    void visit(UnknownDeclAST&) override;
+    void visit(UnknownExprAST&) override;
+    void visit(UnknownStmtAST&) override;
+    void visit(UnknownTypeAST&) override;
 
     // ── Root ──────────────────────────────────────────────────────────────────
     void visit(ProgramAST& node) override;

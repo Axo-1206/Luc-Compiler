@@ -246,8 +246,7 @@ struct SwitchCaseAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::SwitchCase;
 
     std::vector<ExprPtr>          values;   // one or more match values / ranges
-    std::unique_ptr<BlockStmtAST> body;     // statements for this case
-    SourceLocation                loc;      // location of 'case' keyword
+    std::unique_ptr<BlockStmtAST> body;     // statements for this case  
 
     SwitchCaseAST() : BaseAST(ASTKind::SwitchCase) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }

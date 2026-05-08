@@ -58,38 +58,44 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AttributeAST
-//
-// A compiler directive annotation attached to a declaration.
-// Use @extern("name") on a let/const declaration to bind a C/Vulkan symbol.
-//
-// Forms:
-//   @extern("malloc")                  — FFI symbol name
-//   @extern("vkCreateInstance", "C")   — FFI with calling convention
-//   @inline                            — inlining hint
-//   @noinline                          — prevent inlining
-//   @packed                            — remove struct padding
-//   @deprecated("Use newFunc instead") — deprecation warning
-//
-// Parameters are restricted to string literals, integer literals, booleans, and
-// type identifiers — no runtime expressions inside attributes.
+// AttributeArgKind — what kind of literal this argument represents.
 // ─────────────────────────────────────────────────────────────────────────────
-// AttributeArg — one argument inside an attribute's parentheses.
+
+enum class AttributeArgKind {
+    StringLit,   // "string"
+    IntLit,      // 42, 0xFF, 0b1010
+    BoolLit,     // true, false
+    TypeIdent    // TypeName (e.g., @extern("malloc", C) — "C" is a type identifier)
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AttributeArgAST
+//
+// One argument inside an attribute's parentheses.
 // Valid forms:  "string"  |  42  |  true/false  |  TypeName
-struct AttributeArgAST {
-    // Which kind of argument this is.
-    enum class ArgKind { StringLit, IntLit, BoolLit, TypeIdent };
-    ArgKind     argKind;
-    std::string value;   // raw string for StringLit/IntLit/TypeIdent; "true"/"false" for Bool
-    SourceLocation loc;
+//
+// Now a proper BaseAST node with visitor support, enabling the semantic pass
+// and tools (ASTDumper, LSP) to walk attribute arguments uniformly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct AttributeArgAST : BaseAST {
+    static constexpr ASTKind staticKind = ASTKind::AttributeArg;
+
+    AttributeArgKind kind;
+    std::string      value;   // raw string for StringLit/IntLit/TypeIdent;
+                              // "true"/"false" for BoolLit
+
+    AttributeArgAST(AttributeArgKind k, std::string v)
+        : BaseAST(ASTKind::AttributeArg), kind(k), value(std::move(v)) {}
+
+    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 struct AttributeAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::Attribute;
 
-    std::string name;                               // "extern", "inline", "packed", "deprecated", …
-    std::vector<AttributeArgAST> args;              // may be empty when no () follows
-    SourceLocation loc;
+    std::string name;                                        // "extern", "inline", etc.
+    std::vector<std::unique_ptr<AttributeArgAST>> args;      // now owns its arguments
 
     AttributeAST() : BaseAST(ASTKind::Attribute) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }
@@ -537,7 +543,7 @@ struct FromEntryAST : BaseAST {
 
     FuncSignature sig;
     std::string   returnTypeName;                     // "Fahrenheit"
-    StmtPtr       body;                                   // always BlockStmtAST
+    StmtPtr       body;                               // always BlockStmtAST
 
     FromEntryAST() : BaseAST(ASTKind::FromEntry) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }

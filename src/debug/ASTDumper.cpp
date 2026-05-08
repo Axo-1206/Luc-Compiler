@@ -346,7 +346,7 @@ void ASTDumper::visit(FromDeclAST& node) {
 
 void ASTDumper::visit(FromEntryAST& node) {
     std::string header = "FromEntryAST '" + node.returnTypeName + "'";
-    for (const auto& group : node.paramGroups) {
+    for (const auto& group : node.sig.paramGroups) {
         header += " (";
         for (size_t i = 0; i < group.size(); ++i) {
             if (i > 0) header += ", ";
@@ -385,11 +385,6 @@ void ASTDumper::visit(ParamAST& node) {
     if (node.isVariadic) header += "...";
     printNodeHeader(node, header);
 }
-
-void ASTDumper::visit(ModuleDeclAST& node) {
-    printNodeHeader(node, "ModuleDeclAST '" + node.name + "'");
-}
-
 
 // ── Expression nodes ──────────────────────────────────────────────────────
 void ASTDumper::visit(LiteralExprAST& node) {
@@ -641,9 +636,9 @@ void ASTDumper::visit(SwitchStmtAST& node) {
 }
 
 void ASTDumper::visit(ForStmtAST& node) {
-    printNodeHeader(node, "ForStmtAST '" + node.varName + "'");
-    if (node.varType) {
-        indent(); out += "\tvarType: " + formatType(node.varType.get()) + "\n";
+    printNodeHeader(node, "ForStmtAST '" + node.iterVar->name + "'");
+    if (node.iterVar->type) {
+        indent(); out += "\tvarType: " + formatType(node.iterVar->type.get()) + "\n";
     }
     if (node.iterable) visitChild(node.iterable.get(), "iterable");
     if (node.step) visitChild(node.step.get(), "step");
@@ -676,9 +671,9 @@ void ASTDumper::visit(ContinueStmtAST& node) {
 }
 
 void ASTDumper::visit(ParallelForStmtAST& node) {
-    printNodeHeader(node, "ParallelForStmtAST '" + node.varName + "'");
-    if (node.varType) {
-        indent(); out += "\tvarType: " + formatType(node.varType.get()) + "\n";
+    printNodeHeader(node, "ParallelForStmtAST '" + node.iterVar->name + "'");
+    if (node.iterVar->type) {
+        indent(); out += "\tvarType: " + formatType(node.iterVar->type.get()) + "\n";
     }
     if (node.iterable) visitChild(node.iterable.get(), "iterable");
     if (node.step) visitChild(node.step.get(), "step");

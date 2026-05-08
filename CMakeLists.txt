@@ -33,23 +33,23 @@ add_executable(luc-comp
     src/main.cpp 
     src/lexer/Lexer.cpp
     src/diagnostics/DiagnosticEngine.cpp
-    src/parser/Parser.cpp
-    src/parser/ParserExpr.cpp
-    src/parser/ParserDecl.cpp
-    src/parser/ParserType.cpp
-    src/parser/ParserStmt.cpp
-    src/semantic/SymbolTable.cpp
-    src/semantic/SemanticAnalyzer.cpp
-    src/semantic/TypeResolver.cpp
-    src/semantic/SemanticCollector.cpp
-    src/semantic/SemanticDecl.cpp
-    src/semantic/SemanticExpr.cpp
-    src/semantic/SemanticStmt.cpp
-    src/semantic/TypeChecker.cpp
-    src/semantic/Annotator.cpp
-    src/debug/ASTDumper.cpp
-    src/registry/BuiltinMethodRegistry.cpp
-    src/registry/AttributeRegistry.cpp
+    # src/parser/Parser.cpp
+    # src/parser/ParserExpr.cpp
+    # src/parser/ParserDecl.cpp
+    # src/parser/ParserType.cpp
+    # src/parser/ParserStmt.cpp
+    # src/semantic/SymbolTable.cpp
+    # src/semantic/SemanticAnalyzer.cpp
+    # src/semantic/TypeResolver.cpp
+    # src/semantic/SemanticCollector.cpp
+    # src/semantic/SemanticDecl.cpp
+    # src/semantic/SemanticExpr.cpp
+    # src/semantic/SemanticStmt.cpp
+    # src/semantic/TypeChecker.cpp
+    # src/semantic/Annotator.cpp
+    # src/debug/ASTDumper.cpp
+    # src/registry/BuiltinMethodRegistry.cpp
+    # src/registry/AttributeRegistry.cpp
     # src/codegen/CodeGen.cpp
     # src/codegen/CodeGenExpr.cpp
     # src/codegen/CodeGenDecl.cpp

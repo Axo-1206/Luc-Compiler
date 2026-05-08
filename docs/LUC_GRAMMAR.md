@@ -2566,9 +2566,9 @@ subsequent arms unreachable — the semantic pass enforces this.
 ```
 match_expr      := 'match' expr '{' { match_arm } default_arm '}'
 
-match_arm       := pattern_list [ guard ] '->' arm_body
+match_arm       := pattern_list [ guard ] '=>' arm_body
 
-default_arm     := 'default' '->' arm_body
+default_arm     := 'default' '=>' arm_body
 
 -- An arm body is one or two comma-separated expressions — no blocks allowed.
 -- The first expression is the primary value (always present).
@@ -2640,10 +2640,10 @@ bind pattern with guards and method calls instead:
 
 ```luc
 match items {
-    arr if arr.len() == 0 -> "empty"
-    arr if arr.len() == 1 -> "single: " + string(arr[0])
-    arr                   -> "many: "   + string(arr.len())
-    default               -> "unknown"
+    arr if arr.len() == 0 => "empty"
+    arr if arr.len() == 1 => "single: " + string(arr[0])
+    arr                   => "many: "   + string(arr.len())
+    default               => "unknown"
 }
 ```
 
@@ -2652,89 +2652,89 @@ match items {
 ```luc
 -- Value pattern — single primary value
 let label string = match status {
-    200      -> "ok"
-    404      -> "not found"
-    500      -> "error"
-    default  -> "unknown"
+    200      => "ok"
+    404      => "not found"
+    500      => "error"
+    default  => "unknown"
 }
 
 -- Multiple values per arm (comma-separated patterns)
 let category string = match code {
-    200, 201, 202 -> "success"
-    400, 401, 403 -> "client error"
-    500, 502, 503 -> "server error"
-    default       -> "other"
+    200, 201, 202 => "success"
+    400, 401, 403 => "client error"
+    500, 502, 503 => "server error"
+    default       => "other"
 }
 
 -- Range pattern — inclusive (..) and exclusive (..<)
 let severity string = match damage {
-    0       -> "none"
-    1..10   -> "light"       -- matches 1, 2, ..., 10 (inclusive)
-    11..<50 -> "moderate"    -- matches 11, 12, ..., 49 (exclusive end)
-    default -> "critical"
+    0       => "none"
+    1..10   => "light"       -- matches 1, 2, ..., 10 (inclusive)
+    11..<50 => "moderate"    -- matches 11, 12, ..., 49 (exclusive end)
+    default => "critical"
 }
 
 -- Bind pattern with guard
 let label string = match score {
-    n if n < 0   -> "invalid: " + string(n)
-    n if n < 50  -> "fail: "    + string(n)
-    n if n < 80  -> "pass: "    + string(n)
-    n            -> "merit: "   + string(n)
-    default      -> "unknown"
+    n if n < 0   => "invalid: " + string(n)
+    n if n < 50  => "fail: "    + string(n)
+    n if n < 80  => "pass: "    + string(n)
+    n            => "merit: "   + string(n)
+    default      => "unknown"
 }
 
 -- Wildcard
 let label string = match value {
-    0       -> "zero"
-    _       -> "non-zero"
-    default -> "fallback"
+    0       => "zero"
+    _       => "non-zero"
+    default => "fallback"
 }
 
 -- Struct destructuring
 let desc string = match point {
-    Vec2 { x: 0.0, y: 0.0 } -> "origin"
-    Vec2 { x, y }            -> "at " + string(x) + ", " + string(y)
-    default                  -> "unknown"
+    Vec2 { x: 0.0, y: 0.0 } => "origin"
+    Vec2 { x, y }            => "at " + string(x) + ", " + string(y)
+    default                  => "unknown"
 }
 
 -- Nested struct destructuring
 let desc string = match player {
-    Player { health: 0 }                               -> "dead"
-    Player { pos: Vec2 { x: 0.0, y: 0.0 }, health }   -> "at origin, hp: " + string(health)
-    Player { pos, health }                             -> "alive, hp: "     + string(health)
-    default                                            -> "unknown"
+    Player { health: 0 }                               => "dead"
+    Player { pos: Vec2 { x: 0.0, y: 0.0 }, health }   => "at origin, hp: " + string(health)
+    Player { pos, health }                             => "alive, hp: "     + string(health)
+    default                                            => "unknown"
 }
 
 -- Combining multiple patterns and guard
 let label string = match code {
-    200, 201     -> "created or ok"
-    n if n > 500 -> "critical: " + string(n)
-    default      -> "other"
+    200, 201     => "created or ok"
+    n if n > 500 => "critical: " + string(n)
+    default      => "other"
 }
 
 -- Secondary value — every arm supplies one (second variable is non-nullable)
 let label string
 let detail string
 label, detail = match status {
-    200     -> "ok",        "request succeeded"
-    404     -> "not found", "resource missing"
-    default -> "unknown",   "no detail available"
+    200     => "ok",        "request succeeded"
+    404     => "not found", "resource missing"
+    default => "unknown",   "no detail available"
 }
 
--- Secondary value — only some arms supply one (second variable must be nullable)
+-- Secondary value — only some arms supply one (second variable must be nullabl=)
 let label string
 let detail string?
 label, detail = match status {
-    200     -> "ok",        "request succeeded"
-    404     -> "not found"          -- detail is implicitly nil here
-    default -> "unknown"            -- detail is implicitly nil here
+    200     => "ok",        "request succeeded"
+    404     => "not found"          -- detail is implicitly nil here
+    default => "unknown"            -- detail is implicitly nil here
 }
 
 -- Secondary value discarded — caller only captures the primary value
 let label string = match status {
-    200     -> "ok",        "request succeeded"   -- second value silently dropped
-    404     -> "not found", "resource missing"
-    default -> "unknown",   "no detail available"
+    200     => "ok",        "request succeeded"   -- second value silently dropped
+    404     => "not found", "resource missing"
+    default => "unknown",   "no detail available"
 }
 ```
 
