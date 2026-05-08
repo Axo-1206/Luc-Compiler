@@ -171,7 +171,6 @@ enum class BinaryOp {
 
     // Bitwise (integer types only)
     // Note: && and || are used instead of & and | to avoid ambiguity with
-    // the reference operator &T and the union type separator |
     BitAnd,  // &&   bitwise AND
     BitOr,   // ||   bitwise OR
     BitXor,  // ~^   bitwise XOR
@@ -541,9 +540,7 @@ struct IndexExprAST : ExprAST {
 //   a || b   →  op=BitOr  (bitwise OR,  integer types only)
 //
 // Note: '&' is the unary reference operator (&x, &T) — never a binary op.
-// Note: '|' is the union type separator (int | string) in type position only.
 // Bitwise AND uses '&&' (BIT_AND token) and bitwise OR uses '||' (BIT_OR token)
-// to eliminate any ambiguity with the reference operator and union type separator.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct BinaryExprAST : ExprAST {
@@ -1136,14 +1133,6 @@ struct PatternExprAST : PatternAST {
 // After a successful match the semantic pass narrows bindName's type to
 // checkType for the duration of the arm body. Outside the arm the original
 // subject type is unchanged.
-//
-// Used for union type dispatch and 'any' type dispatch:
-//   type Shape = Circle | Rect | Triangle
-//   match shape {
-//       s is Circle   -> s.radius * s.radius * 3.14159
-//       s is Rect     -> s.width * s.height
-//       default       -> 0.0
-//   }
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct TypePatternAST : PatternAST {

@@ -1134,5 +1134,5 @@ void checkTopLevelDecl(DeclAST* decl, SymbolTable& symbols, TypeResolver& resolv
         checkFromDecl(*decl->as<FromDeclAST>(), symbols, resolver, dc,
                       loopDepth, parallelDepth, insideExtern);
 
-    // PackageDecl, UseDecl, TypeAliasDecl, ModuleDecl — nothing to check at phase 3.
+    // PackageDecl, UseDecl, TypeAliasDecl — nothing to check at phase 3.
 }

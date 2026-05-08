@@ -107,7 +107,6 @@ int Parser::infixPrec(TokenType t) const {
             return PREC_CMP;
 
         // Bitwise operators — && and || instead of & and | to avoid ambiguity
-        // with the reference operator &T and union type separator |
         case TokenType::BIT_AND:   // &&
         case TokenType::BIT_OR:    // ||
         case TokenType::BIT_XOR:   // ~^
@@ -117,7 +116,6 @@ int Parser::infixPrec(TokenType t) const {
 
         // BIT_NOT (~) is unary only — not an infix operator, no precedence here.
         // AMPERSAND (&) is the reference operator in expression context — not bitwise.
-        // PIPE (|) is the union type separator in type context — not bitwise.
 
         case TokenType::PLUS:
         case TokenType::MINUS:
@@ -165,7 +163,6 @@ BinaryOp Parser::tokenToBinaryOp(TokenType t) const {
         default:
             // BIT_NOT is unary only — should never reach here.
             // AMPERSAND is reference operator in expression context — not bitwise.
-            // PIPE is union type separator in type context — not bitwise.
             return BinaryOp::Add; // unreachable, satisfy compiler
     }
 }

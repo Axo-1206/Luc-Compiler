@@ -33,8 +33,7 @@ top_level_decl  := { attribute } actual_decl
                    -- Zero or more '@' attributes may precede any declaration.
                    -- Attributes are consumed and attached to the declaration that follows.
 
-actual_decl     := module_decl     -- optional re-export manifest (one per package)
-                 | use_decl
+actual_decl     := use_decl
                  | enum_decl        -- enum keyword:   named constant set, integer-backed
                  | struct_decl      -- struct keyword: data definition
                  | trait_decl       -- trait keyword:  method contract / constraint
@@ -91,8 +90,11 @@ export const main () int = {
 ## Module System
 
 Every `.luc` file is a module. The module's identity is its file path relative
-to the package root — no declaration is needed inside the file. Modules are
+to the package root – no declaration is needed inside the file. Modules are
 flat; nesting is not supported.
+
+Re‑exporting (`export use`) is the only way to expose items from other files
+as part of a package's public API. The `module` keyword is **not used(removed)**.
 
 ### Visibility — three tiers
 
@@ -163,6 +165,9 @@ use math as m        -- local alias: m.Vec2
 ```
 
 ## Types
+
+> **Note:** Luc does **not** have union types (`T | U`). Use the `any` type together
+> with `is` checks or pattern matching to handle multiple possible types at runtime.
 
 ### Type Grammar
 
@@ -1090,7 +1095,7 @@ impl_decl       := [ visibility_mod ] 'impl' IDENTIFIER [ generic_params ] [ ':'
 visibility_mod  := 'pub' | 'export'
 
 trait_ref       := IDENTIFIER [ generic_args ]     -- e.g.  : Drawable
-                                                   --        : Comparable<int>
+                                                   --## Types: Comparable<int>
 
 method_decl     := IDENTIFIER '(' [ param_list ] ')' [ return_type ] '=' func_body
                    -- no per-method visibility prefix — visibility is set at the impl block level
@@ -2965,37 +2970,34 @@ let build (paths []string) []Texture = async (paths []string) []Texture {
 
 ## Visibility & FFI Modifiers
 
-### Visibility
+### Visibility — three tiers
 
-Luc uses a two-layer visibility model. Each layer has a single dedicated
-mechanism — they do not overlap.
+| Keyword | Scope | Access |
+|---|---|---|
+| (none) | **File** | Only visible within the same `.luc` file. |
+| `pub` | **Package** | Visible to all files sharing the same `package` IDENTIFIER. |
+| `export` | **World** | Visible to external consumers of the package. |
 
-```
--- Layer 1: file → package  (pub on declarations)
---
---   pub prefix on struct, type, func, var:
---     the declaration is accessible to other files in the same package
---     without pub, it is private to the file it is declared in
---
---   pub impl:
---     methods are callable by anyone holding the value (within or outside the package)
---
---   impl (bare):
---     methods are callable only within the package
+`pub` on a top-level declaration (`struct`, `trait`, `type`, `let`, `const`, `enum`, `from`) makes it
+accessible to other files in the same package. Without `pub`, a declaration is
+private to its file.
 
-pub_mod         := 'pub'
-                   -- may prefix: struct_decl, trait_decl, type_decl,
-                   --             func_decl, var_decl, impl_decl
+`export` makes a top-level declaration accessible to external consumers importing this package.
 
--- Layer 2: package → world  (module manifest)
---
---   a module manifest (module PackageName { use ... }) declares which files
---   contribute to the package's external public API
---
---   without a manifest:  all pub declarations are externally visible (simple packages)
---   with a manifest:     only re-exported files are visible to external consumers
---
---   see Module System section for full grammar and examples
+`pub impl` vs `export impl` vs `impl` controls method accessibility: `export impl` methods are callable externally; `pub impl` methods are callable by anyone holding the value within the package; bare `impl` methods are callable only within the file.
+
+`pub from` vs `export from` vs `from` controls converter accessibility: `export from` converters are callable externally via `TypeName(expr)`; `pub from` converters are callable within the package; bare `from` converters are callable only within the file.
+
+### API Manifests (Re-Exports)
+
+To satisfy the desire for a "single point of truth" or a "curated API" without forcing a specific file naming convention, you can use `export` to modify `use` statements:
+
+```luc
+-- math/api.luc (or any other file in the math package)
+package math
+
+export use math.vec2         -- Re-export all pub items from vec2
+export use math.matrix.Mat2  -- Granular re-export of a single type
 ```
 
 ## `@` Compiler Directives
@@ -3623,21 +3625,6 @@ pub impl Vec2 {
 }
 ```
 
-### Visibility and doc output
-
-All doc comments are stored in the AST regardless of visibility. The visibility
-of the declaration controls where the doc appears:
-
-| Declaration | LSP hover | Generated docs |
-|---|---|---|
-| `pub` + in module manifest | ✅ anyone | ✅ external consumers |
-| `pub` + no module manifest | ✅ anyone | ✅ all importers |
-| `pub` + not re-exported | ✅ package | ❌ external consumers |
-| private (no `pub`) | ✅ package | ❌ not emitted |
-
-The rule: **always store, always show in LSP, filter by visibility only at
-doc generation time.**
-
 ### Content format
 
 Doc comment content is **Markdown**. The ` -` line prefix is stripped before
@@ -3659,7 +3646,7 @@ let add (a int) (b int) int = { return a + b }
 ## Keywords (Reserved)
 
 ```
-pub export package module use as impl trait type from
+pub export package use as impl trait type from
 let const struct enum
 async await parallel
 bool byte short int long ubyte ushort uint ulong

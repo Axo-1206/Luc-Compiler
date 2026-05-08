@@ -77,7 +77,6 @@ enum class ASTKind : uint16_t {
     // ── Declaration nodes ─────────────────────────────────────────────────────
     PackageDecl,
     UseDecl,
-    ModuleDecl,
     VarDecl,
     Param,
     GenericParam,

@@ -3,7 +3,7 @@
  *
  * @responsibility Parses type annotations and signatures.
  *
- * @grammar_rules Primitive types, Union types (|), Nullable (?), Generics (<>), Functions.
+ * @grammar_rules Primitive types, Nullable (?), Generics (<>), Functions.
  *
  * @related src/diagnostics/DiagnosticEngine.hpp, DiagnosticCodes.hpp
  */
@@ -30,8 +30,8 @@
 //
 // Call hierarchy:
 //
-//   parseType()               — union chain:  T { '|' T }
-//     └─ parseBaseType()      — single non-union type
+//   parseType()               
+//     └─ parseBaseType()      
 //          ├─ parsePrimitiveType()
 //          ├─ parseNamedType()     — IDENTIFIER [ '<' generic_args '>' ]
 //          ├─ parseArrayType()     — '[' ...  →  fixed / slice / dynamic
@@ -643,7 +643,6 @@ TypePtr Parser::parseFuncType(bool allowQualifiers) {
 // NOT called by:
 //   parseRefType / parsePtrType  — '?' in  &Vec2?  attaches to Vec2, not to &.
 //   parseFuncType                — nullable function uses the outer-paren form.
-//   parseType (union)            — '?' on a union would need outer parens first.
 // ─────────────────────────────────────────────────────────────────────────────
 TypePtr Parser::wrapNullable(TypePtr inner) {
     if (!match(TokenType::QUESTION)) {

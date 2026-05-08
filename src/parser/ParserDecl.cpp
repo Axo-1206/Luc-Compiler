@@ -20,7 +20,7 @@
 // ParserDecl.cpp
 //
 // Implements every declaration parse function declared in Parser.hpp.
-// This file handles all top-level constructs: use, module, var, func, struct,
+// This file handles all top-level constructs: use, var, func, struct,
 // enum, trait, impl (with from/method bodies), type alias, and the
 // '@' compiler directive attributes.
 //

@@ -89,10 +89,6 @@ private:
         LUC_LOG_SEMANTIC_EXTREME("visit(UseDeclAST)");
     }
 
-    void visit(ModuleDeclAST& /*node*/) override {
-        LUC_LOG_SEMANTIC_EXTREME("visit(ModuleDeclAST)");
-    }
-
     void visit(VarDeclAST& node) override {
         LUC_LOG_SEMANTIC_VERBOSE("visit(VarDeclAST): name=" << node.name);
         

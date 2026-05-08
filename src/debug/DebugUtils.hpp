@@ -22,7 +22,6 @@ namespace LucDebug {
             // Declaration nodes
             case ASTKind::PackageDecl:      return "PackageDecl";
             case ASTKind::UseDecl:          return "UseDecl";
-            case ASTKind::ModuleDecl:       return "ModuleDecl";
             case ASTKind::VarDecl:          return "VarDecl";
             case ASTKind::Param:            return "Param";
             case ASTKind::GenericParam:     return "GenericParam";

@@ -40,7 +40,6 @@
 // Node inventory:
 //   PackageDeclAST      — package foo
 //   UseDeclAST          — use math.vec2 [as m]
-//   ModuleDeclAST       — module math { use math.vec2 }
 //   VarDeclAST          — let / const  name  type  [= expr]
 //   ParamAST            — name type  or  name ...type  (parameter of a function)
 //   GenericParamAST     — T  or  T : Trait  or  T : A + B 

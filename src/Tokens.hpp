@@ -114,7 +114,7 @@ enum class TokenType {
     AT_SIGN,   // @         - compiler directive: @extern("sym"), @inline, @sizeof(T), etc.
 
     // Type operators
-    PIPE,     // |         - union type: int | string
+    PIPE,     // |         
     VARIADIC, // ...       - variadic params: args ...int
     RANGE,    // ..        - range literal: 0..10
 
@@ -152,10 +152,6 @@ enum class TokenType {
     BANG,                // !    - pipeline argument pack: scale(2.0)! means upstream injected as first arg
 
     // ─── Bitwise ──────────────────────────────────────────────────────────────
-    // NOTE: & and | are reused from AMPERSAND and PIPE above.
-    // The parser disambiguates by context (type position vs expression position).
-    // && and || replace & and | for bitwise operations in expression position
-    // to avoid ambiguity with the reference operator &T and union type |.
     BIT_AND,  // &&        - bitwise AND  (integer types only)
     BIT_OR,   // ||        - bitwise OR   (integer types only)
     BIT_XOR,  // ~^

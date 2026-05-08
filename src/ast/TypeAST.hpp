@@ -1,7 +1,7 @@
 /**
  * @file TypeAST.hpp
  *
- * @responsibility Defines the syntactic representation of types (Primitive, Union, Array, Pointer).
+ * @responsibility Defines the syntactic representation of types (Primitive, Array, Pointer).
  * 
  * @hierarchy BaseAST -> TypeAST -> [Concrete Nodes]
  *
