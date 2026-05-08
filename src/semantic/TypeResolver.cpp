@@ -13,7 +13,7 @@
  */
 
 #include "registry/QualifierRegistry.hpp"
-#include "SemanticHelpers.hpp"
+#include "header/SemanticHelpers.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TypeResolver (constructor)  — Initializes the TypeResolver with core dependencies

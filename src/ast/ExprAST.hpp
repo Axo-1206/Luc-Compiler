@@ -23,8 +23,9 @@
 #pragma once
 
 #include "BaseAST.hpp"
+#include "support/InternedString.hpp"
 #include "TypeAST.hpp"
-#include "DeclAST.hpp"    // ParamAST, ParamPtr — AnonFuncExprAST needs params
+#include "DeclAST.hpp"  
 
 #include <string>
 #include <vector>
@@ -242,9 +243,9 @@ struct LiteralExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::LiteralExpr;
 
     LiteralKind  kind;
-    std::string  value;   // raw lexeme — "42", "3.14", "hello", "0xFF", ...
+    InternedString  value;   // raw lexeme — "42", "3.14", "hello", "0xFF", ...
 
-    LiteralExprAST(LiteralKind k, std::string v)
+    LiteralExprAST(LiteralKind k, InternedString v)
         : ExprAST(ASTKind::LiteralExpr), kind(k), value(std::move(v)) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
@@ -289,17 +290,17 @@ struct ArrayLiteralExprAST : ExprAST {
 struct FieldInitAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::FieldInit;
 
-    std::string name;   // field name being initialized
+    InternedString name;   // field name being initialized
     ExprPtr     value;  // initializer expression
 
     FieldInitAST() : BaseAST(ASTKind::FieldInit) {}
-    FieldInitAST(std::string n, ExprPtr v)
-        : BaseAST(ASTKind::FieldInit), name(std::move(n)), value(std::move(v)) {}
+    FieldInitAST(InternedString n, ExprPtr v)
+        : BaseAST(ASTKind::FieldInit), name(n), value(std::move(v)) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using FieldInitPtr = std::unique_ptr<FieldInitAST>;
+using FieldInitPtr = ASTPtr<FieldInitAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StructLiteralExprAST
@@ -323,10 +324,10 @@ using FieldInitPtr = std::unique_ptr<FieldInitAST>;
 struct StructLiteralExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::StructLiteralExpr;
 
-    std::string                      typeName;      // "Vec2", "Color", "Pair"
+    InternedString                      typeName;      // "Vec2", "Color", "Pair"
     std::vector<TypePtr>             genericArgs;   // empty if non-generic
     std::vector<FieldInitPtr>        inits;         // field = expr entries (NOW visitable)
-    std::unique_ptr<NamedTypeAST>    instantiatedType;
+    ASTPtr<NamedTypeAST>    instantiatedType;
 
     StructLiteralExprAST() : ExprAST(ASTKind::StructLiteralExpr) {}
 
@@ -355,10 +356,10 @@ struct StructLiteralExprAST : ExprAST {
 struct IdentifierExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::IdentifierExpr;
 
-    std::string name;
+    InternedString name;
 
-    explicit IdentifierExprAST(std::string n)
-        : ExprAST(ASTKind::IdentifierExpr), name(std::move(n)) {}
+    explicit IdentifierExprAST(InternedString n)
+        : ExprAST(ASTKind::IdentifierExpr), name(n) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
@@ -383,7 +384,7 @@ struct FieldAccessExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::FieldAccessExpr;
 
     ExprPtr     object;   // the left-hand side expression
-    std::string field;    // field name
+    InternedString field;    // field name
 
     FieldAccessExprAST() : ExprAST(ASTKind::FieldAccessExpr) {}
 
@@ -431,13 +432,13 @@ struct FieldAccessExprAST : ExprAST {
 struct BehaviorAccessExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::BehaviorAccessExpr;
 
-    std::string typeName;   // resolved struct base name: "Vec2", "Scene"
-    std::string method;     // method name: "normalize", "drawAll"
+    InternedString typeName;   // resolved struct base name: "Vec2", "Scene"
+    InternedString method;     // method name: "normalize", "drawAll"
 
     // ── Codegen annotations (written by semantic Phase 3b) ───────────────────
     // Concrete type args from the receiver's declared type. Empty for
     // non-generic structs or when the receiver type is itself abstract (T).
-    std::vector<std::string> concreteTypeArgs;
+    std::vector<InternedString> concreteTypeArgs;
 
     // Fully qualified LLVM function name for direct registry lookup.
     // Empty when the receiver type is abstract (inside a generic body) —
@@ -516,7 +517,7 @@ struct IndexExprAST : ExprAST {
 
     // Owned SliceTypeAST synthesized by the semantic pass when kind == Slice.
     // Holds the result type ([]T) so resolvedType can point to it stably.
-    mutable std::unique_ptr<TypeAST> sliceType;
+    mutable ASTPtr<TypeAST> sliceType;
 
     IndexExprAST() : ExprAST(ASTKind::IndexExpr) {}
 
@@ -662,7 +663,7 @@ struct NullableChainExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::NullableChainExpr;
 
     ExprPtr                  object;    // root expression
-    std::vector<std::string> steps;     // field names accessed via ?.
+    std::vector<InternedString> steps;     // field names accessed via ?.
     // No fallback here — the grammar requires ?? to be a separate operator
 
     NullableChainExprAST() : ExprAST(ASTKind::NullableChainExpr) {}
@@ -714,14 +715,14 @@ struct PipelineStepAST : BaseAST {
     PipelineStepKind          kind;
 
     // Ident / FieldRef / ArgPack — the base identifier
-    std::string               ident;
+    InternedString               ident;
 
     // BehaviorRef — Type:method
-    std::string               typeName;   // "Vec2"
-    std::string               method;     // "normalize"
+    InternedString               typeName;   // "Vec2"
+    InternedString               method;     // "normalize"
 
     // FieldRef — obj.field
-    std::string               field;
+    InternedString               field;
 
     // ArgPack — fn(args)!
     std::vector<ExprPtr>      packArgs;   // the args inside fn(args)!
@@ -734,7 +735,7 @@ struct PipelineStepAST : BaseAST {
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using PipelineStepPtr = std::unique_ptr<PipelineStepAST>;
+using PipelineStepPtr = ASTPtr<PipelineStepAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PipelineExprAST
@@ -786,17 +787,17 @@ struct ComposeOperandAST : BaseAST {
 
     ComposeOperandKind  kind;
 
-    std::string         ident;      // Ident / FieldRef
-    std::string         typeName;   // BehaviorRef — "Vec2"
-    std::string         method;     // BehaviorRef — "normalize"
-    std::string         field;      // FieldRef
+    InternedString         ident;      // Ident / FieldRef
+    InternedString         typeName;   // BehaviorRef — "Vec2"
+    InternedString         method;     // BehaviorRef — "normalize"
+    InternedString         field;      // FieldRef
 
     ComposeOperandAST() : BaseAST(ASTKind::ComposeOperand) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using ComposeOperandPtr = std::unique_ptr<ComposeOperandAST>;
+using ComposeOperandPtr = ASTPtr<ComposeOperandAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ComposeExprAST
@@ -1018,7 +1019,7 @@ struct TypeConvExprAST : ExprAST {
 struct IntrinsicCallExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::IntrinsicCallExpr;
 
-    std::string          intrinsicName;  // "sizeof", "memcpy", "sqrt", …
+    InternedString          intrinsicName;  // "sizeof", "memcpy", "sqrt", …
     TypePtr              typeArg;        // for @sizeof(T) / @alignof(T) — nullptr otherwise
     std::vector<ExprPtr> args;           // value arguments in order
 
@@ -1075,10 +1076,10 @@ struct IntrinsicCallExprAST : ExprAST {
 struct BindPatternAST : PatternAST {
     static constexpr ASTKind staticKind = ASTKind::BindPattern;
 
-    std::string name;   // "n", "arr", "s", "v"
+    InternedString name;   // "n", "arr", "s", "v"
 
-    explicit BindPatternAST(std::string n)
-        : PatternAST(ASTKind::BindPattern), name(std::move(n)) {}
+    explicit BindPatternAST(InternedString n)
+        : PatternAST(ASTKind::BindPattern), name(n) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
@@ -1148,7 +1149,7 @@ struct PatternExprAST : PatternAST {
 struct TypePatternAST : PatternAST {
     static constexpr ASTKind staticKind = ASTKind::TypePattern;
 
-    std::string  bindName;    // "s", "v", "e" — introduced into arm scope
+    InternedString  bindName;    // "s", "v", "e" — introduced into arm scope
     TypePtr      checkType;   // Circle, Rect, Error, ...
 
     TypePatternAST() : PatternAST(ASTKind::TypePattern) {}
@@ -1171,15 +1172,15 @@ struct TypePatternAST : PatternAST {
 struct FieldPatternAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::FieldPattern;
 
-    std::string field;
-    std::unique_ptr<PatternAST> subPattern;
+    InternedString field;
+    ASTPtr<PatternAST> subPattern;
 
     FieldPatternAST() : BaseAST(ASTKind::FieldPattern) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using FieldPatternPtr = std::unique_ptr<FieldPatternAST>;
+using FieldPatternPtr = ASTPtr<FieldPatternAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StructPatternAST
@@ -1208,7 +1209,7 @@ using FieldPatternPtr = std::unique_ptr<FieldPatternAST>;
 struct StructPatternAST : PatternAST {
     static constexpr ASTKind staticKind = ASTKind::StructPattern;
 
-    std::string typeName;                      // "Vec2", "Player"
+    InternedString typeName;                      // "Vec2", "Player"
     std::vector<FieldPatternPtr> fields;       // field patterns in source order
 
     StructPatternAST() : PatternAST(ASTKind::StructPattern) {}
@@ -1265,7 +1266,7 @@ struct StructPatternAST : PatternAST {
 struct MatchArmAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::MatchArm;
 
-    std::vector<std::unique_ptr<PatternAST>> patterns;   // at least one
+    std::vector<ASTPtr<PatternAST>> patterns;   // at least one
     ExprPtr                                  guard;       // nullptr if no guard
     std::vector<ExprPtr>                     exprs;       // 1 or more result expressions
 
@@ -1274,7 +1275,7 @@ struct MatchArmAST : BaseAST {
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using  MatchArmPtr = std::unique_ptr<MatchArmAST>;
+using  MatchArmPtr = ASTPtr<MatchArmAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DefaultArmAST
@@ -1303,7 +1304,7 @@ struct DefaultArmAST : BaseAST {
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using  DefaultArmPtr = std::unique_ptr<DefaultArmAST>;
+using  DefaultArmPtr = ASTPtr<DefaultArmAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MatchExprAST

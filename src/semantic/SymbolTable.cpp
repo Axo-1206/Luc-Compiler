@@ -12,7 +12,7 @@
  * @related SymbolTable.hpp, SemanticSymbol.hpp
  */
 
-#include "SymbolTable.hpp"
+#include "header/SymbolTable.hpp"
 #include "debug/DebugMacros.hpp"
 #include <iostream>
 

@@ -24,7 +24,7 @@
  * @related SemanticAnalyzer.cpp, SemanticDecl.cpp, SemanticExpr.cpp
  */
 
-#include "SemanticHelpers.hpp"
+#include "header/SemanticHelpers.hpp"
 
 #include <iostream>
 #include <iterator>

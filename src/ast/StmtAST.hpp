@@ -12,6 +12,7 @@
 #pragma once
 
 #include "BaseAST.hpp"
+#include "support/InternedString.hpp"
 #include "TypeAST.hpp"
 #include "DeclAST.hpp"
 #include "ExprAST.hpp"
@@ -147,8 +148,8 @@ struct ExprStmtAST : StmtAST {
 // ─────────────────────────────────────────────────────────────────────────────
 
 using LocalDecl = std::variant<
-    std::unique_ptr<VarDeclAST>,    // let x int = 5
-    std::unique_ptr<FuncDeclAST>    // let f (x int) int = { ... }
+    ASTPtr<VarDeclAST>,    // let x int = 5
+    ASTPtr<FuncDeclAST>    // let f (x int) int = { ... }
 >;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,11 +178,11 @@ struct DeclStmtAST : StmtAST {
         : StmtAST(ASTKind::DeclStmt), decl(std::move(d)) {}
 
     // Convenience helpers — avoid having to write std::get<> at every call site.
-    bool isVar()  const { return std::holds_alternative<std::unique_ptr<VarDeclAST>>(decl);  }
-    bool isFunc() const { return std::holds_alternative<std::unique_ptr<FuncDeclAST>>(decl); }
+    bool isVar()  const { return std::holds_alternative<ASTPtr<VarDeclAST>>(decl);  }
+    bool isFunc() const { return std::holds_alternative<ASTPtr<FuncDeclAST>>(decl); }
 
-    VarDeclAST*  asVar()  const { return std::get<std::unique_ptr<VarDeclAST>>(decl).get();  }
-    FuncDeclAST* asFunc() const { return std::get<std::unique_ptr<FuncDeclAST>>(decl).get(); }
+    VarDeclAST*  asVar()  const { return std::get<ASTPtr<VarDeclAST>>(decl).get();  }
+    FuncDeclAST* asFunc() const { return std::get<ASTPtr<FuncDeclAST>>(decl).get(); }
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
@@ -246,13 +247,13 @@ struct SwitchCaseAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::SwitchCase;
 
     std::vector<ExprPtr>          values;   // one or more match values / ranges
-    std::unique_ptr<BlockStmtAST> body;     // statements for this case  
+    ASTPtr<BlockStmtAST> body;     // statements for this case  
 
     SwitchCaseAST() : BaseAST(ASTKind::SwitchCase) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using SwitchCasePtr = std::unique_ptr<SwitchCaseAST>;
+using SwitchCasePtr = ASTPtr<SwitchCaseAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SwitchStmtAST
@@ -280,7 +281,7 @@ struct SwitchStmtAST : StmtAST {
 
     ExprPtr                          subject;
     std::vector<SwitchCasePtr>       cases;
-    std::unique_ptr<BlockStmtAST>    defaultBody;   // nullptr if absent
+    ASTPtr<BlockStmtAST>    defaultBody;   // nullptr if absent
     std::optional<SourceLocation>    defaultLoc;
 
     SwitchStmtAST() : StmtAST(ASTKind::SwitchStmt) {}
@@ -522,7 +523,7 @@ struct ParallelForStmtAST : StmtAST {
 struct ParallelBlockStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::ParallelBlockStmt;
 
-    std::vector<std::unique_ptr<BlockStmtAST>> subBlocks;   // at least one
+    std::vector<ASTPtr<BlockStmtAST>> subBlocks;   // at least one
 
     ParallelBlockStmtAST() : StmtAST(ASTKind::ParallelBlockStmt) {}
 

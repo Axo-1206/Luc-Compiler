@@ -50,6 +50,7 @@ add_executable(luc-comp
     # src/debug/ASTDumper.cpp
     # src/registry/BuiltinMethodRegistry.cpp
     # src/registry/AttributeRegistry.cpp
+    src/registry/StringPool.cpp
     # src/codegen/CodeGen.cpp
     # src/codegen/CodeGenExpr.cpp
     # src/codegen/CodeGenDecl.cpp

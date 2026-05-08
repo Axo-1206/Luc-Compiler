@@ -20,7 +20,7 @@
  * @related SemanticAnalyzer.cpp, SemanticStmt.cpp, SemanticExpr.cpp
  */
 
-#include "SemanticHelpers.hpp"
+#include "header/SemanticHelpers.hpp"
 #include "registry/AttributeRegistry.hpp"
 
 #include <unordered_set>

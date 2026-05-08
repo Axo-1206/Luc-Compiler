@@ -33,6 +33,34 @@
  *       - Type equality rules (which qualifiers affect type identity)
  */
 
+ // ─────────────────────────────────────────────────────────────────────────────
+
+
+ /**
+ * @namespace QualifierBits
+ * @brief Compile-time constants for each type qualifier bit.
+ *
+ * These constants define the bit positions used in FuncSignature::qualifiers.
+ * They are the authoritative mapping from qualifier name to bit mask, used
+ * both by QualifierRegistry to assign bits and by FuncSignature for zero-cost
+ * testing (e.g., `qualifiers & QualifierBits::Async`).
+ *
+ * Adding a new qualifier requires:
+ *   1. Choose an unused bit here.
+ *   2. Add an entry in QualifierRegistry’s constructor using this constant.
+ */
+
+ namespace QualifierBits {
+    constexpr uint32_t Async    = 1 << 0;
+    constexpr uint32_t Parallel = 1 << 1;
+    constexpr uint32_t NoInline = 1 << 2;
+    constexpr uint32_t CDecl    = 1 << 3;
+    constexpr uint32_t StdCall  = 1 << 4;
+    constexpr uint32_t FastCall = 1 << 5;
+    constexpr uint32_t Heap     = 1 << 6;
+    constexpr uint32_t Cold     = 1 << 7;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // QualifierInfo - Metadata for a single type qualifier
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,6 +156,24 @@ public:
         auto it = qualifiers.find(name);
         return it != qualifiers.end() ? &it->second : nullptr;
     }
+
+    /**
+     * @brief Attempt to set a qualifier's bit in the given mask.
+     * @param qualifiers Reference to the qualifier bitmask to modify.
+     * @param name The qualifier name without '~' (e.g., "async").
+     * @return true if the qualifier was recognized and the bit was set,
+     *         false if the qualifier is unknown.
+     *
+     * Typical parser usage:
+     *   if (!QualifierRegistry::instance().applyQualifier(sig.qualifiers, "async"))
+     *       error("unknown qualifier ~" + name);
+     */
+    bool applyQualifier(uint32_t& qualifiers, const std::string& name) const {
+        uint32_t bit = getBit(name);
+        if (!bit) return false;
+        qualifiers |= bit;
+        return true;
+    }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Diagnostic helpers
@@ -147,24 +193,9 @@ public:
         return result;
     }
     
-    /**
-     * @brief Compute the bitmask of qualifiers that affect type equality
-     * @return Bitmask where bits are set for qualifiers where affectsTypeEquality = true
-     * 
-     * Used by TypeChecker::isEqual() to determine if two function types are
-     * considered equal. Qualifiers like ~async affect type identity, while
-     * hints like ~noinline do not.
-     */
+    /** @brief Return the (cached) bitmask of qualifiers that affect type equality. */
     uint32_t equalityMask() const {
-        uint32_t mask = 0;
-        for (const auto& [name, info] : qualifiers) {
-            if (info.affectsTypeEquality) {
-                mask |= info.bit;
-                LUC_LOG_SEMANTIC_EXTREME("QualifierRegistry::equalityMask: adding ~" 
-                                         << name << " (0x" << std::hex << info.bit << ")");
-            }
-        }
-        return mask;
+        return cachedEqualityMask;
     }
     
     /**
@@ -179,14 +210,14 @@ public:
     // Convenience accessors for commonly used qualifiers (codegen optimization)
     // ─────────────────────────────────────────────────────────────────────────
     
-    uint32_t asyncBit() const { return getBit("async"); }
-    uint32_t parallelBit() const { return getBit("parallel"); }
-    uint32_t noinlineBit() const { return getBit("noinline"); }
-    uint32_t cdeclBit() const { return getBit("cdecl"); }
-    uint32_t stdcallBit() const { return getBit("stdcall"); }
-    uint32_t fastcallBit() const { return getBit("fastcall"); }
-    uint32_t heapBit() const { return getBit("heap"); }
-    uint32_t coldBit() const { return getBit("cold"); }
+    uint32_t asyncBit()    const { return QualifierBits::Async; }
+    uint32_t parallelBit() const { return QualifierBits::Parallel; }
+    uint32_t noinlineBit() const { return QualifierBits::NoInline; }
+    uint32_t cdeclBit()    const { return QualifierBits::CDecl; }
+    uint32_t stdcallBit()  const { return QualifierBits::StdCall; }
+    uint32_t fastcallBit() const { return QualifierBits::FastCall; }
+    uint32_t heapBit()     const { return QualifierBits::Heap; }
+    uint32_t coldBit()     const { return QualifierBits::Cold; }
     
 private:
     QualifierRegistry() {
@@ -211,19 +242,25 @@ private:
         // ─────────────────────────────────────────────────────────────────────
         
         // Execution model qualifiers - affect type equality (async vs sync are different types)
-        add("async",    1 << 0,  true,  true,  false, false);
-        add("parallel", 1 << 1,  true,  true,  false, false);  // ← NEW
+        add("async",    QualifierBits::Async,    true,  true,  false, false);
+        add("parallel", QualifierBits::Parallel, true,  true,  false, false);
         
         // Optimization hints - do NOT affect type equality
-        add("noinline", 1 << 2,  false, true,  false, false);
-        add("heap",     1 << 6,  false, true,  false, false);
-        add("cold",     1 << 7,  false, true,  false, false);
+        add("noinline", QualifierBits::NoInline, false, true,  false, false);
+        add("heap",     QualifierBits::Heap,     false, true,  false, false);
+        add("cold",     QualifierBits::Cold,     false, true,  false, false);
         
         // Calling convention qualifiers - affect type equality (cdecl vs stdcall are different)
-        add("cdecl",    1 << 3,  true,  true,  false, false);
-        add("stdcall",  1 << 4,  true,  true,  false, false);
-        add("fastcall", 1 << 5,  true,  true,  false, false);
+        add("cdecl",    QualifierBits::CDecl,    true,  true,  false, false);
+        add("stdcall",  QualifierBits::StdCall,  true,  true,  false, false);
+        add("fastcall", QualifierBits::FastCall, true,  true,  false, false);
         
+        // Compute cached equality mask once after registration
+        cachedEqualityMask = 0;
+        for (const auto& [name, info] : qualifiers) {
+            if (info.affectsTypeEquality) cachedEqualityMask |= info.bit;
+        }
+
         LUC_LOG_SEMANTIC_VERBOSE("QualifierRegistry: initialized " << qualifiers.size() 
                                  << " qualifiers");
     }
@@ -245,6 +282,7 @@ private:
                                  << ", affectsType=" << (affectsTypeEquality ? "true" : "false") << ")");
     }
     
+    uint32_t cachedEqualityMask = 0;
     std::unordered_map<std::string, QualifierInfo> qualifiers;
-    uint32_t nextBit = 1 << 8;  // Next available bit (for future expansion, e.g., ~gpu = 1<<8)
+    // uint32_t nextBit = 1 << 8;  // Next available bit (for future expansion, e.g., ~gpu = 1<<8)
 };

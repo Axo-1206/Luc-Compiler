@@ -12,7 +12,7 @@
  * @related TypeChecker.hpp
  */
 
-#include "SemanticHelpers.hpp"
+#include "header/SemanticHelpers.hpp"
 
 #include <iostream>
 #include <cstdlib> 

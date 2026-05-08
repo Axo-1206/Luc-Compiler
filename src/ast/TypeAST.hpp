@@ -15,7 +15,9 @@
 #pragma once
 
 #include "BaseAST.hpp"
+#include "support/InternedString.hpp"
 #include "registry/QualifierRegistry.hpp"
+#include "support/InternedString.hpp"
 
 #include <string>
 #include <vector>
@@ -144,7 +146,7 @@ struct PrimitiveTypeAST : TypeAST {
 struct NamedTypeAST : TypeAST {
     static constexpr ASTKind staticKind = ASTKind::NamedType;
 
-    std::string            name;              // "Vec2", "Buffer", "Map", ...
+    InternedString         name;              // "Vec2", "Buffer", "Map", ...
     std::vector<TypePtr>   genericArgs;       // concrete type args — empty if non-generic
 
     // ── Semantic annotation (written by TypeResolver, read by codegen) ────────
@@ -153,8 +155,8 @@ struct NamedTypeAST : TypeAST {
     // (TypeResolver::visit). Never true after TypeAlias unwrapping.
     bool isGenericParam = false;
 
-    explicit NamedTypeAST(std::string n)
-        : TypeAST(ASTKind::NamedType), name(std::move(n)) {}
+    explicit NamedTypeAST(InternedString n)
+        : TypeAST(ASTKind::NamedType), name(n) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
@@ -345,17 +347,18 @@ struct PtrTypeAST : TypeAST {
 // Holds the signature data shared by FuncTypeAST and declarations.
 // ─────────────────────────────────────────────────────────────────────────────
 struct FuncSignature {
-    std::vector<std::vector<std::unique_ptr<ParamAST>>> paramGroups;
+    std::vector<std::vector<ASTPtr<ParamAST>>> paramGroups;
     TypePtr                  returnType;
     bool                     isNullable   = false;
     uint32_t                 qualifiers   = 0;
-    std::vector<std::string> rawQualifiers;
+    std::vector<InternedString> rawQualifiers;  // only needed during parsing
 
-    bool hasQualifier(const std::string& name) const {
-        uint32_t bit = QualifierRegistry::instance().getBit(name);
-        return bit != 0 && (qualifiers & bit);
-    }
-    bool isAsync()    const { return hasQualifier("async"); }
+    // Zero‑cost helpers — direct bitmask test
+    bool hasQualifier(uint32_t bit) const { return (qualifiers & bit) != 0; }
+    bool isAsync()    const { return hasQualifier(QualifierBits::Async); }
+    bool isNoInline() const { return hasQualifier(QualifierBits::NoInline); }
+    bool isParallel() const { return hasQualifier(QualifierBits::Parallel); }
+
     bool hasParams()  const {
         for (const auto& group : paramGroups) {
             if (!group.empty()) return true;

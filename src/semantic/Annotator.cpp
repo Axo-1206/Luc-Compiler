@@ -34,8 +34,8 @@
  * @related SemanticExpr.cpp, SemanticStmt.cpp, SemanticAnalyzer.cpp
  */
 
-#include "SemanticSymbol.hpp"
-#include "SymbolTable.hpp"
+#include "header/SemanticSymbol.hpp"
+#include "header/SymbolTable.hpp"
 #include "ast/BaseAST.hpp"
 #include "ast/DeclAST.hpp"
 #include "ast/ExprAST.hpp"

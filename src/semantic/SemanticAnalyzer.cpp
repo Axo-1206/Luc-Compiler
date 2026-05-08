@@ -15,11 +15,11 @@
  * @related SemanticAnalyzer.hpp
  */
 
-#include "SemanticAnalyzer.hpp"
-#include "SemanticCollector.hpp"
-#include "TypeResolver.hpp"
-#include "TypeChecker.hpp"
-#include "SymbolTable.hpp"
+#include "header/SemanticAnalyzer.hpp"
+#include "header/SemanticCollector.hpp"
+#include "header/TypeResolver.hpp"
+#include "header/TypeChecker.hpp"
+#include "header/SymbolTable.hpp"
 #include "diagnostics/DiagnosticEngine.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "ast/BaseAST.hpp"

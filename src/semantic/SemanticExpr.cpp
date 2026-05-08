@@ -16,7 +16,7 @@
  */
 
 #include "registry/IntrinsicRegistry.hpp"
-#include "SemanticHelpers.hpp"
+#include "header/SemanticHelpers.hpp"
 #include "ast/BaseAST.hpp"
 #include "registry/BuiltinMethodRegistry.hpp"
 

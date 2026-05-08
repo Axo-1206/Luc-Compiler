@@ -14,12 +14,13 @@
 #pragma once
 
 #include "debug/DebugMacros.hpp"
+#include "support/ASTArena.hpp"
 
 #include <string>
 #include <optional>
 #include <memory>
 #include <vector>
-#include <cassert>   // required by BaseAST::as<T>()
+#include <cassert>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Forward declarations — every AST family forward-declared here so any header
@@ -35,6 +36,7 @@
 //
 // BaseAST.hpp includes none of them — this keeps the include graph acyclic.
 // Each family header does:  #include "BaseAST.hpp"
+#include "support/InternedString.hpp"
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -294,7 +296,7 @@ enum class DocCommentForm {
 };
 
 struct DocComment {
-    std::string     text;   // Markdown content, ' -' prefix already stripped
+    InternedString  text;   // Markdown content, ' -' prefix already stripped
     DocCommentForm  form;
 };
 
@@ -307,9 +309,9 @@ struct DocComment {
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct SourceLocation {
-    int         line   = 0;
-    int         column = 0;
-    std::string file;           // relative path, e.g. "math/vec2.luc"
+    int             line   = 0;
+    int             column = 0;
+    InternedString  file;
 
     // Convenience — a default-constructed SourceLocation is "unknown".
     bool isKnown() const { return line > 0; }
@@ -454,6 +456,22 @@ struct ASTVisitor {
 // phase. Codegen should never read them before semantic has run.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Effect — Behavioural bitmask
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum class Effect : uint32_t {
+    None          = 0,
+    SideEffect    = 1 << 0,  // writes memory, calls impure function, I/O
+    IsAsync       = 1 << 1,  // contains await or async call
+    WritesMemory  = 1 << 2,  // direct assignment to memory location
+    ReadsMemory   = 1 << 3,  // dereference or non-const field access
+    Tainted       = 1 << 4,  // raw pointer (*T) involved, FFI boundary
+};
+
+inline constexpr Effect operator|(Effect a, Effect b) { return static_cast<Effect>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b)); }
+inline bool hasEffect(uint32_t flags, Effect e) { return (flags & static_cast<uint32_t>(e)) != 0; }
+
 struct BaseAST {
 
     // ── Node kind (LLVM-style fast discrimination) ────────────────────────────
@@ -476,6 +494,12 @@ struct BaseAST {
     bool    isBehaviorMember = false;    // true → Type:method, never reassignable
     bool    isConst          = false;    // true → compile-time constant (const decl or literal)
     int     scopeDepth       = 0;        // 0 = file scope, +1 per nested block
+
+    // ── Structural ────────────────────────────────────────────────────────────
+    BaseAST* parent          = nullptr;  // set by parser when child is attached
+
+    // ── Behavioural bitmask ───────────────────────────────────────────────────
+    uint32_t effectFlags     = 0;
 
     // ── Constructor ───────────────────────────────────────────────────────────
     explicit BaseAST(ASTKind k) : kind(k) {}
@@ -549,11 +573,11 @@ struct PatternAST : BaseAST { explicit PatternAST(ASTKind k) : BaseAST(k) {} };
 // readable — the family headers use them exclusively.
 // ─────────────────────────────────────────────────────────────────────────────
 
-using TypePtr    = std::unique_ptr<TypeAST>;
-using DeclPtr    = std::unique_ptr<DeclAST>;
-using ExprPtr    = std::unique_ptr<ExprAST>;
-using StmtPtr    = std::unique_ptr<StmtAST>;
-using PatternPtr = std::unique_ptr<PatternAST>;
+using TypePtr    = std::unique_ptr<TypeAST, ASTDeleter>;
+using DeclPtr    = std::unique_ptr<DeclAST, ASTDeleter>;
+using ExprPtr    = std::unique_ptr<ExprAST, ASTDeleter>;
+using StmtPtr    = std::unique_ptr<StmtAST, ASTDeleter>;
+using PatternPtr = std::unique_ptr<PatternAST, ASTDeleter>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProgramAST — root of the entire tree
@@ -565,7 +589,7 @@ using PatternPtr = std::unique_ptr<PatternAST>;
 struct ProgramAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::Program;
 
-    std::string            packageName;   // from `package foo`
+    InternedString            packageName;   // from `package foo`
     std::string            filePath;      // relative path, e.g. "math/vec2.luc"
     std::vector<DeclPtr>   decls;         // top-level declarations in order
 
@@ -635,26 +659,26 @@ struct UnknownTypeAST : TypeAST {
 };
 
 // Helper factory functions
-inline std::unique_ptr<DeclAST> makeUnknownDecl(SourceLocation loc = {}) {
+inline DeclPtr makeUnknownDecl(SourceLocation loc = {}) {
     auto node = std::make_unique<UnknownDeclAST>();
     node->loc = loc;
-    return node;
+    return DeclPtr(node.release(), ASTDeleter{});
 }
 
-inline std::unique_ptr<ExprAST> makeUnknownExpr(SourceLocation loc = {}) {
+inline ExprPtr makeUnknownExpr(SourceLocation loc = {}) {
     auto node = std::make_unique<UnknownExprAST>();
     node->loc = loc;
-    return node;
+    return ExprPtr(node.release(), ASTDeleter{});
 }
 
-inline std::unique_ptr<StmtAST> makeUnknownStmt(SourceLocation loc = {}) {
+inline StmtPtr makeUnknownStmt(SourceLocation loc = {}) {
     auto node = std::make_unique<UnknownStmtAST>();
     node->loc = loc;
-    return node;
+    return StmtPtr(node.release(), ASTDeleter{});
 }
 
-inline std::unique_ptr<TypeAST> makeUnknownType(SourceLocation loc = {}) {
+inline TypePtr makeUnknownType(SourceLocation loc = {}) {
     auto node = std::make_unique<UnknownTypeAST>();
     node->loc = loc;
-    return node;
+    return TypePtr(node.release(), ASTDeleter{});
 }

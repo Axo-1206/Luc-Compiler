@@ -12,7 +12,7 @@
  * @related SemanticCollector.hpp, SemanticAnalyzer.cpp
  */
 
-#include "SemanticCollector.hpp"
+#include "header/SemanticCollector.hpp"
 #include "diagnostics/DiagnosticEngine.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "diagnostics/Diagnostic.hpp"

@@ -14,6 +14,7 @@
 #pragma once
 
 #include "BaseAST.hpp"
+#include "support/InternedString.hpp"
 #include "TypeAST.hpp"
 
 #include <memory>
@@ -82,11 +83,11 @@ struct AttributeArgAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::AttributeArg;
 
     AttributeArgKind kind;
-    std::string      value;   // raw string for StringLit/IntLit/TypeIdent;
+    InternedString      value;   // raw string for StringLit/IntLit/TypeIdent;
                               // "true"/"false" for BoolLit
 
-    AttributeArgAST(AttributeArgKind k, std::string v)
-        : BaseAST(ASTKind::AttributeArg), kind(k), value(std::move(v)) {}
+    AttributeArgAST(AttributeArgKind k, InternedString v)
+        : BaseAST(ASTKind::AttributeArg), kind(k), value(v) {}
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
@@ -94,14 +95,14 @@ struct AttributeArgAST : BaseAST {
 struct AttributeAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::Attribute;
 
-    std::string name;                                        // "extern", "inline", etc.
-    std::vector<std::unique_ptr<AttributeArgAST>> args;      // now owns its arguments
+    InternedString name;                                        // "extern", "inline", etc.
+    std::vector<ASTPtr<AttributeArgAST>> args;      // now owns its arguments
 
     AttributeAST() : BaseAST(ASTKind::Attribute) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using AttributePtr = std::unique_ptr<AttributeAST>;
+using AttributePtr = ASTPtr<AttributeAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Visibility — the three visibility tiers for declarations.
@@ -157,9 +158,9 @@ enum class DeclKeyword {
 struct PackageDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::PackageDecl;
 
-    std::string name; // "math", "renderer", "app", ...
+    InternedString name; // "math", "renderer", "app", ...
 
-    explicit PackageDeclAST(std::string n) : DeclAST(ASTKind::PackageDecl), name(std::move(n)) {}
+    explicit PackageDeclAST(InternedString n) : DeclAST(ASTKind::PackageDecl), name(n) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
@@ -177,8 +178,8 @@ struct PackageDeclAST : DeclAST {
 struct UseDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::UseDecl;
 
-    std::vector<std::string> path;    // e.g. ["math", "vec2"]
-    std::optional<std::string> alias; // present when `as IDENTIFIER` was written
+    std::vector<InternedString> path;    // e.g. ["math", "vec2"]
+    std::optional<InternedString> alias; // present when `as IDENTIFIER` was written
     Visibility visibility = Visibility::Private;
 
     UseDeclAST() : DeclAST(ASTKind::UseDecl) {}
@@ -203,7 +204,7 @@ struct VarDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::VarDecl;
 
     DeclKeyword keyword; // Let / Const
-    std::string name;
+    InternedString name;
     TypePtr type;        // always present — annotation is required
     ExprPtr init;        // nullptr if no initialiser was written
     Visibility visibility = Visibility::Private;
@@ -228,17 +229,17 @@ struct VarDeclAST : DeclAST {
 struct GenericParamAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::GenericParam;
 
-    std::string name;                     // "T", "K", "V"
-    std::vector<std::string> constraints; // trait names — empty if unconstrained
+    InternedString name;                     // "T", "K", "V"
+    std::vector<InternedString> constraints; // trait names — empty if unconstrained
 
-    explicit GenericParamAST(std::string n) : BaseAST(ASTKind::GenericParam), name(std::move(n)) {}
+    explicit GenericParamAST(InternedString n) : BaseAST(ASTKind::GenericParam), name(n) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 struct ParamAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::Param;
 
-    std::string name;
+    InternedString name;
     TypePtr     type;
     bool        isVariadic = false;
 
@@ -246,10 +247,10 @@ struct ParamAST : BaseAST {
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using ParamPtr   = std::unique_ptr<ParamAST>;
+using ParamPtr   = ASTPtr<ParamAST>;
 using ParamGroup = std::vector<ParamPtr>;
 
-using GenericParamPtr = std::unique_ptr<GenericParamAST>;
+using GenericParamPtr = ASTPtr<GenericParamAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FuncDeclAST
@@ -267,7 +268,7 @@ struct FuncDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::FuncDecl;
 
     DeclKeyword keyword;
-    std::string name;
+    InternedString name;
     std::vector<GenericParamPtr> genericParams;
     FuncSignature sig;
     StmtPtr body;                                   // always BlockStmtAST
@@ -296,7 +297,7 @@ struct FuncDeclAST : DeclAST {
 struct FieldDeclAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::FieldDecl;
 
-    std::string name;
+    InternedString name;
     TypePtr type;
     ExprPtr defaultVal; // nullptr if no default
 
@@ -304,7 +305,7 @@ struct FieldDeclAST : BaseAST {
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using FieldDeclPtr = std::unique_ptr<FieldDeclAST>;
+using FieldDeclPtr = ASTPtr<FieldDeclAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StructDeclAST
@@ -348,7 +349,7 @@ using FieldDeclPtr = std::unique_ptr<FieldDeclAST>;
 struct StructDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::StructDecl;
 
-    std::string name;
+    InternedString name;
     std::vector<GenericParamPtr> genericParams; // empty if non-generic
     std::vector<FieldDeclPtr> fields;
     Visibility visibility = Visibility::Private;
@@ -365,7 +366,7 @@ struct StructDeclAST : DeclAST {
     //   - Would require TypeAST allocation on every struct, even in early parse phases
     //   - The name is a string, not known until after parsing
     //   - Lazy initialization (first access by SemanticCollector) is efficient
-    mutable std::unique_ptr<NamedTypeAST> selfType;
+    mutable ASTPtr<NamedTypeAST> selfType;
 
     StructDeclAST() : DeclAST(ASTKind::StructDecl) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }
@@ -387,15 +388,15 @@ struct StructDeclAST : DeclAST {
 struct EnumVariantAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::EnumVariant;
 
-    std::string name;
+    InternedString name;
     std::optional<int>
         explicitValue; // only present when '= INT_LITERAL' was written
 
-    explicit EnumVariantAST(std::string n) : BaseAST(ASTKind::EnumVariant), name(std::move(n)) {}
+    explicit EnumVariantAST(InternedString n) : BaseAST(ASTKind::EnumVariant), name(n) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using EnumVariantPtr = std::unique_ptr<EnumVariantAST>;
+using EnumVariantPtr = ASTPtr<EnumVariantAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EnumDeclAST
@@ -412,7 +413,7 @@ using EnumVariantPtr = std::unique_ptr<EnumVariantAST>;
 struct EnumDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::EnumDecl;
 
-    std::string name;
+    InternedString name;
     std::vector<EnumVariantPtr> variants;
     Visibility visibility = Visibility::Private;
 
@@ -438,7 +439,7 @@ struct EnumDeclAST : DeclAST {
 struct TraitMethodAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::TraitMethod;
 
-    std::string name;
+    InternedString name;
     FuncSignature sig;
 
     // Convenience helpers
@@ -448,7 +449,7 @@ struct TraitMethodAST : BaseAST {
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using TraitMethodPtr = std::unique_ptr<TraitMethodAST>;
+using TraitMethodPtr = ASTPtr<TraitMethodAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TraitDeclAST
@@ -463,7 +464,7 @@ using TraitMethodPtr = std::unique_ptr<TraitMethodAST>;
 struct TraitDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::TraitDecl;
 
-    std::string name;
+    InternedString name;
     std::vector<GenericParamPtr> genericParams; // empty if non-generic
     std::vector<TraitMethodPtr> methods;
     Visibility visibility = Visibility::Private;
@@ -489,7 +490,7 @@ struct TraitDeclAST : DeclAST {
 struct TraitRefAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::TraitRef;
 
-    std::string name;   // trait name, e.g. "Comparable"
+    InternedString name;   // trait name, e.g. "Comparable"
     std::vector<TypePtr>
         genericArgs;    // concrete args, e.g. [Int] for Comparable<int>
 
@@ -497,7 +498,7 @@ struct TraitRefAST : BaseAST {
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using TraitRefPtr = std::unique_ptr<TraitRefAST>;
+using TraitRefPtr = ASTPtr<TraitRefAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MethodDeclAST
@@ -513,7 +514,7 @@ using TraitRefPtr = std::unique_ptr<TraitRefAST>;
 struct MethodDeclAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::MethodDecl;
 
-    std::string name;
+    InternedString name;
     FuncSignature sig;
     StmtPtr body;                                   // always BlockStmtAST
 
@@ -524,7 +525,7 @@ struct MethodDeclAST : BaseAST {
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using MethodDeclPtr = std::unique_ptr<MethodDeclAST>;
+using MethodDeclPtr = ASTPtr<MethodDeclAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FromEntryAST
@@ -541,15 +542,15 @@ using MethodDeclPtr = std::unique_ptr<MethodDeclAST>;
 struct FromEntryAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::FromEntry;
 
-    FuncSignature sig;
-    std::string   returnTypeName;                     // "Fahrenheit"
-    StmtPtr       body;                               // always BlockStmtAST
+    FuncSignature   sig;
+    InternedString  returnTypeName;                     // "Fahrenheit"
+    StmtPtr         body;                               // always BlockStmtAST
 
     FromEntryAST() : BaseAST(ASTKind::FromEntry) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
-using FromEntryPtr = std::unique_ptr<FromEntryAST>;
+using FromEntryPtr = ASTPtr<FromEntryAST>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FromDeclAST
@@ -564,8 +565,8 @@ using FromEntryPtr = std::unique_ptr<FromEntryAST>;
 struct FromDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::FromDecl;
 
-    Visibility visibility = Visibility::Private;
-    std::string targetTypeName; // "Fahrenheit"
+    Visibility      visibility = Visibility::Private;
+    InternedString  targetTypeName; // "Fahrenheit"
     std::vector<FromEntryPtr> entries;
 
     FromDeclAST() : DeclAST(ASTKind::FromDecl) {}
@@ -604,7 +605,7 @@ struct ImplDeclAST : DeclAST {
 
     Visibility visibility = Visibility::Private;
     std::vector<GenericParamPtr> genericParams; // impl-level type params
-    std::string structName;                     // "Vec2", "Scene"
+    InternedString structName;                  // "Vec2", "Scene"
     std::vector<TypePtr> structGenericArgs;     // <T> in Scene<T>
     TraitRefPtr traitRef;                       // nullptr if no conformance
     std::vector<MethodDeclPtr> methods;
@@ -629,7 +630,7 @@ struct ImplDeclAST : DeclAST {
 struct TypeAliasDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::TypeAliasDecl;
 
-    std::string name;
+    InternedString name;
     std::vector<GenericParamPtr> genericParams; // empty if non-generic
     TypePtr aliasedType;                        // the right-hand side
     Visibility visibility = Visibility::Private;
