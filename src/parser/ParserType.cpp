@@ -498,17 +498,29 @@ TypePtr Parser::parseFuncType(bool allowQualifiers) {
         }
     }
     
-    // ── Check if this is a nullable function: '(' at start? ───────────────────
+    // ── Nullable function detection: (( ... )?) ──────────────────────────────
+    // IMPORTANT: Qualifiers (if any) have been consumed above. The next token
+    //            MUST be '(' for a valid function type (nullable or not).
+    //            We scan forward without modifying pos_ to check for the
+    //            pattern '(' ... ')' '?' where the entire function type is
+    //            wrapped in an extra pair of parentheses.
     bool isNullableFunction = false;
     SourceLocation nullableLoc;
     
     // Check for outer '(' that indicates nullable function
     if (check(TokenType::LPAREN)) {
+        // Assert that we are at a '(' after consuming qualifiers.
+        // This ensures the scan logic's precondition holds.
+        if (!check(TokenType::LPAREN)) {
+            // Should not happen if the caller ensures a valid function type start.
+            errorAt(DiagCode::E2001, "expected '(' for function type after qualifiers");
+            return arena_.make<UnknownTypeAST>();
+        }
+
+        // Scan forward to find matching ')' and check for '?'
         std::size_t i = pos_;
         int parenDepth = 1;
-        // Move past the first '('
-        ++i;
-        // Scan forward, skipping comments and qualifiers, to find matching ')'
+        ++i; // skip the first '('
         while (i < tokens_.size() && parenDepth > 0) {
             TokenType tt = tokens_[i].type;
             if (tt == TokenType::LPAREN) {
@@ -519,7 +531,7 @@ TypePtr Parser::parseFuncType(bool allowQualifiers) {
                 ++i;
                 continue;
             } else if (tt == TokenType::TILDE) {
-                // Skip '~' and the following identifier (qualifier)
+                // Skip qualifiers inside the type (they belong to inner function)
                 ++i;
                 if (i < tokens_.size() && tokens_[i].type == TokenType::IDENTIFIER) ++i;
                 continue;
@@ -530,9 +542,8 @@ TypePtr Parser::parseFuncType(bool allowQualifiers) {
         bool hasQuestion = (i < tokens_.size() && tokens_[i].type == TokenType::QUESTION);
         if (parenDepth == 0 && hasQuestion) {
             isNullableFunction = true;
-            nullableLoc = currentLoc(); // location of the original '('
-            // Consume the outer '(' now – it is part of the nullable function syntax.
-            advance();
+            nullableLoc = currentLoc();
+            advance(); // consume the outer '('
         }
     }
     

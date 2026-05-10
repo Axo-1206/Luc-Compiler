@@ -340,7 +340,7 @@ ASTPtr<VarDeclAST> Parser::parseVarDecl(Visibility vis, std::vector<AttributePtr
     // Additional validation: '@packed' only valid on structs
     InternedString packedStr = kw_packed;
     InternedString inlineStr = kw_inline;
-    InternedString noinlineStr = kw_inline;
+    InternedString noinlineStr = kw_noinline;
     InternedString deprecatedStr = kw_deprecated;
     for (const auto& attr : attrs) {
         if (attr->name == packedStr) {
@@ -611,6 +611,8 @@ std::vector<ASTPtr<ParamAST>> Parser::parseParamGroup() {
         
         // Parse variadic '...' if present
         bool isVariadic = match(TokenType::VARIADIC);
+        savedPos = pos_; // Capture position AFTER consuming name + variadic, just before parseType()
+
         
         TypePtr paramType = parseType();
         if (paramType->isa<UnknownTypeAST>() && pos_ == savedPos) {
@@ -656,9 +658,21 @@ std::vector<GenericParamPtr> Parser::parseGenericParams() {
         if (check(TokenType::GREATER))
             break; // trailing comma
 
+        // Record position before parsing the generic parameter
+        std::size_t savedPos = pos_;
         GenericParamPtr gp = parseGenericParam();
-        if (gp)
-            params.push_back(std::move(gp));
+
+        if (!gp) {
+            // If no progress was made, skip the offending token to avoid infinite loop.
+            if (pos_ == savedPos && !isAtEnd()) {
+                errorAt(DiagCode::E2002, "expected generic parameter, skipping token '" + peek().value + "'");
+                break; // exit loop, then consume the '>' later (may fail, but better than infinite loop)
+            }
+            // Continue to next iteration (loop condition will be re-evaluated)
+            continue;
+        }
+
+        params.push_back(std::move(gp));
 
     } while (!check(TokenType::GREATER) && !isAtEnd());
 

@@ -50,15 +50,12 @@
  *   2. Add an entry in QualifierRegistry’s constructor using this constant.
  */
 
- namespace QualifierBits {
+namespace QualifierBits {
     constexpr uint32_t Async    = 1 << 0;
     constexpr uint32_t Parallel = 1 << 1;
-    constexpr uint32_t NoInline = 1 << 2;
-    constexpr uint32_t CDecl    = 1 << 3;
-    constexpr uint32_t StdCall  = 1 << 4;
-    constexpr uint32_t FastCall = 1 << 5;
-    constexpr uint32_t Heap     = 1 << 6;
-    constexpr uint32_t Cold     = 1 << 7;
+    constexpr uint32_t CDecl    = 1 << 2;
+    constexpr uint32_t StdCall  = 1 << 3;
+    constexpr uint32_t FastCall = 1 << 4;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,12 +209,9 @@ public:
     
     uint32_t asyncBit()    const { return QualifierBits::Async; }
     uint32_t parallelBit() const { return QualifierBits::Parallel; }
-    uint32_t noinlineBit() const { return QualifierBits::NoInline; }
     uint32_t cdeclBit()    const { return QualifierBits::CDecl; }
     uint32_t stdcallBit()  const { return QualifierBits::StdCall; }
     uint32_t fastcallBit() const { return QualifierBits::FastCall; }
-    uint32_t heapBit()     const { return QualifierBits::Heap; }
-    uint32_t coldBit()     const { return QualifierBits::Cold; }
     
 private:
     QualifierRegistry() {
@@ -244,11 +238,6 @@ private:
         // Execution model qualifiers - affect type equality (async vs sync are different types)
         add("async",    QualifierBits::Async,    true,  true,  false, false);
         add("parallel", QualifierBits::Parallel, true,  true,  false, false);
-        
-        // Optimization hints - do NOT affect type equality
-        add("noinline", QualifierBits::NoInline, false, true,  false, false);
-        add("heap",     QualifierBits::Heap,     false, true,  false, false);
-        add("cold",     QualifierBits::Cold,     false, true,  false, false);
         
         // Calling convention qualifiers - affect type equality (cdecl vs stdcall are different)
         add("cdecl",    QualifierBits::CDecl,    true,  true,  false, false);

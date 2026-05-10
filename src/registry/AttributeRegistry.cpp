@@ -10,16 +10,60 @@ AttributeRegistry& AttributeRegistry::instance() {
     return registry;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+    // Built-in attribute registration
+    //
+    // The registry is a singleton that must know about every built-in attribute
+    // before any source file is parsed. Registration happens here, in the
+    // constructor, because:
+    //
+    //   1. The singleton instance is created on first call to instance().
+    //   2. That call typically happens after the StringPool is available,
+    //      but before any attribute lookup is performed.
+    //   3. The actual string interning is deferred until setStringPool(),
+    //      which processes the pending registrations.
+    //
+    // If you add a new built-in attribute (e.g., @must_use, @cold), register it
+    // below using registerAttribute(). Do NOT rely on static initialisation
+    // outside this constructor — the `pending` vector is not guaranteed to be
+    // usable before main() on all platforms, and we want a single source of
+    // truth for the built‑in set.
+    //
+    // Parameters for registerAttribute():
+    //   - name:        string literal of the attribute (without '@')
+    //   - contexts:    OR-ed AttributeContext flags where this attribute is allowed
+    //   - takesArgs:   true if the attribute accepts arguments
+    //   - minArgs:     minimum number of arguments (0 if takesArgs == false)
+    //   - maxArgs:     maximum number of arguments (-1 for unlimited)
+    //   - argKinds:    OR-ed AttrArgKind flags (String, Int, Bool, Type, Any)
+    //   - requiresConst: true if the attribute must be on a 'const' declaration
+    //   - exclusiveWith: name of another attribute that cannot be used together
+    //   - validator:   optional custom validation function
+    // ─────────────────────────────────────────────────────────────────────────
 AttributeRegistry::AttributeRegistry() {
-    // All attributes are registered with their names – they will be interned later
-    // when setStringPool is called. Until then, the registry is not usable.
-    // We'll just store the raw strings; setStringPool will intern them.
-    // For now, we store the registration data in a temporary vector, then in setStringPool we actually create the entries.
-    // Simpler: register inline but without interning; we can still store the string name and later set the ID.
-    // We'll do the registration in setStringPool after the pool is known.
-    // But the registry is a singleton; we cannot postpone registration because the constructor runs before setStringPool.
-    // So we must store the registration info as strings, then later intern.
-    // We'll store a list of pending registrations, then process them in setStringPool.
+    // Register built‑in attributes
+    // @extern: on functions and variables, takes 0 or 1 string arg (C name)
+    registerAttribute("extern", AttributeContext::Func | AttributeContext::Var,
+                      true, 0, 1, AttrArgKind::String, false);
+
+    // @packed: on structs only, no args
+    registerAttribute("packed", AttributeContext::Struct,
+                      false, 0, 0, AttrArgKind::None, false);
+
+    // @inline: on functions only, no args
+    registerAttribute("inline", AttributeContext::Func,
+                      false, 0, 0, AttrArgKind::None, false);
+
+    // @noinline: on functions only, no args
+    registerAttribute("noinline", AttributeContext::Func,
+                      false, 0, 0, AttrArgKind::None, false);
+
+    // @deprecated: on functions, variables, enums, structs, traits, impls
+    // Takes optional string argument (deprecation message)
+    registerAttribute("deprecated",
+                      AttributeContext::Func | AttributeContext::Var |
+                      AttributeContext::Struct | AttributeContext::Impl,
+                      true, 0, 1, AttrArgKind::String, false);
 }
 
 // We'll use a static vector of pending registrations
@@ -37,6 +81,10 @@ namespace {
                           const std::string&, DiagnosticEngine&,
                           const SourceLocation&) = nullptr;
     };
+    // This vector is filled exclusively by AttributeRegistry::registerAttribute(),
+    // which is called from the constructor (and possibly future test code).
+    // DO NOT add static initialisers that push to this vector; the order of
+    // initialisation across translation units is undefined. Use the constructor.
     std::vector<PendingAttr> pending;
 }
 
@@ -85,12 +133,27 @@ void AttributeRegistry::setStringPool(StringPool& pool) {
     deprecatedId = pool.intern("deprecated");
 }
 
+void AttributeRegistry::resetStringPool() {
+    stringPool = nullptr;
+    // Optionally clear interned caches (byId, nameToId) if they depend on pool strings.
+    // For safety, clear everything to prevent dangling string_views.
+    byId.clear();
+    nameToId.clear();
+    externId = InternedString();
+    packedId = InternedString();
+    inlineId = InternedString();
+    noinlineId = InternedString();
+    deprecatedId = InternedString();
+}
+
 const AttributeInfo* AttributeRegistry::lookup(InternedString id) const {
+    getPool();
     auto it = byId.find(id);
     return (it != byId.end()) ? &it->second : nullptr;
 }
 
 const AttributeInfo* AttributeRegistry::lookup(const std::string& name) const {
+    if (!stringPool) return nullptr;
     auto it = nameToId.find(name);
     if (it == nameToId.end()) return nullptr;
     return lookup(it->second);
@@ -122,7 +185,7 @@ bool AttributeRegistry::validateAttribute(const AttributeAST& attr,
                                           const std::string& declName,
                                           DeclKeyword declKw,
                                           DiagnosticEngine& dc) const {
-    if (!stringPool) return false; // not initialised
+    if (!getPool()) return false;
 
     const AttributeInfo* info = lookup(attr.name);
     if (!info) {

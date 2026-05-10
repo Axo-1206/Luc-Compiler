@@ -1103,18 +1103,28 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
     } else {
         // Parse regular expression arguments.
         while (!check(TokenType::RPAREN) && !isAtEnd()) {
+            // Record position before parsing the argument
+            std::size_t savedPos = pos_;
             ExprPtr arg = parseExpr();
-            if (!arg) {
+
+            // Check for progress – break if parseExpr consumed no tokens
+            if (pos_ == savedPos) {
                 errorAt(DiagCode::E2008,
-                        "expected argument expression in '@" + std::string(pool_.lookup(node->intrinsicName)) + "'");
+                        "expected argument expression in '@" +
+                        std::string(pool_.lookup(node->intrinsicName)) + "'");
+                // Skip to closing parenthesis to recover
+                while (!check(TokenType::RPAREN) && !isAtEnd()) advance();
                 break;
             }
+
             node->args.push_back(std::move(arg));
 
             if (check(TokenType::RPAREN)) break;
             if (!match(TokenType::COMMA)) {
                 errorAt(DiagCode::E2001,
                         "expected ',' or ')' in intrinsic argument list");
+                // Skip to closing parenthesis
+                while (!check(TokenType::RPAREN) && !isAtEnd()) advance();
                 break;
             }
         }
@@ -1768,9 +1778,13 @@ MatchArmPtr Parser::parseMatchArm() {
     // Optional guard: 'if' expr
     if (check(TokenType::IF)) {
         advance(); // consume 'if'
-        arm->guard = parseExpr();
-        if (!arm->guard) {
+        std::size_t savedPos = pos_;
+        ExprPtr guard = parseExpr();
+        if (pos_ == savedPos) {
             errorAt(DiagCode::E2008, "expected guard expression after 'if' in match arm");
+            // arm->guard remains nullptr (already default-initialised)
+        } else {
+            arm->guard = std::move(guard);
         }
     }
 
@@ -1823,12 +1837,34 @@ DefaultArmPtr Parser::parseDefaultArm() {
     auto arm = arena_.make<DefaultArmAST>();
     arm->loc = loc;
 
-    // Parse one or more result expressions
-    do {
+    // Parse one or more result expressions, separated by commas.
+    // Use position tracking to break if no progress is made.
+    while (true) {
+        // If we're at a comma, consume it unless it's the first iteration.
+        // But the grammar allows optional comma before the first expression?
+        // For consistency with parseMatchArm, we require at least one expression
+        // and then optional commas. We'll handle it as:
+        //   expr { ',' expr }
+        // The leading comma is not allowed.
+
+        size_t savedPos = pos_;
         ExprPtr exp = parseExpr();
-        if (!exp) break;
+        if (pos_ == savedPos) {
+            // No progress — stop parsing expressions.
+            if (!arm->exprs.empty()) {
+                // Already have at least one expression, break gracefully.
+                break;
+            }
+            // No expressions at all — error.
+            errorAt(DiagCode::E2008, "expected expression after '=>' in default arm");
+            break;
+        }
+
         arm->exprs.push_back(std::move(exp));
-    } while (match(TokenType::COMMA));
+
+        // If the next token is not a comma, we're done.
+        if (!match(TokenType::COMMA)) break;
+    }
 
     return arm;
 }

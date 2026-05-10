@@ -387,7 +387,7 @@ SwitchCasePtr Parser::parseSwitchCase() {
     auto sc = arena_.make<SwitchCaseAST>();
     sc->loc = loc;
 
-    // Parse first value
+    // Parse the first value (required unless colon follows immediately)
     if (check(TokenType::COLON)) {
         errorAt(DiagCode::E2001, "expected case value before ':'");
     } else {
@@ -401,9 +401,9 @@ SwitchCasePtr Parser::parseSwitchCase() {
         }
     }
 
-    // Parse additional comma-separated values
+    // Parse additional comma‑separated values
     while (check(TokenType::COMMA)) {
-        advance();
+        advance(); // consume ','
         if (check(TokenType::COLON)) break; // trailing comma allowed
         ExprPtr val = parsePrattExpr(0);
         if (val) {

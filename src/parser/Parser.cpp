@@ -520,83 +520,64 @@ bool Parser::looksLikeFuncDecl() const {
 }
 
 bool Parser::looksLikeAnonFunc() const {
-    if (!check(TokenType::LPAREN))
-        return false;
-
-    // Lookahead index – we will not modify pos_
     std::size_t i = pos_;
 
-    // Parse one or more parameter groups (currying)
-    while (i < tokens_.size() && tokens_[i].type == TokenType::LPAREN) {
-        ++i; // consume '('
-
-        // Skip comments after '('
+    // Skip type qualifiers: ~async, ~noinline, etc.
+    while (i < tokens_.size() && tokens_[i].type == TokenType::TILDE) {
+        ++i; // consume '~'
+        if (i < tokens_.size() && tokens_[i].type == TokenType::IDENTIFIER) {
+            ++i; // consume qualifier name
+        } else {
+            return false; // malformed: '~' without identifier
+        }
+        // skip any comments between qualifiers
         while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
-                                      tokens_[i].type == TokenType::DOC_COMMENT))
-            ++i;
-
-        // Find the matching ')'
-        int parenDepth = 1;
-        while (i < tokens_.size() && parenDepth > 0) {
-            TokenType tt = tokens_[i].type;
-            if (tt == TokenType::LPAREN) {
-                ++parenDepth;
-            } else if (tt == TokenType::RPAREN) {
-                --parenDepth;
-            } else if (tt == TokenType::LINE_COMMENT || tt == TokenType::DOC_COMMENT) {
-                ++i;
-                continue;
-            }
+                                      tokens_[i].type == TokenType::DOC_COMMENT)) {
             ++i;
         }
-        if (parenDepth != 0) return false; // unmatched '('
-
-        // Skip comments after ')'
-        while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
-                                      tokens_[i].type == TokenType::DOC_COMMENT))
-            ++i;
-
-        // If next token is '(', continue to the next parameter group (currying)
-        if (i < tokens_.size() && tokens_[i].type == TokenType::LPAREN)
-            continue;
-
-        // No more '(' – we must see '{' or a return type
-        break;
     }
 
-    // After all parameter groups, either '{' or a return type must follow
+    // After optional qualifiers, we must see '('
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::LPAREN)
+        return false;
+
+    // Parse the first parameter group
+    int parenDepth = 1;
+    ++i; // skip '('
+
+    while (i < tokens_.size() && parenDepth > 0) {
+        TokenType tt = tokens_[i].type;
+        if (tt == TokenType::LPAREN) {
+            ++parenDepth;
+        } else if (tt == TokenType::RPAREN) {
+            --parenDepth;
+        } else if (tt == TokenType::LINE_COMMENT || tt == TokenType::DOC_COMMENT) {
+            ++i;
+            continue;
+        } else if (tt == TokenType::TILDE) {
+            // Qualifiers inside type (unusual but handle)
+            ++i;
+            if (i < tokens_.size() && tokens_[i].type == TokenType::IDENTIFIER) ++i;
+            continue;
+        }
+        ++i;
+    }
+    if (parenDepth != 0) return false;
+
+    // Skip comments after ')'
+    while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
+                                  tokens_[i].type == TokenType::DOC_COMMENT))
+        ++i;
     if (i >= tokens_.size()) return false;
 
-    // Case: immediate '{'
-    if (tokens_[i].type == TokenType::LBRACE)
-        return true;
+    // Immediate '{' => anonymous function
+    if (tokens_[i].type == TokenType::LBRACE) return true;
 
-    // Case: return type present – check if it looks like a type start
+    // Return type present – must look like a type start
     TokenType retStart = tokens_[i].type;
+    if (Parser::isPrimitiveTypeToken(retStart))
+        return true;
     switch (retStart) {
-        case TokenType::TYPE_BOOL:
-        case TokenType::TYPE_BYTE:
-        case TokenType::TYPE_SHORT:
-        case TokenType::TYPE_INT:
-        case TokenType::TYPE_LONG:
-        case TokenType::TYPE_UBYTE:
-        case TokenType::TYPE_USHORT:
-        case TokenType::TYPE_UINT:
-        case TokenType::TYPE_ULONG:
-        case TokenType::TYPE_INT8:
-        case TokenType::TYPE_INT16:
-        case TokenType::TYPE_INT32:
-        case TokenType::TYPE_INT64:
-        case TokenType::TYPE_UINT8:
-        case TokenType::TYPE_UINT16:
-        case TokenType::TYPE_UINT32:
-        case TokenType::TYPE_UINT64:
-        case TokenType::TYPE_FLOAT:
-        case TokenType::TYPE_DOUBLE:
-        case TokenType::TYPE_DECIMAL:
-        case TokenType::TYPE_STRING:
-        case TokenType::TYPE_CHAR:
-        case TokenType::TYPE_ANY:
         case TokenType::IDENTIFIER:
         case TokenType::LBRACKET:
         case TokenType::AMPERSAND:
@@ -616,11 +597,12 @@ bool Parser::looksLikeStructLiteral() const {
 
     // Peek ahead: after optional generic args, must find '{'.
     std::size_t i = pos_ + 1;
-    int depth = 1;
+    int depth = 0;   // Initialize to 0 (no open brackets yet)
 
     // Skip generic args: < ... >
     if (i < tokens_.size() && tokens_[i].type == TokenType::LESS) {
-        ++i;
+        depth = 1;   // We've seen the opening '<', start depth at 1
+        ++i;         // move past '<'
         while (i < tokens_.size() && depth > 0) {
             // Skip comments
             while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
@@ -635,7 +617,7 @@ bool Parser::looksLikeStructLiteral() const {
             ++i;
         }
     }
-    // After the loop, if depth > 0 we never found a matching '>', so it's not a struct literal.
+    // After the loop, depth must be 0. For non-generic literals, depth is already 0.
     bool result = (depth == 0 && i < tokens_.size() && tokens_[i].type == TokenType::LBRACE);
     LUC_LOG_PARSER_EXTREME("looksLikeStructLiteral: " << (result ? "true" : "false"));
     return result;
@@ -730,11 +712,20 @@ ASTPtr<ProgramAST> Parser::parse() {
             program->packageName = pool_.intern("<error>");
             program->decls.push_back(std::move(dummyPkg));
         } else {
-            auto pkgDecl = parsePackageDecl(); 
-            attachDoc(*pkgDecl, std::move(pkgDoc));
-            program->packageName = pkgDecl->name;
-            program->decls.push_back(std::move(pkgDecl));
-        }
+            auto pkgDecl = parsePackageDecl();
+            if (!pkgDecl) {
+                // Should not happen with current implementation, but be defensive.
+                auto dummyPkg = arena_.make<PackageDeclAST>(pool_.intern("<error>"));
+                dummyPkg->loc = currentLoc();
+                attachDoc(*dummyPkg, std::move(pkgDoc));
+                program->packageName = pool_.intern("<error>");
+                program->decls.push_back(std::move(dummyPkg));
+            } else {
+                attachDoc(*pkgDecl, std::move(pkgDoc));
+                program->packageName = pkgDecl->name;
+                program->decls.push_back(std::move(pkgDecl));
+            }
+        }   
     }
 
     // ── 2. top-level declarations ─────────────────────────────────────────────

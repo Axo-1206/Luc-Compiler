@@ -172,6 +172,9 @@ int main(int argc, char* argv[]) {
     // } else {
     //     std::cout << "\n>>> Semantic Analysis SUCCESSFUL!" << std::endl;
     // }
+
+    AttributeRegistry::instance().resetStringPool();
+    IntrinsicRegistry::instance().resetStringPool();
     
     file.close();
     

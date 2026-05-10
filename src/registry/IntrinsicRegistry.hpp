@@ -8,6 +8,7 @@
 
 #include "ast/support/InternedString.hpp"
 #include "ast/support/StringPool.hpp"
+#include <cassert>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -38,6 +39,7 @@ public:
 
     // Must be called once before any lookups (e.g., in main() or parser constructor)
     void setStringPool(StringPool& pool);
+    void resetStringPool();
 
     // Lookup by interned ID (O(1))
     const IntrinsicEntry* lookup(InternedString id) const;
@@ -61,10 +63,15 @@ private:
     IntrinsicRegistry();
     void buildMap();
 
+    StringPool* getPool() const {
+        assert(stringPool && "IntrinsicRegistry used after StringPool destroyed or before setStringPool()");
+        return stringPool;
+    }
+
     StringPool* stringPool = nullptr;
     std::unordered_map<InternedString, const IntrinsicEntry*> idToEntry;
     InternedString sizeofId, alignofId;
 
-    static const IntrinsicEntry kEntries[];
+    static IntrinsicEntry kEntries[];
     static const std::size_t kEntryCount;
 };

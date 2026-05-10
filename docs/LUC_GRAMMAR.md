@@ -543,6 +543,37 @@ let maybeHandler (~async (int) string)?
 -- Multiple qualifiers
 let optimized ~async ~noinline (float) float
 ```
+### Function Type Qualifiers
+
+Qualifiers (prefixed with `~`) are part of a function type's identity. Unlike attributes 
+(`@`), which are metadata for a declaration, qualifiers modify the fundamental 
+contract, ABI, or execution model of a type. If two types have different 
+ABI-affecting qualifiers, they are considered distinct types and are not 
+directly compatible.
+
+### Available Qualifiers
+
+| Qualifier | Purpose | Affects Type Equality |
+| :--- | :--- | :--- |
+| `~async` | Marks a function as non-blocking/suspendable via `await`. | **Yes** |
+| `~parallel` | Marks a function for data-parallel/SIMD execution. | **Yes** |
+| `~cdecl` | Standard C calling convention. | **Yes** |
+| `~stdcall` | Windows standard calling convention. | **Yes** |
+| `~fastcall` | Register-based calling convention. | **Yes** |
+
+### Qualifiers vs. Attributes
+The distinction is based on **Visibility** and **Compatibility**:
+* **Attributes (`@`)**: Hints to the compiler or linker (e.g., `@noinline`, `@cold`). They do not change the function's signature; a caller does not need to know a function is "cold" to call it.
+* **Qualifiers (`~`)**: Contractual changes (e.g., `~async`, `~stdcall`). The caller **must** know these to generate the correct machine code to enter and exit the function.
+
+### Usage Example
+```luc
+-- A variable holding a specific ABI-qualified function type
+let callback ~stdcall (int) string
+
+-- Async function type alias
+type Fetcher = ~async (string) []byte
+```
 
 ### Function Declaration (shorthand — preferred)
 

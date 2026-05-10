@@ -1,3 +1,11 @@
+/**
+ * @class AttributeRegistry
+ * @brief Singleton holding metadata for all built‑in attributes.
+ *
+ * The registry is populated with built‑in attributes in its constructor.
+ * If you need to add a new attribute, modify the constructor in
+ * AttributeRegistry.cpp – do not rely on external registration calls.
+ */
 #pragma once
 
 #include "ast/DeclAST.hpp"
@@ -76,6 +84,7 @@ public:
     static AttributeRegistry& instance();
 
     void setStringPool(StringPool& pool);   // must be called once before any lookups
+    void resetStringPool();                 // Call this when the StringPool is about to be destroyed.
 
     const AttributeInfo* lookup(InternedString id) const;
     const AttributeInfo* lookup(const std::string& name) const;
@@ -119,6 +128,11 @@ private:
                            bool (*validator)(const std::vector<ASTPtr<AttributeArgAST>>&,
                                              const std::string&, DiagnosticEngine&,
                                              const SourceLocation&) = nullptr);
+
+    StringPool* getPool() const {
+        assert(stringPool && "AttributeRegistry used after StringPool destroyed or before setStringPool()");
+        return stringPool;
+    }
 
     StringPool* stringPool = nullptr;
     std::unordered_map<InternedString, AttributeInfo> byId;

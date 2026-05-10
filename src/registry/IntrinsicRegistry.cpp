@@ -15,14 +15,16 @@
 #include <unordered_map>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Static table: all Luc intrinsics with their LLVM mapping and argument shapes
+// IntrinsicRegistry::kEntries
 //
-// The `id` field is left as default (0) here – it will be filled during
-// setStringPool() when the StringPool is available. This separation allows
-// the table to be constexpr-ready while still using InternedString keys
-// after runtime interning.
+// This table is intentionally *not* const because its `id` field is written
+// once during setStringPool() (when the StringPool becomes available).
+// The table is logically read‑only after initialisation, but the write during
+// setup is necessary and well‑defined.
+//
+// Do NOT add `const` here. If you need a read‑only view, use const references.
 // ─────────────────────────────────────────────────────────────────────────────
-const IntrinsicEntry IntrinsicRegistry::kEntries[] = {
+IntrinsicEntry IntrinsicRegistry::kEntries[] = {
 
     // ════════════════════════════════════════════════════════════════════════
     // Compile‑time type queries (folded at IR level, no runtime LLVM intrinsic)
@@ -325,12 +327,20 @@ void IntrinsicRegistry::setStringPool(StringPool& pool) {
     alignofId = pool.intern("alignof");
 }
 
+void IntrinsicRegistry::resetStringPool() {
+    stringPool = nullptr;
+    idToEntry.clear();
+    sizeofId = InternedString();
+    alignofId = InternedString();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // lookup(InternedString)
 //
 // O(1) hash map lookup by pre‑interned ID.
 // ─────────────────────────────────────────────────────────────────────────────
 const IntrinsicEntry* IntrinsicRegistry::lookup(InternedString id) const {
+    getPool(); // asserts
     auto it = idToEntry.find(id);
     return (it != idToEntry.end()) ? it->second : nullptr;
 }
@@ -342,7 +352,7 @@ const IntrinsicEntry* IntrinsicRegistry::lookup(InternedString id) const {
 // delegates to lookup(InternedString). O(1) amortised.
 // ─────────────────────────────────────────────────────────────────────────────
 const IntrinsicEntry* IntrinsicRegistry::lookup(const std::string& name) const {
-    if (!stringPool) return nullptr;
+    if (!stringPool) return nullptr; // early return, no assertion
     return lookup(stringPool->intern(name));
 }
 
@@ -364,10 +374,12 @@ InternedString IntrinsicRegistry::getId(const std::string& name) const {
 // Quick existence checks.
 // ─────────────────────────────────────────────────────────────────────────────
 bool IntrinsicRegistry::isKnown(InternedString id) const {
+    getPool(); // asserts
     return lookup(id) != nullptr;
 }
 
 bool IntrinsicRegistry::isKnown(const std::string& name) const {
+    if (!stringPool) return false;
     return lookup(name) != nullptr;
 }
 
