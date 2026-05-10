@@ -20,14 +20,6 @@ AttributeRegistry& AttributeRegistry::instance() {
     //   1. The singleton instance is created on first call to instance().
     //   2. That call typically happens after the StringPool is available,
     //      but before any attribute lookup is performed.
-    //   3. The actual string interning is deferred until setStringPool(),
-    //      which processes the pending registrations.
-    //
-    // If you add a new built-in attribute (e.g., @must_use, @cold), register it
-    // below using registerAttribute(). Do NOT rely on static initialisation
-    // outside this constructor — the `pending` vector is not guaranteed to be
-    // usable before main() on all platforms, and we want a single source of
-    // truth for the built‑in set.
     //
     // Parameters for registerAttribute():
     //   - name:        string literal of the attribute (without '@')
@@ -76,10 +68,9 @@ void AttributeRegistry::setStringPool(StringPool& pool) {
 
     for (const auto& builtin : kBuiltinAttrs) {
         InternedString id = pool.intern(std::string(builtin.name));
-        std::string_view nameView = pool.lookup(id);
         AttributeInfo info;
         info.id = id;
-        info.name = nameView;
+        info.name = id;
         info.validContexts = builtin.contexts;
         info.takesArgs = builtin.takesArgs;
         info.minArgs = builtin.minArgs;
@@ -170,7 +161,7 @@ bool AttributeRegistry::validateAttribute(const AttributeAST& attr,
     if (!hasFlag(info->validContexts, ctx)) {
         dc.report(DiagnosticSeverity::Error, DiagnosticCategory::Syntax,
                   attr.loc, DiagCode::E2010,
-                  "@" + std::string(info->name) + " cannot be used on this declaration");
+                  "@" + std::string(stringPool->lookup(info->name)) + " cannot be used on this declaration");
         valid = false;
     }
 
@@ -180,21 +171,21 @@ bool AttributeRegistry::validateAttribute(const AttributeAST& attr,
         if (argCount < info->minArgs) {
             dc.report(DiagnosticSeverity::Error, DiagnosticCategory::Syntax,
                       attr.loc, DiagCode::E2009,
-                      "@" + std::string(info->name) + " requires at least " +
+                      "@" + std::string(stringPool->lookup(info->name)) + " requires at least " +
                       std::to_string(info->minArgs) + " argument(s)");
             valid = false;
         }
         if (info->maxArgs != -1 && argCount > info->maxArgs) {
             dc.report(DiagnosticSeverity::Error, DiagnosticCategory::Syntax,
                       attr.loc, DiagCode::E2009,
-                      "@" + std::string(info->name) + " takes at most " +
+                      "@" + std::string(stringPool->lookup(info->name)) + " takes at most " +
                       std::to_string(info->maxArgs) + " argument(s)");
             valid = false;
         }
     } else if (argCount > 0) {
         dc.report(DiagnosticSeverity::Error, DiagnosticCategory::Syntax,
                   attr.loc, DiagCode::E2009,
-                  "@" + std::string(info->name) + " does not take arguments");
+                  "@" + std::string(stringPool->lookup(info->name)) + " does not take arguments");
         valid = false;
     }
 
@@ -209,7 +200,7 @@ bool AttributeRegistry::validateAttribute(const AttributeAST& attr,
         if (!ok) {
             dc.report(DiagnosticSeverity::Error, DiagnosticCategory::Syntax,
                       arg->loc, DiagCode::E2009,
-                      "invalid argument type for @" + std::string(info->name));
+                      "invalid argument type for @" + std::string(stringPool->lookup(info->name)));
             valid = false;
         }
     }
@@ -218,7 +209,7 @@ bool AttributeRegistry::validateAttribute(const AttributeAST& attr,
     if (info->requiresConst && declKw != DeclKeyword::Const) {
         dc.report(DiagnosticSeverity::Error, DiagnosticCategory::Syntax,
                   attr.loc, DiagCode::E3002,
-                  "@" + std::string(info->name) + " requires 'const', not 'let'");
+                  "@" + std::string(stringPool->lookup(info->name)) + " requires 'const', not 'let'");
         valid = false;
     }
 
@@ -258,14 +249,14 @@ bool AttributeRegistry::checkMutualExclusion(InternedString id1, InternedString 
     if (a->exclusiveWith.isValid() && a->exclusiveWith == id2) {
         dc.report(DiagnosticSeverity::Error, DiagnosticCategory::Syntax,
                   loc, DiagCode::E2007,
-                  "@" + std::string(a->name) + " and @" + std::string(b->name) +
+                  "@" + std::string(stringPool->lookup(a->name)) + " and @" + std::string(stringPool->lookup(b->name)) +
                   " cannot be used together");
         return false;
     }
     if (b->exclusiveWith.isValid() && b->exclusiveWith == id1) {
         dc.report(DiagnosticSeverity::Error, DiagnosticCategory::Syntax,
                   loc, DiagCode::E2007,
-                  "@" + std::string(a->name) + " and @" + std::string(b->name) +
+                  "@" + std::string(stringPool->lookup(a->name)) + " and @" + std::string(stringPool->lookup(b->name)) +
                   " cannot be used together");
         return false;
     }

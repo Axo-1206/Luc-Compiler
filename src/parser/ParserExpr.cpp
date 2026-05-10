@@ -1453,11 +1453,17 @@ std::vector<ExprPtr> Parser::parseArgList() {
     int argCount = 0;
 
     while (!check(TokenType::RPAREN) && !isAtEnd()) {
+        std::size_t savedPos = pos_;
         ExprPtr arg = parseExpr();
-        if (!arg) {
+
+        // Check for progress – if parseExpr consumed no tokens, error and break
+        if (pos_ == savedPos) {
             errorAt(DiagCode::E2008, "expected argument expression");
+            // Consume the bad token to avoid infinite loop
+            if (!isAtEnd()) advance();
             break;
         }
+
         args.push_back(std::move(arg));
         argCount++;
         LUC_LOG_EXPR_EXTREME("parseArgList: parsed argument " << argCount);
@@ -2166,9 +2172,17 @@ ASTPtr<StructPatternAST> Parser::parseStructPattern(InternedString typeName) {
         if (check(TokenType::RBRACE))
             break;
 
+        std::size_t savedPos = pos_;
         FieldPatternPtr fp = parseFieldPattern();
-        if (fp)
+        if (fp) {
             pat->fields.push_back(std::move(fp));
+        } else {
+            // No progress? Skip the offending token to avoid infinite loop.
+            if (pos_ == savedPos && !isAtEnd()) {
+                errorAt(DiagCode::E2003, "expected field name in struct pattern");
+                advance(); // consume the unexpected token
+            }
+        }
     }
 
     consume(TokenType::RBRACE, "expected '}' to close struct pattern");

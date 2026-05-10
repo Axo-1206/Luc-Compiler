@@ -527,7 +527,7 @@ bool Parser::looksLikeAnonFunc() const {
         if (i < tokens_.size() && tokens_[i].type == TokenType::IDENTIFIER) {
             ++i;
         } else {
-            return false;
+            return false; // malformed '~' without identifier
         }
         // skip any comments between qualifiers
         while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
@@ -537,13 +537,15 @@ bool Parser::looksLikeAnonFunc() const {
     }
 
     // First parameter group is required
-    if (i >= tokens_.size() || tokens_[i].type != TokenType::LPAREN)
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::LPAREN) {
         return false;
+    }
 
     // Helper to parse a parameter group (starting at '(') and return index after matching ')'
     auto parseOneGroup = [&](std::size_t start) -> std::size_t {
-        if (start >= tokens_.size() || tokens_[start].type != TokenType::LPAREN)
+        if (start >= tokens_.size() || tokens_[start].type != TokenType::LPAREN) {
             return start;
+        }
         int parenDepth = 1;
         std::size_t j = start + 1;
         while (j < tokens_.size() && parenDepth > 0) {
@@ -566,31 +568,41 @@ bool Parser::looksLikeAnonFunc() const {
         return j; // after the closing ')'
     };
 
+    std::size_t startPos = i;
     i = parseOneGroup(i);
-    if (i >= tokens_.size() || tokens_[i].type != TokenType::RPAREN) {
-        // The helper returns after the ')', so the current token should be something else.
-        // Actually parseOneGroup returns index after the ')', so we don't need to check for ')'.
-        // But we must ensure the group was properly closed.
-        // We'll simply continue.
+    // The group must have been properly closed (i advanced past the ')')
+    if (i == startPos) {
+        return false; // unmatched '(' or no progress
     }
 
     // Parse additional curried parameter groups
     while (i < tokens_.size() && tokens_[i].type == TokenType::LPAREN) {
+        startPos = i;
         i = parseOneGroup(i);
+        if (i == startPos) {
+            return false; // malformed curried group
+        }
     }
 
     // Skip comments after the last ')'
     while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
-                                  tokens_[i].type == TokenType::DOC_COMMENT))
+                                  tokens_[i].type == TokenType::DOC_COMMENT)) {
         ++i;
-    if (i >= tokens_.size()) return false;
+    }
+    if (i >= tokens_.size()) {
+        return false; // EOF without '{' or return type
+    }
 
     // Immediate '{' means anonymous function
-    if (tokens_[i].type == TokenType::LBRACE) return true;
+    if (tokens_[i].type == TokenType::LBRACE) {
+        return true;
+    }
 
     // Return type present – must look like a type start.
     TokenType retStart = tokens_[i].type;
-    if (Parser::isPrimitiveTypeToken(retStart)) return true;
+    if (Parser::isPrimitiveTypeToken(retStart)) {
+        return true;
+    }
     switch (retStart) {
         case TokenType::IDENTIFIER:
         case TokenType::LBRACKET:
@@ -926,8 +938,8 @@ DeclPtr Parser::parseTopLevelDecl() {
             return parseFuncDecl(kw, vis, std::move(attrs));
         } else {
             LUC_LOG_PARSER("\t-> Parsing as variable declaration");
-            auto decl = parseVarDecl(vis);
-            if (decl) decl->attributes = std::move(attrs);
+            // Pass attrs into parseVarDecl; it will validate and attach them.
+            auto decl = parseVarDecl(vis, std::move(attrs));
             return decl;
         }
     }

@@ -313,13 +313,13 @@ IntrinsicRegistry::IntrinsicRegistry() = default;
 // separately for fast parser access.
 // ─────────────────────────────────────────────────────────────────────────────
 void IntrinsicRegistry::setStringPool(StringPool& pool) {
-    if (stringPool) return; // already initialised
+    // Always rebuild – even if already set. This enables proper re‑initialisation
+    // after resetStringPool() and keeps behaviour consistent with AttributeRegistry.
     stringPool = &pool;
+    idToEntry.clear();   // remove old mappings
 
     for (std::size_t i = 0; i < kEntryCount; ++i) {
-        // const_cast is safe because we are modifying during initialisation only,
-        // and no other thread accesses the table before setStringPool completes.
-        auto& entry = const_cast<IntrinsicEntry&>(kEntries[i]);
+        auto& entry = kEntries[i];
         entry.id = pool.intern(entry.lucName);
         idToEntry[entry.id] = &entry;
     }

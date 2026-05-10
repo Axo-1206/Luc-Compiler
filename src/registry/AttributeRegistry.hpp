@@ -2,7 +2,6 @@
  * @class AttributeRegistry
  * @brief Singleton holding metadata for all built‑in attributes.
  *
- * The registry is populated with built‑in attributes in its constructor.
  * If you need to add a new attribute, modify the constructor in
  * AttributeRegistry.cpp – do not rely on external registration calls.
  */
@@ -61,7 +60,7 @@ inline bool hasFlag(AttrArgKind value, AttrArgKind flag) {
 // ─────────────────────────────────────────────────────────────────────────────
 struct AttributeInfo {
     InternedString id;                        // interned ID (key)
-    std::string_view name;                    // human‑readable (from pool)
+    InternedString name;                     
     AttributeContext validContexts;
     bool takesArgs;
     int minArgs;

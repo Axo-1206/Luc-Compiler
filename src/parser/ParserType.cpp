@@ -544,6 +544,14 @@ TypePtr Parser::parseFuncType(bool allowQualifiers) {
             isNullableFunction = true;
             nullableLoc = currentLoc();
             advance(); // consume the outer '('
+
+            // Defensive check: after consuming outer '(', the next token MUST be '('
+            if (!check(TokenType::LPAREN)) {
+                errorAt(DiagCode::E2001,
+                        "expected '(' after outer parentheses in nullable function type");
+                // Revert to normal function type parsing (no outer wrapper)
+                isNullableFunction = false;
+            }
         }
     }
     
@@ -678,8 +686,6 @@ std::vector<TypePtr> Parser::parseGenericArgs() {
     consume(TokenType::LESS, DiagCode::E2001, "expected '<' to open generic arguments");
 
     if (check(TokenType::GREATER)) {
-        // Empty generic arg list — semantically probably an error but we produce
-        // the empty vector and let the semantic pass report it.
         LUC_LOG_TYPE("parseGenericArgs: empty generic argument list");
         advance();
         LUC_LOG_TYPE_VERBOSE("=== parseGenericArgs END (empty) ===");
@@ -696,11 +702,17 @@ std::vector<TypePtr> Parser::parseGenericArgs() {
             break;
 
         LUC_LOG_TYPE_VERBOSE("parseGenericArgs: parsing argument " << argCount + 1);
+        
+        // Progress tracking
+        std::size_t savedPos = pos_;
         TypePtr arg = parseType();
-        if (!arg) {
+        if (pos_ == savedPos) {
             errorAt(DiagCode::E2005, "expected type inside generic argument list");
+            // Consume the offending token to avoid infinite loop
+            if (!isAtEnd()) advance();
             break;
         }
+
         args.push_back(std::move(arg));
         argCount++;
         LUC_LOG_TYPE_VERBOSE("parseGenericArgs: parsed argument " << argCount);

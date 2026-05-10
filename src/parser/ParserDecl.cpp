@@ -79,11 +79,17 @@ std::vector<AttributePtr> Parser::parseAttributes() {
     LUC_LOG_PARSER_VERBOSE("parseAttributes: starting");
     std::vector<AttributePtr> attrs;
     while (check(TokenType::AT_SIGN)) {
-        LUC_LOG_PARSER_VERBOSE("\tFound '@', parsing attribute");
+        std::size_t savedPos = pos_;
         AttributePtr attr = parseAttribute();
         if (attr) {
-            LUC_LOG_PARSER_VERBOSE("\t\tParsed attribute: @" << pool_.lookup(attr->name));
+            LUC_LOG_PARSER_VERBOSE("\tParsed attribute: @" << pool_.lookup(attr->name));
             attrs.push_back(std::move(attr));
+        } else {
+            // parseAttribute failed. Ensure we make progress.
+            if (pos_ == savedPos && !isAtEnd()) {
+                errorAt(DiagCode::E2002, "invalid attribute syntax, skipping '@'");
+                advance(); // consume the '@' to avoid infinite loop
+            }
         }
     }
     LUC_LOG_PARSER_VERBOSE("parseAttributes: found " << attrs.size() << " attributes");
@@ -611,9 +617,9 @@ std::vector<ASTPtr<ParamAST>> Parser::parseParamGroup() {
         
         // Parse variadic '...' if present
         bool isVariadic = match(TokenType::VARIADIC);
-        savedPos = pos_; // Capture position AFTER consuming name + variadic, just before parseType()
 
-        
+        // Save position right before parsing the type
+        savedPos = pos_;
         TypePtr paramType = parseType();
         if (paramType->isa<UnknownTypeAST>() && pos_ == savedPos) {
             errorAt(DiagCode::E2005, "expected parameter type");
@@ -902,7 +908,6 @@ EnumVariantPtr Parser::parseEnumVariant() {
     variant->loc = loc;
 
     if (match(TokenType::ASSIGN)) {
-        // Accept INT_LITERAL or HEX_LITERAL
         if (check(TokenType::INT_LITERAL) || check(TokenType::HEX_LITERAL)) {
             Token valTok = advance();
             std::string raw = valTok.value;
@@ -913,13 +918,13 @@ EnumVariantPtr Parser::parseEnumVariant() {
             int base = (valTok.type == TokenType::HEX_LITERAL) ? 16 : 10;
             char *endPtr = nullptr;
             errno = 0;
-            long val = std::strtoll(raw.c_str(), &endPtr, base);
+            long long val = std::strtoll(raw.c_str(), &endPtr, base);
 
             if (endPtr != raw.c_str() && *endPtr == '\0' && errno != ERANGE) {
-                variant->explicitValue = static_cast<int>(val);
+                variant->explicitValue = val;
             } else {
                 error(locOf(valTok), DiagCode::E2009,
-                      "enum variant value '" + valTok.value + "' is not a valid integer");
+                      "enum variant value '" + valTok.value + "' is not a valid integer or overflows 64-bit");
             }
         } else {
             errorAt(DiagCode::E2009, "expected integer literal after '=' in enum variant");

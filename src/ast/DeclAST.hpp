@@ -387,8 +387,7 @@ struct EnumVariantAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::EnumVariant;
 
     InternedString name;
-    std::optional<int>
-        explicitValue; // only present when '= INT_LITERAL' was written
+    std::optional<int64_t> explicitValue; 
 
     explicit EnumVariantAST(InternedString n) : BaseAST(ASTKind::EnumVariant), name(n) {}
     void accept(ASTVisitor& v) override { v.visit(*this); }
