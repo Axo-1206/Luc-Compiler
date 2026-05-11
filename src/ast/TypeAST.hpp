@@ -346,10 +346,9 @@ struct PtrTypeAST : TypeAST {
 // ─────────────────────────────────────────────────────────────────────────────
 struct FuncSignature {
     std::vector<std::vector<ASTPtr<ParamAST>>> paramGroups;
-    TypePtr                  returnType;
-    bool                     isNullable   = false;
-    uint32_t                 qualifiers   = 0;
-    std::vector<InternedString> rawQualifiers;  // only needed during parsing
+    std::vector<TypePtr>                       returnTypes;
+    uint32_t                                   qualifiers   = 0;
+    std::vector<InternedString>                rawQualifiers;  // only needed during parsing
 
     // Zero‑cost helpers — direct bitmask test
     bool hasQualifier(uint32_t bit) const { return (qualifiers & bit) != 0; }

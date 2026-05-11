@@ -33,7 +33,7 @@
 //   TypeAST.hpp     — PrimitiveTypeAST, NamedTypeAST, FixedArrayTypeAST, ...
 //   DeclAST.hpp     — FuncDeclAST, StructDeclAST, ImplDeclAST, ...
 //   ExprAST.hpp     — LiteralExprAST, CallExprAST, PipelineExprAST, ...
-//   StmtAST.hpp     — BlockStmtAST, ForStmtAST, ParallelForStmtAST, ...
+//   StmtAST.hpp     — BlockStmtAST, ForStmtAST, ...
 //
 // BaseAST.hpp includes none of them — this keeps the include graph acyclic.
 // Each family header does:  #include "BaseAST.hpp"
@@ -135,8 +135,6 @@ enum class ASTKind : uint16_t {
     ReturnStmt,
     BreakStmt,
     ContinueStmt,
-    ParallelForStmt,
-    ParallelBlockStmt,
 
     // ── Pattern nodes ─────────────────────────────────────────────────────────
     BindPattern,
@@ -238,8 +236,6 @@ struct DoWhileStmtAST;
 struct ReturnStmtAST;
 struct BreakStmtAST;
 struct ContinueStmtAST;
-struct ParallelForStmtAST;
-struct ParallelBlockStmtAST;
 
 // Root
 struct ProgramAST;
@@ -416,8 +412,6 @@ struct ASTVisitor {
     virtual void visit(ReturnStmtAST&)          {}
     virtual void visit(BreakStmtAST&)           {}
     virtual void visit(ContinueStmtAST&)        {}
-    virtual void visit(ParallelForStmtAST&)     {}
-    virtual void visit(ParallelBlockStmtAST&)   {}
 
     // ── Root ──────────────────────────────────────────────────────────────────
     virtual void visit(ProgramAST&)             {}

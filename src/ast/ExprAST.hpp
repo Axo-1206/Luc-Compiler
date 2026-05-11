@@ -1015,7 +1015,7 @@ struct TypeConvExprAST : ExprAST {
 struct IntrinsicCallExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::IntrinsicCallExpr;
 
-    InternedString          intrinsicName;  // "sizeof", "memcpy", "sqrt", …
+    InternedString       intrinsicName;  // "sizeof", "memcpy", "sqrt", …
     TypePtr              typeArg;        // for #sizeof(T) / #alignof(T) — nullptr otherwise
     std::vector<ExprPtr> args;           // value arguments in order
 
