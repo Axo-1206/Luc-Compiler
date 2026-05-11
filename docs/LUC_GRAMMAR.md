@@ -49,12 +49,12 @@ actual_decl     := use_decl
 ### Entry Point (main)
 
 ```luc
-export const main () >> int = {
+export const main () -> int = {
     return 0
 }
 
 -- with command-line arguments
-export const main (args []string) >> int = {
+export const main (args []string) -> int = {
     return 0
 }
 ```
@@ -70,7 +70,7 @@ export const main (args []string) >> int = {
 
 ```luc
 @aot
-export const main () >> int = {
+export const main () -> int = {
     return 0
 }
 ```
@@ -162,14 +162,14 @@ generic_args    := '<' type { [','] type } '>'
 
 -- Function type: qualifiers live here in type aliases and parameter types.
 -- Anonymous function VALUES do not carry qualifiers (see Anonymous Functions).
-func_type       := [ qualifier_list ] param_group { param_group } [ '>>' return_list ]
+func_type       := [ qualifier_list ] param_group { param_group } [ '->' return_list ]
 
 qualifier_list  := { '~' IDENTIFIER }
 
 return_list     := return_type { ',' return_type }
 
 return_type     := type
-                 | param_group { param_group } '>>' return_list
+                 | param_group { param_group } '->' return_list
 ```
 
 ### Nullable Rules
@@ -189,19 +189,19 @@ let xs List<int>?  = nil     -- generic before ?, always
 let xs List<int?>  = nil     -- list of nullable int — different meaning
 
 -- nullable function binding
-let f  ~nullable (a int) >> int = nil
-let f  ~async ~nullable (a int) >> int = nil
+let f  ~nullable (a int) -> int = nil
+let f  ~async ~nullable (a int) -> int = nil
 
 -- function returning nullable value
-let f  (a int) >> int?  = { ... }
-let f  (a int) >> Vec2? = { ... }
+let f  (a int) -> int?  = { ... }
+let f  (a int) -> Vec2? = { ... }
 
 -- function returning nullable function — alias required
-type Transform = (v Vec2) >> Vec2
-let f  (a int) >> Transform? = { ... }
+type Transform = (v Vec2) -> Vec2
+let f  (a int) -> Transform? = { ... }
 
 -- ? is NEVER valid directly after an inline function type
--- let f (a int) >> ((b int) >> int)?   -- ERROR: use an alias
+-- let f (a int) -> ((b int) -> int)?   -- ERROR: use an alias
 ```
 
 ---
@@ -222,7 +222,7 @@ Every type is either **owned** or **borrowed**. Bare `T` = owned, `&T` = borrowe
 | String | `string` | heap-owned sequence | full deep copy |
 | Struct | `Vec2` `Player` … | inline / stack | full deep copy |
 | Named function | `add` `Vec2:normalize` | function pointer | pointer copy |
-| Closure | `add(10)` `(x int) >> int { … }` | heap-allocated env | copies reference to env |
+| Closure | `add(10)` `(x int) -> int { … }` | heap-allocated env | copies reference to env |
 
 ### Struct deep copy
 
@@ -312,7 +312,7 @@ functions, check for nil, but never dereference directly.
 
 ```luc
 @extern("malloc")
-const malloc (size uint64) >> *uint8?
+const malloc (size uint64) -> *uint8?
 
 let buf *uint8? = malloc(1024)
 if buf == nil { return 1 }
@@ -447,12 +447,12 @@ known qualifiers:
 **Not part of type identity** — qualifiers are ignored for type equality:
 
 ```luc
--- all three are the same type: (a int) >> int
-let f ~async    (a int) >> int = { ... }
-let g ~nullable (a int) >> int = nil
-let h           (a int) >> int = { ... }
+-- all three are the same type: (a int) -> int
+let f ~async    (a int) -> int = { ... }
+let g ~nullable (a int) -> int = nil
+let h           (a int) -> int = { ... }
 
-type Op = (a int) >> int
+type Op = (a int) -> int
 
 let op Op = f    -- valid
 let op Op = g    -- valid
@@ -463,9 +463,9 @@ let op Op = h    -- valid
 same-signature function to a qualified binding:
 
 ```luc
-let f ~async (a int) >> int = { ... }
+let f ~async (a int) -> int = { ... }
 
-let g (a int) >> int = { return a * 2 }
+let g (a int) -> int = { return a * 2 }
 f = g    -- valid: same signature. f still carries ~async after reassignment.
 ```
 
@@ -474,24 +474,24 @@ alphabetical:
 
 ```luc
 -- identical
-let f ~async ~nullable (a int) >> int = nil
-let f ~nullable ~async (a int) >> int = nil
+let f ~async ~nullable (a int) -> int = nil
+let f ~nullable ~async (a int) -> int = nil
 ```
 
 **Generics belong to the identifier, before qualifiers:**
 
 ```luc
 let parallelFor<T> ~parallel (items [*]T, body (item T)) = { ... }
-let fetch<T>       ~async    (url string) >> T = { ... }
+let fetch<T>       ~async    (url string) -> T = { ... }
 ```
 
 **Valid contexts for qualifiers:**
 
 ```
-function declaration       let f ~async (a int) >> int = { ... }
-parameter type             (task ~async () >> int)
-type alias                 type AsyncOp = ~async (a int) >> int
-inline return after >>     (a int) >> ~nullable (b int) >> int
+function declaration       let f ~async (a int) -> int = { ... }
+parameter type             (task ~async () -> int)
+type alias                 type AsyncOp = ~async (a int) -> int
+inline return after ->     (a int) -> ~nullable (b int) -> int
 ```
 
 > **Qualifiers are NOT valid on anonymous function values.** An anonymous
@@ -505,13 +505,13 @@ being passed:
 
 ```luc
 -- ~async on the parameter hints that task will be awaited inside run
-let run (task ~async () >> int) >> int = {
+let run (task ~async () -> int) -> int = {
     return await task()
 }
 
 -- both are valid — same underlying signature
-run((url string) >> int { return 42 })             -- no qualifier on value
-run((url string) >> int { return await fetch() })  -- ~async would be on declaration
+run((url string) -> int { return 42 })             -- no qualifier on value
+run((url string) -> int { return await fetch() })  -- ~async would be on declaration
 ```
 
 ### Call-Site Behavior
@@ -523,18 +523,18 @@ When the compiler sees a call to a `~async`-qualified binding, it requires
 callee's declaration for the `~async` qualifier:
 
 ```luc
-let fetch ~async (url string) >> string = { ... }
+let fetch ~async (url string) -> string = { ... }
 
 fetch("url")           -- ERROR: ~async binding must be called with await
 await fetch("url")     -- OK
 
 -- await is only valid inside a ~async function body
-let process ~async (url string) >> string = {
+let process ~async (url string) -> string = {
     let raw string = await fetch(url)    -- OK: fetch is ~async, process is ~async
     return raw
 }
 
-let bad (url string) >> string = {
+let bad (url string) -> string = {
     return await fetch(url)    -- ERROR: await inside non-async function body
 }
 ```
@@ -573,7 +573,7 @@ enforces these restrictions inside the body function argument:
 let parallelFor<T> ~parallel (items [*]T, body (item T)) = { ... }
 
 parallelFor(mesh.vertices, (vertex Vertex) {
-    vertex.pos = vertex.pos -> transform    -- OK: local to this iteration
+    vertex.pos = vertex.pos |> transform    -- OK: local to this iteration
     result = 5                              -- ERROR: writes to outer scope
     return                                  -- ERROR: return in parallel body
     await fetch()                           -- ERROR: await in parallel body
@@ -591,8 +591,8 @@ execution strategy:
 let parallelFor<T> ~parallel (items [*]T, body (item T)) = { ... }
 
 parallelFor(mesh.vertices, (vertex Vertex) {
-    vertex.pos    = vertex.pos    -> transform
-    vertex.normal = vertex.normal -> normalize
+    vertex.pos    = vertex.pos    |> transform
+    vertex.normal = vertex.normal |> normalize
 })
 
 -- task-parallel execution
@@ -633,10 +633,10 @@ if transform != nil {
 Since qualifiers are valid on function types, type aliases can carry them:
 
 ```luc
-type AsyncOp      = ~async    (a int) >> int
-type NullableOp   = ~nullable (a int) >> int
+type AsyncOp      = ~async    (a int) -> int
+type NullableOp   = ~nullable (a int) -> int
 type ParallelBody = ~parallel (item int)
-type AsyncMaybeOp = ~async ~nullable (a int) >> int
+type AsyncMaybeOp = ~async ~nullable (a int) -> int
 ```
 
 ---
@@ -644,12 +644,12 @@ type AsyncMaybeOp = ~async ~nullable (a int) >> int
 ## Function Signatures
 
 A function signature has three parts: qualifiers, parameter groups, and the
-return boundary `>>`.
+return boundary `->`.
 
 ```
 func_decl       := decl_keyword IDENTIFIER [ generic_params ]
                    [ qualifier_list ] param_group { param_group }
-                   [ '>>' return_list ]
+                   [ '->' return_list ]
                    '=' func_body
 
 qualifier_list  := { '~' IDENTIFIER }
@@ -665,7 +665,7 @@ variadic_param  := IDENTIFIER '...' type   -- e.g. args ...int
 return_list     := return_type { ',' return_type }
 
 return_type     := type
-                 | param_group { param_group } '>>' return_list
+                 | param_group { param_group } '->' return_list
                    -- inline curry function as return type
                    -- prefer type alias for anything non-trivial
 
@@ -673,12 +673,12 @@ func_body       := block
                  | anon_func
 ```
 
-### The Return Boundary `>>`
+### The Return Boundary `->`
 
-`>>` separates the parameter groups from the return types. Everything before
-`>>` is input, everything after `>>` is output.
+`->` separates the parameter groups from the return types. Everything before
+`->` is input, everything after `->` is output.
 
-**Void function** — omit `>>` entirely:
+**Void function** — omit `->` entirely:
 
 ```luc
 let log   (msg string)
@@ -688,22 +688,22 @@ let clear ()
 **Single return:**
 
 ```luc
-let add  (a int, b int) >> int
-let name (id int)       >> string
+let add  (a int, b int) -> int
+let name (id int)       -> string
 ```
 
-**Multiple return** — comma separated after `>>`:
+**Multiple return** — comma separated after `->`:
 
 ```luc
-let f (a int) >> int, string
-let g (src string) >> int, bool, string
+let f (a int) -> int, string
+let g (src string) -> int, bool, string
 ```
 
 > **Good practice — write each return type on its own line for complex signatures:**
 >
 > ```luc
 > let parse (src string)
->     >> int,
+>     -> int,
 >        string,
 >        bool
 > = {
@@ -717,28 +717,28 @@ Multiple parameter groups express curry. Each `()` group is one call step.
 The compiler desugars this into a function that returns another function.
 
 ```luc
--- give add an int, get back (b int) >> int
-let add (a int)(b int) >> int = { return a + b }
+-- give add an int, get back (b int) -> int
+let add (a int)(b int) -> int = { return a + b }
 
-add(10)       -- returns (b int) >> int
+add(10)       -- returns (b int) -> int
 add(10)(5)    -- returns 15
 
 -- deep curry
-let clamp (min int)(max int)(value int) >> int = {
+let clamp (min int)(max int)(value int) -> int = {
     if value < min { return min }
     if value > max { return max }
     return value
 }
 
-let clamp0to100 = clamp(0)(100)    -- (value int) >> int
+let clamp0to100 = clamp(0)(100)    -- (value int) -> int
 clamp0to100(42)                     -- 42
 clamp0to100(150)                    -- 100
 
--- chains naturally with -> and +>
+-- chains naturally with |> and +>
 let addTen = add(10)
-42 -> addTen -> string              -- "52"
+42 |> addTen |> string              -- "52"
 
-let process = add(10) +> string     -- (b int) >> string
+let process = add(10) +> string     -- (b int) -> string
 process(5)                           -- "15"
 ```
 
@@ -748,10 +748,10 @@ You always write the sugar form:
 
 ```luc
 -- what you write
-let add (a int)(b int) >> int = { return a + b }
+let add (a int)(b int) -> int = { return a + b }
 
 -- what the compiler produces internally (never write this yourself)
-let add (a int) >> (b int) >> int = { return (b int) >> int { return a + b } }
+let add (a int) -> (b int) -> int = { return (b int) -> int { return a + b } }
 ```
 
 To close over a local variable (not a parameter), write the anonymous function
@@ -759,18 +759,18 @@ explicitly:
 
 ```luc
 let multiplier int = 3
-let scale = (x int) >> int { return x * multiplier }
+let scale = (x int) -> int { return x * multiplier }
 ```
 
 ### Returned Curry Functions
 
 A return type can itself be a curry function type. The `,` separates top-level
-return items. Each `>>` belongs to its nearest preceding parameter group chain.
+return items. Each `->` belongs to its nearest preceding parameter group chain.
 
 ```luc
 let f (a int)
-    >> int,
-       (s string)(n float) >> int
+    -> int,
+       (s string)(n float) -> int
 = {
     ...
 }
@@ -779,17 +779,17 @@ let f (a int)
 **Reading this:**
 
 - `f` takes an `int`
-- The first `>>` is the return boundary for `f`
-- `f` returns two things: an `int`, and a curry function `(s string)(n float) >> int`
-- The second `>>` belongs to the inner function `(s string)(n float)`, not to `f`
+- The first `->` is the return boundary for `f`
+- `f` returns two things: an `int`, and a curry function `(s string)(n float) -> int`
+- The second `->` belongs to the inner function `(s string)(n float)`, not to `f`
 
-**Mental model — each `>>` is a scope wrapper:**
+**Mental model — each `->` is a scope wrapper:**
 
 ```
-f(int) >> (
+f(int) -> (
     int
     |
-    (s string)(n float) >> (
+    (s string)(n float) -> (
         int
     )
 )
@@ -798,10 +798,10 @@ f(int) >> (
 > **Good practice — use type aliases for complex return types:**
 >
 > ```luc
-> type FloatParser = (s string)(n float) >> int
+> type FloatParser = (s string)(n float) -> int
 >
 > let f (a int)
->     >> int,
+>     -> int,
 >        FloatParser
 > = {
 >     ...
@@ -815,34 +815,34 @@ qualifier context comes from the declaration or parameter type the anonymous
 function is assigned to, not from the function value itself.
 
 ```
-anon_func   := param_group { param_group } [ '>>' return_list ] block
+anon_func   := param_group { param_group } [ '->' return_list ] block
                -- NO qualifier_list
                -- qualifiers belong to declarations, parameter types, and aliases
 ```
 
 ```luc
 -- simple anonymous function
-let double = (x int) >> int { return x * 2 }
+let double = (x int) -> int { return x * 2 }
 
 -- anonymous function stored in an ~async binding
 -- the qualifier is on the binding, not on the value
-let fetch ~async (url string) >> string = (url string) >> string {
+let fetch ~async (url string) -> string = (url string) -> string {
     return await httpGet(url)
 }
 
 -- shorthand block body (preferred)
-let fetch ~async (url string) >> string = {
+let fetch ~async (url string) -> string = {
     return await httpGet(url)
 }
 
 -- anonymous function as argument — type is checked against parameter type
 -- the parameter type carries the qualifier, not the passed value
-let run (task ~async () >> int) >> int = {
+let run (task ~async () -> int) -> int = {
     return await task()
 }
 
-run(() >> int { return 42 })           -- valid: signature matches
-run(() >> int { return await fetch() }) -- also valid: body uses await correctly
+run(() -> int { return 42 })           -- valid: signature matches
+run(() -> int { return await fetch() }) -- also valid: body uses await correctly
                                         -- because fetch is ~async
 ```
 
@@ -862,51 +862,51 @@ run(() >> int { return await fetch() }) -- also valid: body uses await correctly
 let log (msg string)
 
 -- single return
-let add (a int, b int) >> int
+let add (a int, b int) -> int
 
 -- multiple return
-let f (a int) >> int, string
+let f (a int) -> int, string
 
 -- multiple return, formatted
 let parse (src string)
-    >> int,
+    -> int,
        string
 = { ... }
 
 -- curry
-let add (a int)(b int) >> int
+let add (a int)(b int) -> int
 
 -- deep curry
-let clamp (min int)(max int)(value int) >> int
+let clamp (min int)(max int)(value int) -> int
 
 -- curry with multiple return
-let f (a int)(b string) >> int, string
+let f (a int)(b string) -> int, string
 
 -- qualifiers
-let fetch ~async    (url string) >> string
-let find  ~nullable (items [*]int, pred (item int) >> bool) >> int
+let fetch ~async    (url string) -> string
+let find  ~nullable (items [*]int, pred (item int) -> bool) -> int
 
 -- generic (generic before qualifiers, always)
-let map<T, U> (items [*]T, f (item T) >> U) >> [*]U
+let map<T, U> (items [*]T, f (item T) -> U) -> [*]U
 
 -- returned curry function, formatted
 let f (a int)
-    >> int,
-       (s string)(n float) >> int
+    -> int,
+       (s string)(n float) -> int
 = { ... }
 
 -- nullable return value
-let f (a int) >> int?
+let f (a int) -> int?
 
 -- nullable function binding
-let f ~nullable (a int) >> int = nil
+let f ~nullable (a int) -> int = nil
 
 -- nullable returned function via alias
-type Transform  = (v Vec2) >> Vec2
-let f (a int) >> Transform? = { ... }
+type Transform  = (v Vec2) -> Vec2
+let f (a int) -> Transform? = { ... }
 
 -- curry returning nullable function inline
-let f (a int) >> ~nullable (b int) >> int
+let f (a int) -> ~nullable (b int) -> int
 ```
 
 ---
@@ -1044,15 +1044,15 @@ them:
 
 ```luc
 type ID           = int
-type AsyncOp      = ~async    (a int) >> int
-type NullableOp   = ~nullable (a int) >> int
-type Parser       = (src string) >> int, string
-type Step         = (a int)(b string) >> int
+type AsyncOp      = ~async    (a int) -> int
+type NullableOp   = ~nullable (a int) -> int
+type Parser       = (src string) -> int, string
+type Step         = (a int)(b string) -> int
 type ParallelBody = ~parallel (item int)
 
 -- nullable alias
-type Transform    = (v Vec2) >> Vec2
-let f (a int) >> Transform? = { ... }    -- Transform? = nullable Transform
+type Transform    = (v Vec2) -> Vec2
+let f (a int) -> Transform? = { ... }    -- Transform? = nullable Transform
 ```
 
 ---
@@ -1064,7 +1064,7 @@ trait_decl      := [ visibility_mod ] 'trait' IDENTIFIER [ generic_params ]
                    '{' { trait_method } '}'
 
 trait_method    := IDENTIFIER [ qualifier_list ] param_group { param_group }
-                   [ '>>' return_list ]
+                   [ '->' return_list ]
                    -- signature only — no '=' and no body
 ```
 
@@ -1079,20 +1079,20 @@ Rules:
 ```luc
 pub trait Drawable {
     draw   ()
-    bounds () >> Rect
+    bounds () -> Rect
 }
 
 pub trait Comparable<T> {
-    compareTo (other T) >> int
+    compareTo (other T) -> int
 }
 
 pub trait Hashable {
-    hash   () >> uint64
-    equals (other any) >> bool
+    hash   () -> uint64
+    equals (other any) -> bool
 }
 
 pub trait AsyncFetcher {
-    fetch ~async (url string) >> string
+    fetch ~async (url string) -> string
 }
 ```
 
@@ -1109,7 +1109,7 @@ visibility_mod  := 'pub' | 'export'
 trait_ref       := IDENTIFIER [ generic_args ]
 
 method_decl     := IDENTIFIER [ qualifier_list ] param_group { param_group }
-                   [ '>>' return_list ] '=' func_body
+                   [ '->' return_list ] '=' func_body
 ```
 
 Rules:
@@ -1123,21 +1123,21 @@ Rules:
 
 ```luc
 pub impl Vec2 {
-    length () >> float = {
+    length () -> float = {
         return @sqrt(x*x + y*y)
     }
 
-    dot (other Vec2) >> float = {
+    dot (other Vec2) -> float = {
         return x*other.x + y*other.y
     }
 
-    scale (factor float) >> Vec2 = {
+    scale (factor float) -> Vec2 = {
         return Vec2 { x = x * factor  y = y * factor }
     }
 }
 
 export impl Vec2 {
-    normalize () >> Vec2 = {
+    normalize () -> Vec2 = {
         let len float = Vec2:length()
         return Vec2 { x = x / len  y = y / len }
     }
@@ -1145,7 +1145,7 @@ export impl Vec2 {
 
 impl Vec2 {
     -- private helper, file-only
-    isZero () >> bool = {
+    isZero () -> bool = {
         return x == 0.0 and y == 0.0
     }
 }
@@ -1153,12 +1153,12 @@ impl Vec2 {
 -- trait conformance
 pub impl Circle : Drawable {
     draw   ()         = { ... }
-    bounds () >> Rect = { ... }
+    bounds () -> Rect = { ... }
 }
 
 -- async method
 pub impl HttpClient {
-    fetch ~async (url string) >> string = {
+    fetch ~async (url string) -> string = {
         return await httpGet(url)
     }
 }
@@ -1222,17 +1222,17 @@ let boiling Celsius    = Celsius { value = 100.0 }
 let hot     Fahrenheit = Fahrenheit(boiling)
 
 -- works as a pipeline step
-boiling -> Fahrenheit -> io.printl
+boiling |> Fahrenheit |> io.printl
 ```
 
 ---
 
-## Pipeline Operator `->`
+## Pipeline Operator `|>`
 
-`->` executes a chain left-to-right at runtime.
+`|>` executes a chain left-to-right at runtime.
 
 ```
-pipeline_expr   := pipeline_seed { '->' pipeline_step }
+pipeline_expr   := pipeline_seed { '|>' pipeline_step }
 
 pipeline_seed   := expr
 
@@ -1243,7 +1243,7 @@ pipeline_step   := IDENTIFIER
                  | anon_func
 ```
 
-| Step form | What `->` does | Nullability |
+| Step form | What `|>` does | Nullability |
 |---|---|---|
 | `fn` | calls `fn(upstream)` | must be non-nullable |
 | `Type:method` | calls `method(upstream)` | always safe |
@@ -1254,13 +1254,13 @@ pipeline_step   := IDENTIFIER
 ### The `!` argument pack annotation
 
 `fn(args)!` is not a function call — the `!` marks an intentionally incomplete
-argument list. The upstream value is injected as the first argument when `->` fires.
+argument list. The upstream value is injected as the first argument when `|>` fires.
 
 ```luc
-let scale (v Vec2, factor float) >> Vec2 = { ... }
+let scale (v Vec2, factor float) -> Vec2 = { ... }
 
-v -> scale(2.0)!     -- calls scale(v, 2.0)
-v -> scale(2.0)      -- ERROR: looks like a complete call, no place for upstream
+v |> scale(2.0)!     -- calls scale(v, 2.0)
+v |> scale(2.0)      -- ERROR: looks like a complete call, no place for upstream
 ```
 
 ### Data fields as pipeline steps
@@ -1270,23 +1270,23 @@ is non-nullable:
 
 ```luc
 struct Processor {
-    transform  (v Vec2) >> Vec2          -- non-nullable: safe as step
+    transform  (v Vec2) -> Vec2          -- non-nullable: safe as step
     onComplete ~nullable ()              -- nullable: must guard first
 }
 
 let p Processor = Processor { transform = Vec2:normalize }
 
-v -> p.transform               -- OK
-v -> p.onComplete              -- ERROR: onComplete is ~nullable
+v |> p.transform               -- OK
+v |> p.onComplete              -- ERROR: onComplete is ~nullable
 
 if p.onComplete != nil {
     p.onComplete()             -- OK: guarded
 }
 ```
 
-### `->` vs `+>` — key difference
+### `|>` vs `+>` — key difference
 
-| | `->` pipeline | `+>` composition |
+| | `|>` pipeline | `+>` composition |
 |---|---|---|
 | When | runtime | compile time |
 | Seed | required | none |
@@ -1310,8 +1310,8 @@ compose_operand := IDENTIFIER
 ```
 
 ```luc
-let f (a int)    >> string = { ... }
-let g (s string) >> bool   = { ... }
+let f (a int)    -> string = { ... }
+let g (s string) -> bool   = { ... }
 
 let h   = f +> g    -- valid: f returns string, g takes string
 let bad = g +> f    -- ERROR: g returns bool, f takes int
@@ -1332,8 +1332,8 @@ Generic functions must be explicitly instantiated before composing — type
 inference across `+>` is not supported:
 
 ```luc
-let doubleInt   (x int) >> int    = { ... }
-let intToString (x int) >> string = { ... }
+let doubleInt   (x int) -> int    = { ... }
+let intToString (x int) -> string = { ... }
 
 let process = doubleInt +> intToString    -- valid: both concrete
 ```
@@ -1352,7 +1352,7 @@ assign_op       := '=' | '+=' | '-=' | '*=' | '/=' | '^=' | '%='
 
 compose_expr    := pipeline_expr { '+>' compose_operand }
 
-pipeline_expr   := pipeline_seed { '->' pipeline_step }
+pipeline_expr   := pipeline_seed { '|>' pipeline_step }
 
 pipeline_seed   := logical_expr
 
@@ -1422,7 +1422,7 @@ arg_list        := expr { [','] expr }
 function until the awaited call resolves.
 
 ```luc
-let fetch ~async (url string) >> string = {
+let fetch ~async (url string) -> string = {
     return await httpGet(url)    -- httpGet must also be ~async
 }
 
@@ -1430,7 +1430,7 @@ let fetch ~async (url string) >> string = {
 let result string = await fetch("https://api.example.com")
 
 -- await is only valid inside a ~async body
-let bad (url string) >> string = {
+let bad (url string) -> string = {
     return await fetch(url)    -- ERROR: not inside ~async body
 }
 ```
@@ -1812,7 +1812,7 @@ let shifted uint32 = 1 << 4           -- 16
 | 9 | `and` | left |
 | 10 | `or` | left |
 | 11 | `??` | right |
-| 12 | `->` (pipeline) | left |
+| 12 | `|>` (pipeline) | left |
 | 13 | `+>` (composition) | left |
 | 14 | `=` `+=` `-=` `*=` `/=` `^=` `%=` `&&=` `\|\|=` `~^=` `<<=` `>>=` | right |
 | 15 (lowest) | `if ?? else` | right |
@@ -1874,20 +1874,20 @@ type identifiers. Runtime expressions are not valid inside attribute arguments.
 
 ```luc
 @extern("malloc")
-const malloc (size uint64) >> *uint8?
+const malloc (size uint64) -> *uint8?
 
 @extern("free")
 const free (ptr *uint8)
 
 @extern("printf", "C")
-const printf (fmt *uint8, args ...any) >> int
+const printf (fmt *uint8, args ...any) -> int
 
 @extern("vkCreateInstance")
 const vkCreateInstance (
     pInfo      *VkInstanceCreateInfo,
     pAllocator *VkAllocationCallbacks,
     pInstance  **VkInstance
-) >> uint32
+) -> uint32
 
 @extern("__stack_top")
 const stackTop *uint8
@@ -1963,7 +1963,7 @@ fallback_expr   := expr '??' expr
                    -- LHS is T (non-nil): result is T
                    -- LHS is nil or Error: result is RHS
 
-catch_step      := expr '->' 'catch' '(' identifier ')' block
+catch_step      := expr '|>' 'catch' '(' identifier ')' block
                    -- upstream is T: block skipped, T passed along
                    -- upstream is Error: identifier bound to Error, block executes
 ```
@@ -2067,7 +2067,7 @@ doc_comment     := '/--' { ' -' line_content } '--/'
 ```luc
 -- normalizes the vector in place
 -- only call after the vector has been validated
-let normalize (v Vec2) >> Vec2 = { ... }    -- stacked attaches
+let normalize (v Vec2) -> Vec2 = { ... }    -- stacked attaches
 
 let maxVertices int = 65536   -- Vulkan hard limit   -- trailing attaches
 
@@ -2077,7 +2077,7 @@ let maxVertices int = 65536   -- Vulkan hard limit   -- trailing attaches
  - Returns `|a| * |b| * cos(angle)`.
 --/
 pub impl Vec2 {
-    dot (other Vec2) >> float = { ... }    -- block attaches
+    dot (other Vec2) -> float = { ... }    -- block attaches
 }
 ```
 

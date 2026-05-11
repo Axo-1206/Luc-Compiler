@@ -651,6 +651,10 @@ Token Lexer::getNextToken() {
         return makeToken(TokenType::AMPERSAND, "&");
 
     case '|':
+        if (match('>')) {
+            LUC_LOG_LEXER_EXTREME("getNextToken: '|>' (pipeline)");
+            return makeToken(TokenType::PIPELINE, "|>");
+        }
         if (match('|')) {
             if (match('=')) {
                 LUC_LOG_LEXER_EXTREME("getNextToken: '||='");

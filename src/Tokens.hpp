@@ -99,10 +99,11 @@ enum class TokenType {
     FALSE, // false
 
     // ─── Operators ────────────────────────────────────────────────────────────
-    ASSIGN,  // =
-    ARROW,   // ->        - runtime pipeline: fn1(args) -> fn2 -> fn3
-    FAT_ARROW,    // => (match arm)
-    COMPOSE, // +>        - compile-time function composition: f +> g +> h
+    ASSIGN,         // =
+    ARROW,          // ->        - function return boundary (return type separator)
+    FAT_ARROW,      // =>        - match arm: case 1 =>
+    COMPOSE,        // +>        - compile-time function composition: f +> g +> h
+    PIPELINE,       // |>        - runtime pipeline operator: value |> fn1 |> fn2
 
     // Nullable operators
     QUESTION,          // ?      - nullable type suffix: int?
