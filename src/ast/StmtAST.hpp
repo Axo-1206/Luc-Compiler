@@ -450,43 +450,64 @@ struct ContinueStmtAST : StmtAST {
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MultiAssignStmtAST
-//
-// Assigns multiple values to multiple variables in a single statement.
-//   let x int, y int, z int = getCoordinates()
-//   const w int, h int = getScreenSize()
+// MultiVarDeclAST – multiple variable declaration (with let/const)
 //
 // Grammar:
 //   multi_assign := decl_keyword var_spec { ',' var_spec } '=' expr
 //   var_spec     := IDENTIFIER type_ann
 //   decl_keyword := 'let' | 'const'
 //
-// Key rules (enforced by the semantic pass):
-//   - All variables share the same keyword (all 'let' or all 'const').
-//   - Each variable has an explicit type annotation (no type inference).
-//   - The right‑hand side expression must return exactly as many values
-//     as there are variables, and each value must be assignable to the
-//     corresponding variable's type.
-//   - The statement is only valid at block scope, not at top level.
-//   - Variables are introduced into the current scope after this statement.
-//   - For 'const' variables, the right‑hand side must be a compile‑time
-//     constant expression.
+// Introduces new variables into the current scope. All variables share the
+// same keyword. Each variable has an explicit type. The RHS must be a single
+// expression that returns as many values as there are variables.
 //
-// Example:
-//   let q int, r int = divmod(10, 3)   // q = 3, r = 1
+// Examples:
+//   let q int, r int = divmod(10, 3)
+//   const w int, h int = getScreenSize()
 //
-// vars — sequence of (name, type) pairs, in the order they appear.
-// rhs  — the expression that produces the values to assign.
-// keyword — 'let' or 'const' applied to all declared variables.
+// keyword – let or const
+// vars    – list of (name, type) pairs
+// rhs     – initialiser expression
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct MultiVarDeclAST : StmtAST {
+    static constexpr ASTKind staticKind = ASTKind::MultiVarDecl;
+
+    DeclKeyword keyword;
+    std::vector<std::pair<InternedString, TypePtr>> vars;
+    ExprPtr rhs;
+
+    MultiVarDeclAST() : StmtAST(ASTKind::MultiVarDecl) {}
+
+    void accept(ASTVisitor& v) override { v.visit(*this); }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiAssignStmtAST – multi‑assignment to existing variables (no let/const)
+//
+// Grammar:
+//   multi_assign_stmt := expr_lhs { ',' expr_lhs } '=' expr
+//   expr_lhs          := IDENTIFIER | expr '.' IDENTIFIER | expr '[' expr ']'
+//
+// Reassigns multiple lvalues from a single RHS expression that returns
+// as many values as there are lhs expressions.
+//
+// Examples:
+//   a, b = f()
+//   x.y, arr[i] = g()
+//   p.x, q.y = h()
+//
+// lhs – vector of expressions, each must be an assignable lvalue.
+// rhs – the single expression producing the values to assign.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct MultiAssignStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::MultiAssignStmt;
 
-    DeclKeyword keyword;                          // let or const
-    std::vector<std::pair<InternedString, TypePtr>> vars;   // (name, type)
-    ExprPtr rhs;                                  // source expression
+    std::vector<ExprPtr> lhs;   // left‑hand side lvalues
+    ExprPtr rhs;                // right‑hand side expression (single)
 
     MultiAssignStmtAST() : StmtAST(ASTKind::MultiAssignStmt) {}
+
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };

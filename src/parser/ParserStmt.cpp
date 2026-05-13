@@ -33,14 +33,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 StmtPtr Parser::parseStmt() {
     LUC_LOG_STMT_VERBOSE("parseStmt: token='" << peek().value << "'");
-    
-    // ── Local declarations or multi‑assignment ─────────────────────────────
+
+    // ── Multi‑assignment (reassignment) – safe lookahead ──────────────
+    if (looksLikeMultiAssignStart()) {
+        LUC_LOG_STMT_VERBOSE("Parse multiple asignment - no let/cosnt");
+        return parseMultiAssignStmt();
+    }
+
+    // ── Local declarations (single or multi) ───────────────────────────────
     if (checkAny({ TokenType::LET, TokenType::CONST })) {
-        // Lookahead: parse the first variable spec (keyword + name + type)
-        // and see if a comma follows. If yes, it's multi‑assignment.
+        // Save position for lookahead
         std::size_t savedPos = pos_;
 
-        // Consume keyword and name temporarily
+        // Tentatively parse the first variable spec to check for a comma
         if (!checkAny({TokenType::LET, TokenType::CONST})) {
             // Not a keyword – shouldn't happen
             return parseLocalDecl();
@@ -60,15 +65,15 @@ StmtPtr Parser::parseStmt() {
         pos_ = savedPos; // restore position
 
         if (hasIdentifier && hasType && nextIsComma) {
-            // It's a multi‑assignment statement
-            return parseMultiAssign();
+            // It's a multi‑variable declaration
+            return parseMultiVarDecl();
         } else {
-            // Regular local variable or function declaration
+            // Single variable or function declaration
             return parseLocalDecl();
         }
     }
 
-    // ── 'pub' inside a block ──────────────────────────────────────────────────
+    // ── 'pub' inside a block ────────────────────────────────────────────────
     if (check(TokenType::PUB)) {
         errorAt(DiagCode::E2006, "'pub' is not valid inside a block");
         advance();
@@ -119,34 +124,34 @@ StmtPtr Parser::parseStmt() {
 }
 
 /**
-* @brief Parses a multi‑assignment statement.
-*
-* Grammar:
-*   multi_assign := decl_keyword var_spec { ',' var_spec } '=' expr
-*   var_spec     := IDENTIFIER type_ann
-*   decl_keyword := 'let' | 'const'
-*
-* All variables share a single keyword and each has an explicit type.
-* The right‑hand side is a single expression that must return as many
-* values as there are variables (e.g., a function with multiple returns).
-*
-* Examples:
-*   let q int, r int     = divmod(10, 3)
-*   const w int, h int  = getScreenSize()
-*
-* @return A MultiAssignStmtAST node, or nullptr on error.
-*
-* @related parseStmt()      – dispatches to this function when a comma
-*                              follows the first variable's type.
-*          parseLocalDecl() – handles single variable/function declarations.
-*
-* @semantics The semantic pass will:
-*   - Verify that the RHS produces exactly as many values as variables.
-*   - Check type compatibility per variable.
-*   - Ensure `const` RHS is a compile‑time constant.
-*   - Introduce variables into the current scope.
-*/
-ASTPtr<MultiAssignStmtAST> Parser::parseMultiAssign() {
+ * @brief Parses a multi‑variable declaration statement (with let/const).
+ *
+ * Grammar:
+ *   multi_assign := decl_keyword var_spec { ',' var_spec } '=' expr
+ *   var_spec     := IDENTIFIER type_ann
+ *   decl_keyword := 'let' | 'const'
+ *
+ * All variables share a single keyword and each has an explicit type.
+ * The right‑hand side must be a single expression that returns exactly
+ * as many values as there are variables (e.g., a function with multiple returns).
+ *
+ * Examples:
+ *   let q int, r int     = divmod(10, 3)
+ *   const w int, h int  = getScreenSize()
+ *
+ * @return A MultiVarDeclAST node, or nullptr on error.
+ *
+ * @related parseStmt()      – dispatches to this function when it sees
+ *                              'let'/'const', an identifier, a type, and then a comma.
+ *          parseLocalDecl() – handles single variable/function declarations.
+ *
+ * @semantics The semantic pass will:
+ *   - Verify that the RHS produces exactly as many values as variables.
+ *   - Check type compatibility per variable.
+ *   - Ensure `const` RHS is a compile‑time constant.
+ *   - Introduce variables into the current scope.
+ */
+ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl() {
     SourceLocation loc = currentLoc();
 
     // Single keyword at the start
@@ -191,38 +196,90 @@ ASTPtr<MultiAssignStmtAST> Parser::parseMultiAssign() {
     }
 
     // Must have '='
+    consume(TokenType::ASSIGN, DiagCode::E2001, "expected '=' in multi-assignment");
+    ExprPtr rhs = parseExpr();
+    if (!rhs) {
+        errorAt(DiagCode::E2008, "expected expression after '='");
+        return nullptr;
+    }
+
+    auto node = arena_.make<MultiVarDeclAST>();
+    node->loc = loc;
+    node->keyword = kw;
+    node->vars = std::move(vars);
+    node->rhs = std::move(rhs);
+    return node;
+}
+
+/**
+ * @brief Parses a multi‑assignment statement to existing variables (reassignment).
+ *
+ * Grammar:
+ *   multi_assign_stmt := expr_lhs { ',' expr_lhs } '=' expr
+ *   expr_lhs          := IDENTIFIER | expr '.' IDENTIFIER | expr '[' expr ']'
+ *
+ * The left‑hand side expressions must be assignable lvalues (variables,
+ * field accesses, indices). The right‑hand side is a single expression that
+ * must return exactly as many values as there are left‑hand side expressions.
+ *
+ * Examples:
+ *   a, b = f()
+ *   p.x, arr[i] = g()
+ *
+ * @return A MultiAssignStmtAST node, or nullptr on error.
+ *
+ * @related parseStmt() – dispatches to this function when a statement starts
+ *          with an identifier (or eventually any lvalue) followed by a comma
+ *          and then more expressions before '='.
+ *
+ * @semantics The semantic pass will:
+ *   - Verify that each left‑hand side is a valid lvalue (not a const, not a literal, etc.).
+ *   - Check that the RHS returns the same number of values.
+ *   - Perform type compatibility per left‑hand side.
+ *   - If any left‑hand side is a const variable, emit an error.
+ */
+ASTPtr<MultiAssignStmtAST> Parser::parseMultiAssignStmt() {
+    SourceLocation loc = currentLoc();
+    std::vector<ExprPtr> lhs;
+
+    // Parse the first lvalue using the full lvalue parser
+    ExprPtr first = parseLvalue();
+    if (!first) {
+        errorAt(DiagCode::E2008, "expected left‑hand side expression");
+        return nullptr;
+    }
+    lhs.push_back(std::move(first));
+
+    // Parse additional lvalues after commas
+    while (check(TokenType::COMMA)) {
+        advance(); // consume ','
+        ExprPtr next = parseLvalue();
+        if (!next) {
+            errorAt(DiagCode::E2008, "expected left‑hand side expression after comma");
+            break;
+        }
+        lhs.push_back(std::move(next));
+    }
+
+    // Must have '='
     if (!check(TokenType::ASSIGN)) {
-        errorAt(DiagCode::E2001, "expected '=' in multi-assignment");
-        // Skip to a safe point: next semicolon or closing brace
+        errorAt(DiagCode::E2001, "expected '=' in multiple assignment, found: " + peek().value);
         while (!isAtEnd() && !check(TokenType::SEMICOLON) && !check(TokenType::RBRACE))
             advance();
         return nullptr;
     }
     advance(); // consume '='
 
-    // Parse RHS with error recovery
-    ExprPtr rhs = parseExpr();
+    // Parse RHS expression (allow struct literals)
+    ExprPtr rhs = parseExpr(true);
     if (!rhs) {
-        errorAt(DiagCode::E2008, "expected expression after '=' in multi-assignment");
-        // Recover: skip to semicolon or closing brace
-        while (!isAtEnd() && !check(TokenType::SEMICOLON) && !check(TokenType::RBRACE))
-            advance();
-        return nullptr;
-    }
-
-    // If after RHS we see a comma, the user probably tried to write multiple expressions.
-    // This is invalid; skip to the end of the statement.
-    if (check(TokenType::COMMA)) {
-        errorAt(DiagCode::E2008, "unexpected comma after expression; the right-hand side of a multi-assignment must be a single expression that returns multiple values (e.g., a function call). Did you forget parentheses?");
-        while (!isAtEnd() && !check(TokenType::SEMICOLON) && !check(TokenType::RBRACE))
-            advance();
+        errorAt(DiagCode::E2008, "expected expression after '='");
         return nullptr;
     }
 
     auto node = arena_.make<MultiAssignStmtAST>();
     node->loc = loc;
-    node->keyword = kw;
-    node->vars = std::move(vars);
+    node->lhs = std::move(lhs);
     node->rhs = std::move(rhs);
     return node;
 }
@@ -237,7 +294,7 @@ ASTPtr<MultiAssignStmtAST> Parser::parseMultiAssign() {
 ASTPtr<BlockStmtAST> Parser::parseBlock() {
     LUC_LOG_STMT("parseBlock");
     SourceLocation loc = currentLoc();
-    consume(TokenType::LBRACE, "expected '{'");
+    consume(TokenType::LBRACE, "expected '{', found: " + peek().value);
 
     auto block = arena_.make<BlockStmtAST>();
     block->loc = loc;
@@ -293,7 +350,7 @@ ASTPtr<DeclStmtAST> Parser::parseLocalDecl() {
     DeclKeyword kw = (kwTok.type == TokenType::LET) ? DeclKeyword::Let : DeclKeyword::Const;
 
     if (!check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected name after '" + kwTok.value + "'");
+        errorAt(DiagCode::E2003, "expected name after '" + kwTok.value + "', found: " + peek().value);
         return nullptr;  // DeclStmtAST can't be unknown - caller handles nullptr
     }
 
@@ -332,13 +389,13 @@ ASTPtr<DeclStmtAST> Parser::parseLocalDecl() {
 ASTPtr<IfStmtAST> Parser::parseIfStmt() {
     LUC_LOG_STMT("parseIfStmt");
     SourceLocation loc = currentLoc();
-    consume(TokenType::IF, "expected 'if'");
+    consume(TokenType::IF, "expected 'if', found: " + peek().value);
 
     // Condition — parsed as a full expression, but disallow top-level struct literals
     // to avoid ambiguity with the following block.
     ExprPtr condition = parseExpr(false);
     if (!condition) {
-        errorAt(DiagCode::E2008, "expected condition after 'if'");
+        errorAt(DiagCode::E2008, "expected condition after 'if', found: " + peek().value);
         auto unknownExpr = arena_.make<UnknownExprAST>();
         unknownExpr->loc = loc;
 
@@ -353,7 +410,7 @@ ASTPtr<IfStmtAST> Parser::parseIfStmt() {
     }
 
     if (!check(TokenType::LBRACE)) {
-        errorAt(DiagCode::E2001, "expected '{' after if condition");
+        errorAt(DiagCode::E2001, "expected '{' after if condition, found: " + peek().value);
 
         auto unknownStmt = arena_.make<UnknownStmtAST>();
         unknownStmt->loc = loc;  
@@ -383,7 +440,7 @@ ASTPtr<IfStmtAST> Parser::parseIfStmt() {
             node->elseBranch = parseBlock();
             LUC_LOG_STMT_VERBOSE("parseIfStmt: else block");
         } else {
-            errorAt(DiagCode::E2001, "expected 'if' or '{' after 'else'");
+            errorAt(DiagCode::E2001, "expected 'if' or '{' after 'else', found: " + peek().value);
         }
     } else {
         LUC_LOG_STMT_EXTREME("parseIfStmt: no else clause");
@@ -411,16 +468,16 @@ ASTPtr<IfStmtAST> Parser::parseIfStmt() {
 ASTPtr<SwitchStmtAST> Parser::parseSwitchStmt() {
     LUC_LOG_STMT("parseSwitchStmt");
     SourceLocation loc = currentLoc();
-    consume(TokenType::SWITCH, "expected 'switch'");
+    consume(TokenType::SWITCH, "expected 'switch', found: " + peek().value);
 
     ExprPtr subject = parseExpr(false); // disallow struct literal
     if (!subject) {
-        errorAt(DiagCode::E2008, "expected expression after 'switch'");
+        errorAt(DiagCode::E2008, "expected expression after 'switch', found: " + peek().value);
         return nullptr;
     }
     LUC_LOG_STMT_VERBOSE("parseSwitchStmt: subject parsed");
 
-    consume(TokenType::LBRACE, "expected '{' after switch subject");
+    consume(TokenType::LBRACE, "expected '{' after switch subject, found: " + peek().value);
 
     auto node = arena_.make<SwitchStmtAST>();
     node->loc = loc;
@@ -447,22 +504,22 @@ ASTPtr<SwitchStmtAST> Parser::parseSwitchStmt() {
             node->defaultLoc = currentLoc();
             LUC_LOG_STMT_VERBOSE("parseSwitchStmt: parsing default clause");
             advance();  // consume 'default'
-            consume(TokenType::COLON, DiagCode::E2001, "expected ':' after 'default'");
+            consume(TokenType::COLON, DiagCode::E2001, "expected ':' after 'default', found: " + peek().value);
             // Default body is a block (the grammar says { stmt } but we always
             // parse it as a full block for uniformity).
             if (!check(TokenType::LBRACE)) {
-                errorAt(DiagCode::E2001, "expected '{' to start default body");
+                errorAt(DiagCode::E2001, "expected '{' to start default body, found: " + peek().value);
             } else {
                 node->defaultBody = parseBlock();
             }
             continue;
         }
 
-        errorAt(DiagCode::E2002, "expected 'case' or 'default' inside switch block");
+        errorAt(DiagCode::E2002, "expected 'case' or 'default' inside switch block, found: " + peek().value);
         synchronize();
     }
 
-    consume(TokenType::RBRACE, "expected '}' to close switch statement");
+    consume(TokenType::RBRACE, "expected '}' to close switch statement, found: " + peek().value);
     LUC_LOG_STMT("parseSwitchStmt: " << caseCount << " cases, hasDefault=" << (node->defaultBody != nullptr));
     return node;
 }
@@ -482,19 +539,19 @@ ASTPtr<SwitchStmtAST> Parser::parseSwitchStmt() {
 SwitchCasePtr Parser::parseSwitchCase() {
     LUC_LOG_STMT_VERBOSE("parseSwitchCase");
     SourceLocation loc = currentLoc();
-    consume(TokenType::CASE, "expected 'case'");
+    consume(TokenType::CASE, "expected 'case', found: " + peek().value);
 
     auto sc = arena_.make<SwitchCaseAST>();
     sc->loc = loc;
 
     // Parse the first value (required unless colon follows immediately)
     if (check(TokenType::COLON)) {
-        errorAt(DiagCode::E2001, "expected case value before ':'");
+        errorAt(DiagCode::E2001, "expected case value before ':', found: " + peek().value);
     } else {
         std::size_t savedPos = pos_;
         ExprPtr val = parsePrattExpr(0);
         if (pos_ == savedPos) {
-            errorAt(DiagCode::E2002, "expected case value");
+            errorAt(DiagCode::E2002, "expected case value, found: " + peek().value);
             if (!isAtEnd()) advance(); // consume the offending token to avoid infinite loop
         } else if (val) {  // val is always non-null, but keep the guard
             if (check(TokenType::RANGE)) {
@@ -514,7 +571,7 @@ SwitchCasePtr Parser::parseSwitchCase() {
         ExprPtr val = parsePrattExpr(0);
         if (pos_ == savedPos) {
             // No progress – skip the token and break to avoid infinite loop
-            errorAt(DiagCode::E2002, "expected case value after comma");
+            errorAt(DiagCode::E2002, "expected case value after comma, found: " + peek().value);
             advance(); // consume the offending token to recover
             break;
         }
@@ -527,10 +584,10 @@ SwitchCasePtr Parser::parseSwitchCase() {
         }
     }
 
-    consume(TokenType::COLON, DiagCode::E2001, "expected ':' after case values");
+    consume(TokenType::COLON, DiagCode::E2001, "expected ':' after case values, found: " + peek().value);
 
     if (!check(TokenType::LBRACE)) {
-        errorAt(DiagCode::E2001, "expected '{' to start case body");
+        errorAt(DiagCode::E2001, "expected '{' to start case body, found: " + peek().value);
     } else {
         sc->body = parseBlock();
     }
@@ -553,10 +610,10 @@ SwitchCasePtr Parser::parseSwitchCase() {
 ASTPtr<ForStmtAST> Parser::parseForStmt() {
     LUC_LOG_STMT("parseForStmt");
     SourceLocation loc = currentLoc();
-    consume(TokenType::FOR, "expected 'for'");
+    consume(TokenType::FOR, "expected 'for', found: " + peek().value);
 
     if (!check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected iteration variable name after 'for'");
+        errorAt(DiagCode::E2003, "expected iteration variable name after 'for', found: " + peek().value);
         return nullptr;
     }
     std::string varName = advance().value;
@@ -567,18 +624,18 @@ ASTPtr<ForStmtAST> Parser::parseForStmt() {
     if (!check(TokenType::IN)) {
         varType = parseType();
         if (!varType) {
-            errorAt(DiagCode::E2005, "expected 'in' or explicit type after iteration variable name");
+            errorAt(DiagCode::E2005, "expected 'in' or explicit type after iteration variable name, found: " + peek().value);
             return nullptr;
         }
         LUC_LOG_STMT_VERBOSE("parseForStmt: explicit var type");
     }
 
-    consume(TokenType::IN, "expected 'in' after iteration variable");
+    consume(TokenType::IN, "expected 'in' after iteration variable, found: " + peek().value);
 
     // Parse the iterable expression (collection or RangeExprAST).
     ExprPtr iterable = parseExpr(false);
     if (!iterable) {
-        errorAt(DiagCode::E2008, "expected iterable expression after 'in'");
+        errorAt(DiagCode::E2008, "expected iterable expression after 'in', found: " + peek().value);
         return nullptr;
     }
 
@@ -592,7 +649,7 @@ ASTPtr<ForStmtAST> Parser::parseForStmt() {
         if (match(TokenType::RANGE)) {
             step = parseExpr();
             if (!step) {
-                errorAt(DiagCode::E2008, "expected step expression after '..'");
+                errorAt(DiagCode::E2008, "expected step expression after '..', found: " + peek().value);
                 return nullptr;
             }
             LUC_LOG_STMT_VERBOSE("parseForStmt: with step");
@@ -635,17 +692,17 @@ ASTPtr<ForStmtAST> Parser::parseForStmt() {
 ASTPtr<WhileStmtAST> Parser::parseWhileStmt() {
     LUC_LOG_STMT("parseWhileStmt");
     SourceLocation loc = currentLoc();
-    consume(TokenType::WHILE, "expected 'while'");
+    consume(TokenType::WHILE, "expected 'while', found: " + peek().value);
 
     ExprPtr condition = parseExpr(false);
     if (!condition) {
-        errorAt(DiagCode::E2008, "expected condition after 'while'");
+        errorAt(DiagCode::E2008, "expected condition after 'while', found: " + peek().value);
         return nullptr;
     }
     LUC_LOG_STMT_VERBOSE("parseWhileStmt: condition parsed");
 
     if (!check(TokenType::LBRACE)) {
-        errorAt(DiagCode::E2001, "expected '{' to start while loop body");
+        errorAt(DiagCode::E2001, "expected '{' to start while loop body, found: " + peek().value);
         return nullptr;
     }
 
@@ -674,10 +731,10 @@ ASTPtr<WhileStmtAST> Parser::parseWhileStmt() {
 ASTPtr<DoWhileStmtAST> Parser::parseDoWhileStmt() {
     LUC_LOG_STMT("parseDoWhileStmt");
     SourceLocation loc = currentLoc();
-    consume(TokenType::DO, "expected 'do'");
+    consume(TokenType::DO, "expected 'do', found: " + peek().value);
 
     if (!check(TokenType::LBRACE)) {
-        errorAt(DiagCode::E2001, "expected '{' after 'do'");
+        errorAt(DiagCode::E2001, "expected '{' after 'do', found: " + peek().value);
         return nullptr;
     }
 
@@ -687,11 +744,11 @@ ASTPtr<DoWhileStmtAST> Parser::parseDoWhileStmt() {
     --loopDepth_;
     LUC_LOG_STMT_VERBOSE("parseDoWhileStmt: exited loop body");
 
-    consume(TokenType::WHILE, "expected 'while' after do body");
+    consume(TokenType::WHILE, "expected 'while' after do body, found: " + peek().value);
 
     ExprPtr condition = parseExpr(false);
     if (!condition) {
-        errorAt(DiagCode::E2008, "expected condition after 'while' in do-while loop");
+        errorAt(DiagCode::E2008, "expected condition after 'while' in do-while loop, found: " + peek().value);
         return nullptr;
     }
     LUC_LOG_STMT_VERBOSE("parseDoWhileStmt: condition parsed");
@@ -716,7 +773,7 @@ ASTPtr<DoWhileStmtAST> Parser::parseDoWhileStmt() {
 ASTPtr<ReturnStmtAST> Parser::parseReturnStmt() {
     LUC_LOG_STMT("parseReturnStmt");
     SourceLocation loc = currentLoc();
-    consume(TokenType::RETURN, "expected 'return'");
+    consume(TokenType::RETURN, "expected 'return', found: " + peek().value);
 
     if (parallelDepth_ > 0) {
         LUC_LOG_STMT("parseReturnStmt: ERROR - return inside parallel body");
@@ -755,7 +812,7 @@ ASTPtr<ReturnStmtAST> Parser::parseReturnStmt() {
             std::size_t savedPos = pos_;
             ExprPtr expr = parseExpr();
             if (pos_ == savedPos) {
-                errorAt(DiagCode::E2008, "expected expression after 'return'");
+                errorAt(DiagCode::E2008, "expected expression after 'return', found: " + peek().value);
                 // Consume the offending token to avoid infinite loop
                 if (!isAtEnd()) advance();
                 // Do not break – maybe there are more expressions after an error? Better to break.
@@ -776,7 +833,7 @@ ASTPtr<ReturnStmtAST> Parser::parseReturnStmt() {
 ASTPtr<BreakStmtAST> Parser::parseBreakStmt() {
     LUC_LOG_STMT("parseBreakStmt");
     SourceLocation loc = currentLoc();
-    consume(TokenType::BREAK, "expected 'break'");
+    consume(TokenType::BREAK, "expected 'break', found: " + peek().value);
 
     if (loopDepth_ == 0) {
         LUC_LOG_STMT("parseBreakStmt: ERROR - break outside loop");
@@ -802,7 +859,7 @@ ASTPtr<BreakStmtAST> Parser::parseBreakStmt() {
 ASTPtr<ContinueStmtAST> Parser::parseContinueStmt() {
     LUC_LOG_STMT("parseContinueStmt");
     SourceLocation loc = currentLoc();
-    consume(TokenType::CONTINUE, "expected 'continue'");
+    consume(TokenType::CONTINUE, "expected 'continue', found: " + peek().value);
 
     if (loopDepth_ == 0) {
         LUC_LOG_STMT("parseContinueStmt: ERROR - continue outside loop");

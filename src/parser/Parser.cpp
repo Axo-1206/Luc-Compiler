@@ -962,6 +962,35 @@ bool Parser::looksLikeDeclStart() const {
     }
 }
 
+bool Parser::looksLikeMultiAssignStart() const {
+    std::size_t i = pos_;
+    // Skip any initial comment tokens
+    while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
+                                  tokens_[i].type == TokenType::DOC_COMMENT))
+        ++i;
+    if (i >= tokens_.size()) return false;
+    // First token must be an identifier (simplest case)
+    if (tokens_[i].type != TokenType::IDENTIFIER) return false;
+    ++i;
+    // Skip comments again
+    while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
+                                  tokens_[i].type == TokenType::DOC_COMMENT))
+        ++i;
+    if (i >= tokens_.size()) return false;
+    // Must be a comma
+    if (tokens_[i].type != TokenType::COMMA) return false;
+    // Scan forward until we find '=', ';', '{', '}', or EOF
+    while (i < tokens_.size()) {
+        TokenType tt = tokens_[i].type;
+        if (tt == TokenType::ASSIGN) return true;
+        if (tt == TokenType::SEMICOLON || tt == TokenType::LBRACE || tt == TokenType::RBRACE ||
+            tt == TokenType::EOF_TOKEN)
+            return false;
+        ++i;
+    }
+    return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // parse()  — program root
 //

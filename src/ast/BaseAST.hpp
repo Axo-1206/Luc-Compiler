@@ -135,6 +135,7 @@ enum class ASTKind : uint16_t {
     ReturnStmt,
     BreakStmt,
     ContinueStmt,
+    MultiVarDecl,
     MultiAssignStmt,
 
     // ── Pattern nodes ─────────────────────────────────────────────────────────
@@ -237,6 +238,7 @@ struct DoWhileStmtAST;
 struct ReturnStmtAST;
 struct BreakStmtAST;
 struct ContinueStmtAST;
+struct MultiVarDeclAST;
 struct MultiAssignStmtAST;
 
 // Root
@@ -414,6 +416,7 @@ struct ASTVisitor {
     virtual void visit(ReturnStmtAST&)          {}
     virtual void visit(BreakStmtAST&)           {}
     virtual void visit(ContinueStmtAST&)        {}
+    virtual void visit(MultiVarDeclAST&)        {}
     virtual void visit(MultiAssignStmtAST&)     {}
 
     // ── Root ──────────────────────────────────────────────────────────────────

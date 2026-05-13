@@ -487,6 +487,10 @@ private:
     // One field entry inside a struct pattern: IDENTIFIER [ ':' pattern ]
     FieldPatternPtr parseFieldPattern();
 
+    // Parses an assignable left‑hand side (lvalue) expression.
+    // this function will not treat '=' as a binary operator like parseExpr()
+    ExprPtr parseLvalue();
+
     // ─────────────────────────────────────────────────────────────────────────
     // ParserStmt.cpp — statement parsing
     // ─────────────────────────────────────────────────────────────────────────
@@ -494,11 +498,9 @@ private:
     // Root statement dispatcher. Called in a loop by parseBlock().
     StmtPtr parseStmt();
 
-    /**
-     * @brief Parses a multi‑assignment statement.
-     * ... (the comment shown above) ...
-     */
-    ASTPtr<MultiAssignStmtAST> parseMultiAssign();
+    // Parses a multi‑assignment statement.
+    ASTPtr<MultiVarDeclAST> parseMultiVarDecl();       
+    ASTPtr<MultiAssignStmtAST> parseMultiAssignStmt(); 
 
     // '{' { stmt } '}'
     ASTPtr<BlockStmtAST> parseBlock();
@@ -617,4 +619,7 @@ private:
     // True if the current token is the start of a top-level declaration
     // (used by synchronize() to know when to stop skipping).
     bool looksLikeDeclStart() const;
+
+    // Look for multiple assignment statements
+    bool looksLikeMultiAssignStart() const;
 };

@@ -2270,3 +2270,85 @@ FieldPatternPtr Parser::parseFieldPattern() {
 
     return fp;
 }
+
+/**
+* @brief Parses an assignable left‑hand side (lvalue) expression.
+*
+* Grammar of an lvalue:
+*   lvalue := IDENTIFIER { ( '.' IDENTIFIER ) | ( '[' expr ']' ) }
+*
+* Examples:
+*   x
+*   point.x
+*   arr[i]
+*   matrix[row][col]
+*   p.x.y
+*
+* This function stops at the first token that is not part of a valid lvalue
+* construct. It does NOT consume any operator that follows the lvalue,
+* such as '=', '+=', '?', ':', etc.
+*
+* Why not use parseExpr()?
+*   parseExpr() would treat '=' as a binary operator and prematurely consume
+*   the assignment token, breaking multi‑assignment parsing. This function
+*   is specifically for multi‑assignment left‑hand sides where the '=' is
+*   the separator between the LHS list and the RHS expression.
+*
+* @return An expression tree that represents an assignable location,
+*         or nullptr on error.
+*
+* @note The caller (parseMultiAssignStmt) uses this function to parse the
+*       comma‑separated list of lvalues before consuming the '=' token.
+*/
+ExprPtr Parser::parseLvalue() {
+    // Start with an identifier (required)
+    if (!check(TokenType::IDENTIFIER)) {
+        errorAt(DiagCode::E2003, "expected identifier for lvalue");
+        return nullptr;
+    }
+    std::string name = advance().value;
+    ExprPtr expr = arena_.make<IdentifierExprAST>(pool_.intern(name));
+    expr->loc = currentLoc();
+
+    // Apply postfix operators that produce an assignable location: '.' and '[' only.
+    while (true) {
+        if (check(TokenType::DOT)) {
+            // Field access: expr.field
+            advance(); // consume '.'
+            if (!check(TokenType::IDENTIFIER)) {
+                errorAt(DiagCode::E2003, "expected field name after '.'");
+                return expr; // return what we have so far
+            }
+            std::string field = advance().value;
+            auto node = arena_.make<FieldAccessExprAST>();
+            node->loc = expr->loc;
+            node->object = std::move(expr);
+            node->field = pool_.intern(field);
+            expr = std::move(node);
+        } 
+        else if (check(TokenType::LBRACKET)) {
+            // Indexing: expr[index]
+            advance(); // consume '['
+            ExprPtr index = parseExpr();
+            if (!index) {
+                errorAt(DiagCode::E2008, "expected index expression");
+                return expr;
+            }
+            consume(TokenType::RBRACKET, "expected ']' after index");
+            auto node = arena_.make<IndexExprAST>();
+            node->loc = expr->loc;
+            node->target = std::move(expr);
+            node->index = std::move(index);
+            node->kind = IndexKind::Element;
+            expr = std::move(node);
+        }
+        else if (check(TokenType::COLON)) {
+            // Behavior access (Type:method) is NOT assignable – stop.
+            break;
+        }
+        else {
+            break;
+        }
+    }
+    return expr;
+}

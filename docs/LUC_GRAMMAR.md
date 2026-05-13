@@ -1,7 +1,7 @@
 # Luc — Grammar Reference
 
-> **Scope of this file:** Formal grammar rules for the Luc parser.
-> Code examples are in `LUC_EXAMPLES.md`. Project identity is in `LUC_PROJECT_OVERVIEW.md`.
+> [!TIP] Scope of this file:
+> Formal grammar rules for the Luc parser. Code examples are in `LUC_EXAMPLES.md`. Project identity is in `LUC_PROJECT_OVERVIEW.md`.
 
 ## Notation
 
@@ -84,11 +84,11 @@ to the package root. Modules are flat; nesting is not supported.
 
 ### Visibility — three tiers
 
-| Keyword | Scope | Access |
-|---|---|---|
-| (none) | **File** | Only visible within the same `.luc` file |
-| `pub` | **Package** | Visible to all files sharing the same `package` identifier |
-| `export` | **World** | Visible to external consumers of the package |
+| Keyword  | Scope       | Access                                                     |
+| -------- | ----------- | ---------------------------------------------------------- |
+| (none)   | **File**    | Only visible within the same `.luc` file                   |
+| `pub`    | **Package** | Visible to all files sharing the same `package` identifier |
+| `export` | **World**   | Visible to external consumers of the package               |
 
 - `pub` and `export` are top-level modifiers only — **illegal** inside blocks or
   function bodies
@@ -118,8 +118,8 @@ use math as m         -- local alias: m.Vec2
 
 ## Types
 
-> **Note:** Luc does **not** have union types (`T | U`). Use the `any` type
-> together with `is` checks or pattern matching to handle multiple types at runtime.
+> [!WARNING] No union type, use the 'any' type instead
+> Luc does **not** have union types (`T | U`). Use the `any` type together with `is` checks or pattern matching to handle multiple types at runtime.
 
 ```
 type            := base_type [ generic_args ] [ '?' ]
@@ -213,17 +213,17 @@ Every type is either **owned** or **borrowed**. Bare `T` = owned, `&T` = borrowe
 
 ### Owned types — copied on assignment
 
-| Type | Syntax | Storage | On assignment |
-|---|---|---|---|
-| Primitives | `bool` `int` `float` `char` … | stack / inline | full copy |
-| Enum | `Direction.North` | integer (`byte`/`short`) | full copy |
-| Fixed array | `[N]T` | stack / inline | full element copy |
-| Slice | `[]T` | fat pointer (`ptr + len + cap`) | copies view header — shares buffer |
-| Dynamic array | `[*]T` | heap-owned buffer | full deep copy |
-| String | `string` | heap-owned sequence | full deep copy |
-| Struct | `Vec2` `Player` … | inline / stack | full deep copy |
-| Named function | `add` `Vec2:normalize` | function pointer | pointer copy |
-| Closure | `add(10)` `(x int) -> int { … }` | heap-allocated env | copies reference to env |
+| Type           | Syntax                           | Storage                         | On assignment                      |
+| -------------- | -------------------------------- | ------------------------------- | ---------------------------------- |
+| Primitives     | `bool` `int` `float` `char` …    | stack / inline                  | full copy                          |
+| Enum           | `Direction.North`                | integer (`byte`/`short`)        | full copy                          |
+| Fixed array    | `[N]T`                           | stack / inline                  | full element copy                  |
+| Slice          | `[]T`                            | fat pointer (`ptr + len + cap`) | copies view header — shares buffer |
+| Dynamic array  | `[*]T`                           | heap-owned buffer               | full deep copy                     |
+| String         | `string`                         | heap-owned sequence             | full deep copy                     |
+| Struct         | `Vec2` `Player` …                | inline / stack                  | full deep copy                     |
+| Named function | `add` `Vec2:normalize`           | function pointer                | pointer copy                       |
+| Closure        | `add(10)` `(x int) -> int { … }` | heap-allocated env              | copies reference to env            |
 
 ### Struct deep copy
 
@@ -251,11 +251,11 @@ let ref  &Player = a    -- mutable shared reference
 const rc &Player = a    -- read-only shared reference
 ```
 
-| Declaration | Copies? | Field mutation? | Owner |
-|---|---|---|---|
-| `let b Player = a` | ✅ deep copy | ✅ b's own fields | `b` |
-| `let ref &Player = a` | ❌ shared | ✅ visible through `a` | `a` |
-| `const ref &Player = a` | ❌ shared | ❌ read-only | `a` |
+| Declaration             | Copies?     | Field mutation?       | Owner |
+| ----------------------- | ----------- | --------------------- | ----- |
+| `let b Player = a`      | ✅ deep copy | ✅ b's own fields      | `b`   |
+| `let ref &Player = a`   | ❌ shared    | ✅ visible through `a` | `a`   |
+| `const ref &Player = a` | ❌ shared    | ❌ read-only           | `a`   |
 
 ### Circular references
 
@@ -304,7 +304,7 @@ functions, check for nil, but never dereference directly.
 
 ### Boundary crossing (intrinsics)
 
-```
+```luc
 #ptrToRef(T, ptr)   -- *T → &T  (assert validity, cross to safe reference)
 #refToPtr(ref)      -- &T → *T  (convert back to raw pointer)
 #ptrOffset(ptr, n)  -- pointer arithmetic, returns new *T
@@ -336,10 +336,8 @@ decl_keyword    := 'let' | 'const'
 type_ann        := type
 ```
 
-> **No type inference.** Luc does not infer types. Every declaration **must**
-> include an explicit type annotation. The compiler rejects any declaration
-> without one.
->
+> [!WARNING] No type inference.  
+> Luc does not infer types. Every declaration **must** include an explicit type annotation. The compiler rejects any declaration without one. 
 > ```luc
 > let x     = 5     -- ERROR: type annotation required
 > let x int = 5     -- OK
@@ -347,10 +345,10 @@ type_ann        := type
 
 ### Declaration Semantics
 
-| Keyword | Reassignable | Mutable in place | Value known at | Nil allowed |
-|---|---|---|---|---|
-| `let` | ✅ | ✅ | runtime | ✅ (if type is nullable) |
-| `const` | ❌ | ❌ | compile time | ❌ |
+| Keyword | Reassignable | Mutable in place | Value known at | Nil allowed             |
+| ------- | ------------ | ---------------- | -------------- | ----------------------- |
+| `let`   | ✅            | ✅                | runtime        | ✅ (if type is nullable) |
+| `const` | ❌            | ❌                | compile time   | ❌                       |
 
 `const` requires a compile-time constant initialiser: a literal, another `const`
 name, an enum variant, or arithmetic over those. Function calls, struct literals,
@@ -394,10 +392,26 @@ A function returning multiple values can be assigned to multiple variables in a
 single statement. Each variable requires its own explicit type annotation.
 
 ```
-multi_assign := decl_keyword var_spec { ',' var_spec } '=' expr
-var_spec     := IDENTIFIER type_ann
-decl_keyword := 'let' | 'const'
+multi_assign    := decl_keyword var_spec { ',' var_spec } '=' expr   -- declaration
+var_spec        := IDENTIFIER type_ann
+decl_keyword    := 'let' | 'const'
+
+-- Reassignment to existing variables (no let/const)
+multi_assign_stmt := expr_lhs { ',' expr_lhs } '=' expr
+
+expr_lhs        := IDENTIFIER
+                 | expr '.' IDENTIFIER
+                 | expr '[' expr ']'
+                 -- any expression that can be an lvalue (assignable)
 ```
+
+> [!NOTE] 
+> **For Reassignment to existing variables (no let/const)**
+> - Each expr_lhs must be a valid lvalue (assignable location): a variable name, a field access, or an array/slice index. Function calls, literals, and other value expressions are not allowed.
+> - The right‑hand side expr must evaluate to exactly as many return values as there are left‑hand side expressions.
+> - The values are assigned from left to right.
+> - This statement is only allowed in block scopes – not at top level.
+> - Assigning to a const variable is a semantic error.
 
 ```luc
 -- two return values
@@ -406,23 +420,40 @@ let value int, msg string = doSomething()
 -- shorthand without per-variable keyword is NOT supported
 let value, msg int = ...          -- ERROR: each variable needs its own type
 let value int, msg string = ...   -- OK: implicit let on second variable
+
+/--
+ - multiple reassignment, A function that returns multiple values can be assigned 
+ - to multiple variables in a single statement, either at declaration time or later 
+ - as a reassignment.
+--/
+let a int, b string = f()     -- declaration
+a, b = g()                     -- reassignment (multi_assign_stmt)
+x, y = z, w                    -- ERROR: RHS must be single expression
 ```
 
-> **No type inference in multi-assignment.** Every variable must have an
-> explicit type annotation.
+> [!WARNING]
+> No type inference in multi-assignment, every variable must have an explicit type annotation.
 
-> **Mixed mutability.** `let` and `const` cannot be mixed in a single
-> multi-assignment. If you need a constant from one of the returned values:
->
-> ```luc
-> -- receive both as let
-> let value int, msg string = doSomething()
->
-> -- promote to const in a separate step
-> const FIXED int = value
-> -- value remains in scope but you can stop using it
-> -- it will be freed naturally when the scope ends
-> ```
+### Declaration form
+Every variable has its own explicit type annotation, and the keyword (`let` or `const`) applies to all:
+
+```luc
+let q int, r int = divmod(10, 3)
+const w int, h int = getScreenSize()
+```
+
+### Reassignment form (to already declared variables)
+After variables are declared, you can reassign them using a multi‑assignment statement:
+
+```luc
+let q int, r int -- first declare
+q, r = divmod(20, 6) -- reassign
+
+let x float, y float
+x, y = 3.14, 2.718 -- ERROR: RHS must be a single expression
+```
+> [!NOTE]
+> The right‑hand side must be a single expression that returns as many values as there are left‑hand side targets. Comma‑separated literal expressions are not allowed.
 
 ---
 
@@ -495,12 +526,12 @@ type alias                 type AsyncOp = ~async (a int) -> int
 inline return after ->     (a int) -> ~nullable (b int) -> int
 ```
 
-> **Qualifiers are NOT valid on anonymous function values.** An anonymous
+> [!WARNING]
+>  - **Qualifiers are NOT valid on anonymous function values.** An anonymous
 > function is a plain value. Its qualifier context is determined by the
 > declaration or parameter type it is assigned to, not by the value itself.
 > See the Anonymous Functions section for details.
-
-**Qualifiers on parameters are hints to the caller, not type gates.** The
+> - **Qualifiers on parameters are hints to the caller, not type gates.** The
 qualifier documents intent — it does not prevent a non-qualified function from
 being passed:
 
@@ -540,7 +571,8 @@ let bad (url string) -> string = {
 }
 ```
 
-> **Compiler note for `await`:** When the compiler encounters `await expr`, it:
+> [!NOTE]
+> When the compiler encounters `await expr`, it:
 > 1. Evaluates `expr` — must resolve to a function call
 > 2. Looks up the function being called
 > 3. Checks whether that function's declaration carries the `~async` qualifier
@@ -613,7 +645,7 @@ let parallelChunked<T> ~parallel (items [*]T, size int, body (c []T)) = { ... }
 
 ### Composition `+>` and Qualifiers
 
-`+>` returns a plain function with no qualifiers. Qualifiers on the result come
+`+>` returns a plain function with **NO qualifiers**. Qualifiers on the result come
 from the binding, not from the components:
 
 ```luc
@@ -700,6 +732,7 @@ let f (a int) -> (int, string)
 let g (src string) -> (int, bool, string)
 ```
 
+> [!TIP]
 > **Good practice — write each return type on its own line if one of the return types is a function:**
 >
 > ```luc
@@ -708,9 +741,9 @@ let g (src string) -> (int, bool, string)
 > 
 > -- Good: each return type on its own line
 > let parse (src string) -> (
->         int,
->         string,
->         (a float) -> int
+>           int,
+>           string,
+>           (a float) -> int
 > ) = {
 >     ...
 > }
@@ -800,6 +833,7 @@ f(int) -> (
 )
 ```
 
+> [!TIP]
 > **Good practice — use type aliases for complex return types:**
 >
 > ```luc
@@ -849,14 +883,9 @@ run(() -> int { return await fetch() }) -- also valid: body uses await correctly
                                         -- because fetch is ~async
 ```
 
+> [!IMPORTANT]
 > **Why no qualifiers on anonymous functions?**
->
-> A qualifier describes how the compiler treats a **call site**. When a function
-> is called, the compiler looks up the **binding's declaration** (or the
-> **parameter type**) to find qualifiers — it never inspects the value itself.
-> Therefore a qualifier on an anonymous function value is unreachable and
-> meaningless. Qualifiers on values are removed from the language to avoid
-> confusion.
+> A qualifier describes how the compiler treats a **call site**. When a function is called, the compiler looks up the **binding's declaration** (or the **parameter type**) to find qualifiers — it never inspects the value itself. Therefore a qualifier on an anonymous function value is unreachable and meaningless. Qualifiers on values are removed from the language to avoid confusion.
 
 ### Complete Signature Reference
 
@@ -1259,13 +1288,13 @@ pipeline_step   := IDENTIFIER
                  | anon_func
 ```
 
-| Step form | What `|>` does | Nullability |
-|---|---|---|
-| `fn` | calls `fn(upstream)` | must be non-nullable |
-| `Type:method` | calls `method(upstream)` | always safe |
-| `struct.field` | calls function stored in field | field must be non-nullable |
-| `fn(args)!` | calls `fn(upstream, args...)` | must be non-nullable |
-| `anon_func` | calls with upstream as argument | always safe |
+| Step form      | What `\|>` does                 | Nullability                |
+| -------------- | ------------------------------- | -------------------------- |
+| `fn`           | calls `fn(upstream)`            | must be non-nullable       |
+| `Type:method`  | calls `method(upstream)`        | always safe                |
+| `struct.field` | calls function stored in field  | field must be non-nullable |
+| `fn(args)!`    | calls `fn(upstream, args...)`   | must be non-nullable       |
+| `anon_func`    | calls with upstream as argument | always safe                |
 
 ### The `!` argument pack annotation
 
@@ -1302,13 +1331,13 @@ if p.onComplete != nil {
 
 ### `|>` vs `+>` — key difference
 
-| | `|>` pipeline | `+>` composition |
-|---|---|---|
-| When | runtime | compile time |
-| Seed | required | none |
-| Control flow | full access | none |
+|                 | `\| >` pipeline                  | `+>` composition          |
+| --------------- | -------------------------------- | ------------------------- |
+| When            | runtime                          | compile time              |
+| Seed            | required                         | none                      |
+| Control flow    | full access                      | none                      |
 | Type strictness | relaxed — step may ignore result | strict — types must chain |
-| Result | executes now | produces a new function |
+| Result          | executes now                     | produces a new function   |
 
 ---
 
@@ -1464,11 +1493,11 @@ let bad (url string) -> string = {
 
 Three distinct kinds:
 
-| Kind | Syntax | Memory | Growable |
-|---|---|---|---|
-| Fixed | `[N]T` | stack/inline | ❌ |
-| Slice | `[]T` | fat pointer view | ❌ |
-| Dynamic | `[*]T` | heap-owned | ✅ |
+| Kind    | Syntax | Memory           | Growable |
+| ------- | ------ | ---------------- | -------- |
+| Fixed   | `[N]T` | stack/inline     | ❌        |
+| Slice   | `[]T`  | fat pointer view | ❌        |
+| Dynamic | `[*]T` | heap-owned       | ✅        |
 
 ```luc
 let rgba [4]float  = [1.0, 0.5, 0.0, 1.0]
@@ -1477,49 +1506,47 @@ let view []int     = nums[1..3]     -- elements at index 1, 2, 3 (inclusive)
 let excl []int     = nums[1..<3]    -- elements at index 1, 2 (exclusive end)
 ```
 
-> **Array elements are not nullable by default.** To allow nil elements use `T?`:
-> `let nums [*]int? = [1, nil, 3]`
-
-> **Out of bounds:** Fixed and slice arrays panic at runtime. Dynamic arrays
-> return nil for out-of-bounds index access.
+> [!NOTE]
+> - **Array elements are not nullable by default.** To allow nil elements use `T?`:` let nums [*]int? = [1, nil, 3]`
+> - **Out of bounds:** Fixed and slice arrays panic at runtime. Dynamic arrays return nil for out-of-bounds index access.
 
 ### Slice range rules
 
-| Operator | End bound | Example on `[10,20,30,40,50]` |
-|---|---|---|
-| `..` | inclusive | `nums[1..3]` → `[20, 30, 40]` (3 elements) |
-| `..<` | exclusive | `nums[1..<3]` → `[20, 30]` (2 elements) |
+| Operator | End bound | Example on `[10,20,30,40,50]`              |
+| -------- | --------- | ------------------------------------------ |
+| `..`     | inclusive | `nums[1..3]` → `[20, 30, 40]` (3 elements) |
+| `..<`    | exclusive | `nums[1..<3]` → `[20, 30]` (2 elements)    |
 
 ### Built-in methods
 
 **All kinds (`[N]T`, `[]T`, `[*]T`):**
 
-| Method | Returns | Description |
-|---|---|---|
-| `.len()` | `int` | number of elements |
-| `.isEmpty()` | `bool` | true if `len() == 0` |
-| `[i]` | `T` | element at index |
-| `[i..j]` | `[]T` | inclusive slice |
-| `[i..<j]` | `[]T` | exclusive slice |
+| Method       | Returns | Description          |
+| ------------ | ------- | -------------------- |
+| `.len()`     | `int`   | number of elements   |
+| `.isEmpty()` | `bool`  | true if `len() == 0` |
+| `[i]`        | `T`     | element at index     |
+| `[i..j]`     | `[]T`   | inclusive slice      |
+| `[i..<j]`    | `[]T`   | exclusive slice      |
 
 **Slice and dynamic (`[]T`, `[*]T`):**
 
-| Method | Returns | Description |
-|---|---|---|
-| `.cap()` | `int` | allocated capacity |
-| `.first()` | `T` | first element |
-| `.last()` | `T` | last element |
+| Method     | Returns | Description        |
+| ---------- | ------- | ------------------ |
+| `.cap()`   | `int`   | allocated capacity |
+| `.first()` | `T`     | first element      |
+| `.last()`  | `T`     | last element       |
 
 **Dynamic only (`[*]T`):**
 
-| Method | Returns | Description |
-|---|---|---|
-| `.push(v T)` | — | append to end |
-| `.pop()` | `T` | remove and return last |
-| `.insert(i int, v T)` | — | insert at index |
-| `.remove(i int)` | `T` | remove at index |
-| `.clear()` | — | remove all elements, free heap buffer |
-| `.reserve(n int)` | — | pre-allocate capacity |
+| Method                | Returns | Description                           |
+| --------------------- | ------- | ------------------------------------- |
+| `.push(v T)`          | —       | append to end                         |
+| `.pop()`              | `T`     | remove and return last                |
+| `.insert(i int, v T)` | —       | insert at index                       |
+| `.remove(i int)`      | `T`     | remove at index                       |
+| `.clear()`            | —       | remove all elements, free heap buffer |
+| `.reserve(n int)`     | —       | pre-allocate capacity                 |
 
 `+` is defined on `[]T` and `[*]T` — produces a new array containing all
 elements of both operands.
@@ -1530,7 +1557,8 @@ elements of both operands.
 
 ```
 stmt            := var_decl
-                 | multi_assign
+                 | multi_assign         -- declaration with let/const
+                 | multi_assign_stmt    -- reassignment to existing variables
                  | func_decl
                  | assign_stmt
                  | if_stmt
@@ -1618,10 +1646,10 @@ field_pattern   := IDENTIFIER [ ':' pattern ]
 
 **Secondary value rules:**
 
-| Situation | Rule |
-|---|---|
-| No arm supplies secondary | match produces one value |
-| Every arm supplies secondary | second variable is non-nullable |
+| Situation                       | Rule                                    |
+| ------------------------------- | --------------------------------------- |
+| No arm supplies secondary       | match produces one value                |
+| Every arm supplies secondary    | second variable is non-nullable         |
 | Only some arms supply secondary | second variable must be nullable (`T?`) |
 
 ```luc
@@ -1793,14 +1821,14 @@ if not x { ... }    -- x is nullable: nil treated as false, not flips to true
 Integer types only. `&&` and `||` are bitwise AND/OR (not logical — those use
 `and`/`or` keywords). This avoids ambiguity with `&` (reference operator).
 
-| Operator | Name |
-|---|---|
-| `&&` | bitwise AND |
-| `\|\|` | bitwise OR |
-| `~^` | bitwise XOR |
-| `~~` | bitwise NOT (unary) |
-| `<<` | left shift |
-| `>>` | right shift |
+| Operator | Name                |
+| -------- | ------------------- |
+| `&&`     | bitwise AND         |
+| `\|\|`   | bitwise OR          |
+| `~^`     | bitwise XOR         |
+| `~~`     | bitwise NOT (unary) |
+| `<<`     | left shift          |
+| `>>`     | right shift         |
 
 ```luc
 let flags  uint32 = 0xFF00
@@ -1815,29 +1843,26 @@ let shifted uint32 = 1 << 4           -- 16
 
 ## Operator Precedence (High → Low)
 
-| Level | Operators | Associativity |
-|---|---|---|
-| 1 (highest) | `()` `.` `:` `?.` `[…]` `!` calls | left |
-| 2 | unary `-` `not` `~~` `&` | right |
-| 3 | `^` (power) | right |
-| 4 | `*` `/` `%` | left |
-| 5 | `+` `-` | left |
-| 6 | `<<` `>>` | left |
-| 7 | `&&` `\|\|` `~^` | left |
-| 8 | `==` `!=` `<` `>` `<=` `>=` `===` | left |
-| 9 | `and` | left |
-| 10 | `or` | left |
-| 11 | `??` | right |
-| 12 | `|>` (pipeline) | left |
-| 13 | `+>` (composition) | left |
-| 14 | `=` `+=` `-=` `*=` `/=` `^=` `%=` `&&=` `\|\|=` `~^=` `<<=` `>>=` | right |
-| 15 (lowest) | `if ?? else` | right |
+| Level       | Operators                                                         | Associativity |
+| ----------- | ----------------------------------------------------------------- | ------------- |
+| 1 (highest) | `()` `.` `:` `?.` `[…]` `!` calls                                 | left          |
+| 2           | unary `-` `not` `~~` `&`                                          | right         |
+| 3           | `^` (power)                                                       | right         |
+| 4           | `*` `/` `%`                                                       | left          |
+| 5           | `+` `-`                                                           | left          |
+| 6           | `<<` `>>`                                                         | left          |
+| 7           | `&&` `\|\|` `~^`                                                  | left          |
+| 8           | `==` `!=` `<` `>` `<=` `>=` `===`                                 | left          |
+| 9           | `and`                                                             | left          |
+| 10          | `or`                                                              | left          |
+| 11          | `??`                                                              | right         |
+| 12          | `                                                                 | >` (pipeline) | left |
+| 13          | `+>` (composition)                                                | left          |
+| 14          | `=` `+=` `-=` `*=` `/=` `^=` `%=` `&&=` `\|\|=` `~^=` `<<=` `>>=` | right         |
+| 15 (lowest) | `if ?? else`                                                      | right         |
 
-> **Note on `if_expr` precedence:** `if cond ?? thenExpr else elseExpr` begins
-> with the `if` keyword. The `??` here is a fixed syntactic separator in the
-> if-expression production, not the null-coalescing infix operator (level 11).
-> The `else` clause is right-associative at the lowest precedence — chained
-> `if ?? ... else if ?? ... else ...` forms bind correctly.
+> [!NOTE]
+> **`if_expr` precedence:** `if cond ?? thenExpr else elseExpr` begins with the `if` keyword. The `??` here is a fixed syntactic separator in the if-expression production, not the null-coalescing infix operator (level 11). The `else` clause is right-associative at the lowest precedence — chained `if ?? ... else if ?? ... else ...` forms bind correctly.
 
 ---
 
@@ -1845,10 +1870,10 @@ let shifted uint32 = 1 << 4           -- 16
 
 Two distinct prefixes, distinguished by position and symbol:
 
-| Prefix | Position | Purpose |
-|--------|----------|---------|
-| `@name` / `@name(args)` | Before a declaration | Attach metadata (attribute) |
-| `#name(args)` | In expression position | Compiler-builtin call (intrinsic) |
+| Prefix                  | Position               | Purpose                           |
+| ----------------------- | ---------------------- | --------------------------------- |
+| `@name` / `@name(args)` | Before a declaration   | Attach metadata (attribute)       |
+| `#name(args)`           | In expression position | Compiler-builtin call (intrinsic) |
 
 ### Attributes (`@`)
 
@@ -1865,16 +1890,16 @@ type identifiers. Runtime expressions are not valid inside attribute arguments.
 
 #### Known Attributes
 
-| Attribute | Valid on | Purpose |
-|---|---|---|
-| `@extern("sym")` | `let`, `const` func/var | Bind to C/OS/Vulkan symbol |
-| `@extern("sym", "conv")` | `let`, `const` func/var | With explicit calling convention |
-| `@inline` | func | Suggest always inline |
-| `@noinline` | func | Prevent inlining |
-| `@packed` | `struct` | Remove padding — all fields byte-adjacent |
-| `@deprecated("msg")` | func, var, struct | Emit warning at every use site |
-| `@aot` | `main` only | Ahead-of-time compilation |
-| `@jit` | `main` only | JIT compilation |
+| Attribute                | Valid on                | Purpose                                   |
+| ------------------------ | ----------------------- | ----------------------------------------- |
+| `@extern("sym")`         | `let`, `const` func/var | Bind to C/OS/Vulkan symbol                |
+| `@extern("sym", "conv")` | `let`, `const` func/var | With explicit calling convention          |
+| `@inline`                | func                    | Suggest always inline                     |
+| `@noinline`              | func                    | Prevent inlining                          |
+| `@packed`                | `struct`                | Remove padding — all fields byte-adjacent |
+| `@deprecated("msg")`     | func, var, struct       | Emit warning at every use site            |
+| `@aot`                   | `main` only             | Ahead-of-time compilation                 |
+| `@jit`                   | `main` only             | JIT compilation                           |
 
 `@inline` and `@noinline` are mutually exclusive on the same declaration.
 `@aot` and `@jit` are mutually exclusive on the same declaration.
@@ -1930,9 +1955,9 @@ Unlike attributes, intrinsics can take runtime expressions and types as argument
 
 #### Compile-time type queries
 
-| Intrinsic | Returns | Notes |
-|---|---|---|
-| `#sizeof(T)` | `uint64` | Byte size of type T — compile-time constant |
+| Intrinsic     | Returns  | Notes                                              |
+| ------------- | -------- | -------------------------------------------------- |
+| `#sizeof(T)`  | `uint64` | Byte size of type T — compile-time constant        |
 | `#alignof(T)` | `uint64` | Alignment requirement of T — compile-time constant |
 
 ```luc
@@ -1944,17 +1969,17 @@ let align  uint64 = #alignof(Vec2)
 
 #### Floating-point math
 
-| Intrinsic | Args | Returns | Notes |
-|---|---|---|---|
-| `#sqrt(x)` | float/double | same | Hardware square root |
-| `#floor(x)` | float/double | same | Round toward −∞ |
-| `#ceil(x)` | float/double | same | Round toward +∞ |
-| `#round(x)` | float/double | same | Round to nearest, half away from zero |
-| `#abs(x)` | numeric | same | Absolute value |
-| `#pow(base, exp)` | float/double | same | Exponentiation |
-| `#fma(a, b, c)` | float/double | same | Fused multiply-add: `(a*b)+c` |
-| `#min(a, b)` | same type | same | Minimum |
-| `#max(a, b)` | same type | same | Maximum |
+| Intrinsic         | Args         | Returns | Notes                                 |
+| ----------------- | ------------ | ------- | ------------------------------------- |
+| `#sqrt(x)`        | float/double | same    | Hardware square root                  |
+| `#floor(x)`       | float/double | same    | Round toward −∞                       |
+| `#ceil(x)`        | float/double | same    | Round toward +∞                       |
+| `#round(x)`       | float/double | same    | Round to nearest, half away from zero |
+| `#abs(x)`         | numeric      | same    | Absolute value                        |
+| `#pow(base, exp)` | float/double | same    | Exponentiation                        |
+| `#fma(a, b, c)`   | float/double | same    | Fused multiply-add: `(a*b)+c`         |
+| `#min(a, b)`      | same type    | same    | Minimum                               |
+| `#max(a, b)`      | same type    | same    | Maximum                               |
 
 ```luc
 let hyp       float = #sqrt(x*x + y*y)
@@ -1966,12 +1991,12 @@ let maxVal    int   = #min(a, b)
 
 #### Bit manipulation (integer types only)
 
-| Intrinsic | Args | Returns | Notes |
-|---|---|---|---|
-| `#clz(x)` | integer | same | Count leading zero bits |
-| `#ctz(x)` | integer | same | Count trailing zero bits |
-| `#popcount(x)` | integer | same | Count set (1) bits |
-| `#bswap(x)` | integer | same | Reverse byte order (endianness) |
+| Intrinsic      | Args    | Returns | Notes                           |
+| -------------- | ------- | ------- | ------------------------------- |
+| `#clz(x)`      | integer | same    | Count leading zero bits         |
+| `#ctz(x)`      | integer | same    | Count trailing zero bits        |
+| `#popcount(x)` | integer | same    | Count set (1) bits              |
+| `#bswap(x)`    | integer | same    | Reverse byte order (endianness) |
 
 ```luc
 let leading   uint32 = #clz(flags)
@@ -1984,11 +2009,11 @@ let swapped   uint32 = #bswap(networkOrder)
 
 #### Memory operations
 
-| Intrinsic | Args | Returns | Notes |
-|---|---|---|---|
-| `#memcpy(dst, src, len)` | ptr, ptr, uint64 | void | Copy bytes, no overlap |
-| `#memmove(dst, src, len)` | ptr, ptr, uint64 | void | Copy bytes, handles overlap |
-| `#memset(dst, val, len)` | ptr, ubyte, uint64 | void | Fill bytes with value |
+| Intrinsic                 | Args               | Returns | Notes                       |
+| ------------------------- | ------------------ | ------- | --------------------------- |
+| `#memcpy(dst, src, len)`  | ptr, ptr, uint64   | void    | Copy bytes, no overlap      |
+| `#memmove(dst, src, len)` | ptr, ptr, uint64   | void    | Copy bytes, handles overlap |
+| `#memset(dst, val, len)`  | ptr, ubyte, uint64 | void    | Fill bytes with value       |
 
 All memory intrinsics operate on raw pointers (`*T`) and are only valid inside
 `@extern`-decorated functions or other intrinsic calls.
@@ -2002,12 +2027,12 @@ All memory intrinsics operate on raw pointers (`*T`) and are only valid inside
 
 #### Pointer operations (The Sealed Conduit boundary)
 
-| Intrinsic | Args | Returns | Notes |
-|---|---|---|---|
-| `#ptrToRef(T, ptr)` | type, `*T` | `&T` | Assert valid, cross to safe reference |
-| `#refToPtr(ref)` | `&T` | `*T` | Convert reference to raw pointer |
-| `#ptrOffset(ptr, n)` | `*T`, int | `*T` | Pointer arithmetic (element offset) |
-| `#ptrDiff(p1, p2)` | `*T`, `*T` | `int64` | Distance between pointers in elements |
+| Intrinsic            | Args       | Returns | Notes                                 |
+| -------------------- | ---------- | ------- | ------------------------------------- |
+| `#ptrToRef(T, ptr)`  | type, `*T` | `&T`    | Assert valid, cross to safe reference |
+| `#refToPtr(ref)`     | `&T`       | `*T`    | Convert reference to raw pointer      |
+| `#ptrOffset(ptr, n)` | `*T`, int  | `*T`    | Pointer arithmetic (element offset)   |
+| `#ptrDiff(p1, p2)`   | `*T`, `*T` | `int64` | Distance between pointers in elements |
 
 These intrinsics are the only way to cross the sealed conduit boundary or
 perform pointer arithmetic.
@@ -2025,9 +2050,9 @@ let distance int64 = #ptrDiff(next, buf)
 
 #### Unsafe / Bit reinterpretation
 
-| Intrinsic | Args | Returns | Notes |
-|---|---|---|---|
-| `#bitcast(T, x)` | type, value | `T` | Reinterpret bits of x as type T; sizes must match |
+| Intrinsic        | Args        | Returns | Notes                                             |
+| ---------------- | ----------- | ------- | ------------------------------------------------- |
+| `#bitcast(T, x)` | type, value | `T`     | Reinterpret bits of x as type T; sizes must match |
 
 Valid only inside `@extern`-decorated functions or when the compiler flag
 `--unsafe` is enabled.
@@ -2082,16 +2107,16 @@ let c = r##"She said "#Hello"#"##    -- contains both " and "# sequences
 
 ### String Escape Sequences
 
-| Sequence | Meaning |
-|---|---|
-| `\n` | newline (LF) |
-| `\t` | tab |
-| `\r` | carriage return |
-| `\"` | literal double quote |
-| `\\` | literal backslash |
-| `\0` | null character |
-| `\xFF` | hex byte value |
-| `\u0041` | Unicode codepoint (4 hex digits) |
+| Sequence     | Meaning                          |
+| ------------ | -------------------------------- |
+| `\n`         | newline (LF)                     |
+| `\t`         | tab                              |
+| `\r`         | carriage return                  |
+| `\"`         | literal double quote             |
+| `\\`         | literal backslash                |
+| `\0`         | null character                   |
+| `\xFF`       | hex byte value                   |
+| `\u0041`     | Unicode codepoint (4 hex digits) |
 | `\U0001F600` | Unicode codepoint (8 hex digits) |
 
 Raw string literals `r"..."` — no escape processing. Backslashes are literal.
@@ -2194,7 +2219,3 @@ if else match switch case default is
 while for in do return break continue
 and or not true false
 ```
-
-> **Removed keywords:**
-> - `parallel` — replaced by `~parallel` library functions
-> - `async` — replaced by `~async` qualifier on bindings

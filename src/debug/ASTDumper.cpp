@@ -766,8 +766,8 @@ void ASTDumper::visit(ContinueStmtAST& node) {
     printNodeHeader(node, "ContinueStmtAST");
 }
 
-void ASTDumper::visit(MultiAssignStmtAST& node) {
-    std::string header = "MultiAssignStmtAST (";
+void ASTDumper::visit(MultiVarDeclAST& node) {
+    std::string header = "MultiVarDeclAST (";
     header += (node.keyword == DeclKeyword::Let) ? "let" : "const";
     header += ") ";
     for (size_t i = 0; i < node.vars.size(); ++i) {
@@ -783,6 +783,26 @@ void ASTDumper::visit(MultiAssignStmtAST& node) {
         visitChild(node.rhs.get(), "rhs");
         indentLevel--;
     }
+}
+
+void ASTDumper::visit(MultiAssignStmtAST& node) {
+    std::string header = "MultiAssignStmtAST (";
+    for (size_t i = 0; i < node.lhs.size(); ++i) {
+        if (i > 0) header += ", ";
+        // We can't easily print the expression in the header, so just print count.
+        header += "lhs_" + std::to_string(i);
+    }
+    header += " = ...";
+    printNodeHeader(node, header);
+    indentLevel++;
+    for (size_t i = 0; i < node.lhs.size(); ++i) {
+        if (node.lhs[i]) {
+            std::string label = "lhs_" + std::to_string(i);
+            visitChild(node.lhs[i].get(), label);
+        }
+    }
+    if (node.rhs) visitChild(node.rhs.get(), "rhs");
+    indentLevel--;
 }
 
 // ── Other nodes ───────────────────────────────────────────────────────
