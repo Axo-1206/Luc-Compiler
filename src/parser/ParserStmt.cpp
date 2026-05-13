@@ -19,83 +19,95 @@
 // parseStmt  — root statement dispatcher
 //
 // Dispatch priority (in order):
-//   1. Declaration keywords (let / const) → local declaration
-//   2. pub inside a block                     → error + skip
-//   3. Control-flow keywords                  → their specific parsers
-//   4. parallel                               → parallel for / parallel block
-//   5. Everything else                        → expression statement
-//
-// 'match' and 'if' in statement position are parsed as expression statements —
-// the expression parsers produce MatchExprAST / IfExprAST, and the result is
-// wrapped in ExprStmtAST.  The only exception is that 'if' at statement level
-// is parsed as IfStmtAST (else optional) rather than IfExprAST (else required).
-// This distinction matters for error messages and for the semantic pass.
+//   1. Multi‑assignment (reassignment) – safe lookahead
+//   2. Multi‑variable declaration (let/const with commas) – handled separately
+//   3. All other local declarations (type, struct, enum, impl, from, let/const)
+//        -> parsed via parseDeclaration(DeclContext::Local)
+//   4. 'pub' inside a block -> error + skip
+//   5. Control-flow keywords -> specific parsers
+//   6. Expression statement
 // ─────────────────────────────────────────────────────────────────────────────
 StmtPtr Parser::parseStmt() {
     LUC_LOG_STMT_VERBOSE("parseStmt: token='" << peek().value << "'");
 
-    // ── Multi‑assignment (reassignment) – safe lookahead ──────────────
+    // ── 1. Multi‑assignment (reassignment) – safe lookahead ──────────────
     if (looksLikeMultiAssignStart()) {
-        LUC_LOG_STMT_VERBOSE("Parse multiple asignment - no let/cosnt");
+        LUC_LOG_STMT_VERBOSE("Parse multiple assignment - no let/const");
         return parseMultiAssignStmt();
     }
 
-    // ── Local declarations (single or multi) ───────────────────────────────
-    if (checkAny({ TokenType::LET, TokenType::CONST })) {
-        // Save position for lookahead
+    // ── 2. Multi‑variable declaration (let/const with commas) ────────────
+    //    Detect a pattern like: let x int, y int = f()
+    if (checkAny({TokenType::LET, TokenType::CONST})) {
         std::size_t savedPos = pos_;
-
         // Tentatively parse the first variable spec to check for a comma
-        if (!checkAny({TokenType::LET, TokenType::CONST})) {
-            // Not a keyword – shouldn't happen
-            return parseLocalDecl();
-        }
         advance(); // consume keyword
         bool hasIdentifier = check(TokenType::IDENTIFIER);
         if (hasIdentifier) advance(); // consume identifier
         bool hasType = looksLikeType();
         TypePtr dummy = nullptr;
         if (hasType) {
-            // Parse the type (may allocate, but we discard it)
             dummy = parseType();
             if (!dummy) hasType = false;
         }
         bool nextIsComma = check(TokenType::COMMA);
-
         pos_ = savedPos; // restore position
 
         if (hasIdentifier && hasType && nextIsComma) {
             // It's a multi‑variable declaration
-            return parseMultiVarDecl();
-        } else {
-            // Single variable or function declaration
-            return parseLocalDecl();
+            return parseMultiVarDecl();   // already returns StmtPtr
         }
+        // Otherwise fall through to single declaration (handled below)
     }
 
-    // ── 'pub' inside a block ────────────────────────────────────────────────
+    // ── 3. All other local declarations (type, struct, enum, impl, trait, from, let/const) ──
+    if (checkAny({TokenType::TYPE, TokenType::STRUCT, TokenType::ENUM,
+                  TokenType::IMPL, TokenType::TRAIT, TokenType::FROM,
+                  TokenType::LET, TokenType::CONST})) {
+        // Unified local declaration parser – consumes the keyword,
+        // handles attributes, rejects pub/export, returns DeclPtr.
+        DeclPtr decl = parseDeclaration(DeclContext::Local);
+        if (!decl) {
+            // parseDeclaration already reported an error
+            return nullptr;
+        }
+        // Wrap the declaration in a DeclStmtAST
+        auto ds = arena_.make<DeclStmtAST>(std::move(decl));
+        ds->loc = currentLoc();
+        return ds;
+    }
+
+    // ── 4. 'pub' inside a block ──────────────────────────────────────────
     if (check(TokenType::PUB)) {
         errorAt(DiagCode::E2006, "'pub' is not valid inside a block");
         advance();
-        if (checkAny({ TokenType::LET, TokenType::CONST })) {
-            return parseLocalDecl();
+        // After skipping pub, try to parse a declaration if one follows
+        if (checkAny({TokenType::LET, TokenType::CONST,
+                      TokenType::TYPE, TokenType::STRUCT, TokenType::ENUM,
+                      TokenType::IMPL, TokenType::FROM})) {
+            DeclPtr decl = parseDeclaration(DeclContext::Local);
+            if (decl) {
+                auto ds = arena_.make<DeclStmtAST>(std::move(decl));
+                ds->loc = currentLoc();
+                return ds;
+            }
         }
         auto unknown = arena_.make<UnknownStmtAST>();
         unknown->loc = currentLoc();
         return unknown;
     }
 
-    // ── Control flow ──────────────────────────────────────────────────────────
-    if (check(TokenType::IF)) return parseIfStmt();
-    if (check(TokenType::SWITCH)) return parseSwitchStmt();
-    if (check(TokenType::FOR)) return parseForStmt();
-    if (check(TokenType::WHILE)) return parseWhileStmt();
-    if (check(TokenType::DO)) return parseDoWhileStmt();
-    if (check(TokenType::RETURN)) return parseReturnStmt();
-    if (check(TokenType::BREAK)) return parseBreakStmt();
+    // ── 5. Control flow keywords ─────────────────────────────────────────
+    if (check(TokenType::IF))       return parseIfStmt();
+    if (check(TokenType::SWITCH))   return parseSwitchStmt();
+    if (check(TokenType::FOR))      return parseForStmt();
+    if (check(TokenType::WHILE))    return parseWhileStmt();
+    if (check(TokenType::DO))       return parseDoWhileStmt();
+    if (check(TokenType::RETURN))   return parseReturnStmt();
+    if (check(TokenType::BREAK))    return parseBreakStmt();
     if (check(TokenType::CONTINUE)) return parseContinueStmt();
 
-    // ── Expression statement ──────────────────────────────────────────────────
+    // ── 6. Expression statement ──────────────────────────────────────────
     if (!looksLikeStmtStart()) {
         errorAt(DiagCode::E2002, "unexpected token '" + peek().value + "'");
         auto unknown = arena_.make<UnknownStmtAST>();
@@ -151,10 +163,10 @@ StmtPtr Parser::parseStmt() {
  *   - Ensure `const` RHS is a compile‑time constant.
  *   - Introduce variables into the current scope.
  */
-ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl() {
+ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl(std::vector<AttributePtr> attrs) {
     SourceLocation loc = currentLoc();
 
-    // Single keyword at the start
+    // Single keyword at the start (already consumed by caller)
     if (!checkAny({TokenType::LET, TokenType::CONST})) {
         errorAt(DiagCode::E2002, "expected 'let' or 'const'");
         return nullptr;
@@ -177,7 +189,6 @@ ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl() {
     TypePtr firstType = parseType();
     if (!firstType) return nullptr;
     vars.emplace_back(pool_.intern(firstName), std::move(firstType));
-
     // Parse additional variables separated by commas
     while (check(TokenType::COMMA)) {
         advance(); // consume ','
@@ -195,7 +206,6 @@ ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl() {
         vars.emplace_back(pool_.intern(name), std::move(type));
     }
 
-    // Must have '='
     consume(TokenType::ASSIGN, DiagCode::E2001, "expected '=' in multi-assignment");
     ExprPtr rhs = parseExpr();
     if (!rhs) {
@@ -208,6 +218,7 @@ ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl() {
     node->keyword = kw;
     node->vars = std::move(vars);
     node->rhs = std::move(rhs);
+    node->attributes = std::move(attrs);   // NEW
     return node;
 }
 
@@ -328,49 +339,6 @@ ASTPtr<BlockStmtAST> Parser::parseBlock() {
     LUC_LOG_STMT("parseBlock: parsed " << stmtCount << " statements");
     return block;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// parseLocalDecl
-//
-// Parses a let / const declaration inside a block body.
-// Produces either VarDeclAST or FuncDeclAST wrapped in DeclStmtAST.
-//
-// Key differences from top-level declarations:
-//   - 'pub' is forbidden (already checked in parseStmt)
-//   - 'extern' is forbidden (local extern makes no semantic sense)
-//   - struct / enum / trait / impl / type are forbidden (top-level only)
-//
-// The keyword is consumed here; the name remains at pos_ so that
-// looksLikeFuncDecl() and the individual parsers read it correctly.
-// ─────────────────────────────────────────────────────────────────────────────
-ASTPtr<DeclStmtAST> Parser::parseLocalDecl() {
-    LUC_LOG_STMT("parseLocalDecl");
-    SourceLocation loc = currentLoc();
-    Token kwTok = advance();
-    DeclKeyword kw = (kwTok.type == TokenType::LET) ? DeclKeyword::Let : DeclKeyword::Const;
-
-    if (!check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected name after '" + kwTok.value + "', found: " + peek().value);
-        return nullptr;  // DeclStmtAST can't be unknown - caller handles nullptr
-    }
-
-    if (looksLikeFuncDecl()) {
-        auto funcDecl = parseFuncDecl(kw, Visibility::Private);
-        if (!funcDecl) return nullptr;
-        funcDecl->loc = loc;
-        auto ds = arena_.make<DeclStmtAST>(std::move(funcDecl));
-        ds->loc = loc;
-        return ds;
-    } else {
-        auto varDecl = parseVarDecl(Visibility::Private, {});
-        if (!varDecl) return nullptr;
-        varDecl->loc = loc;
-        auto ds = arena_.make<DeclStmtAST>(std::move(varDecl));
-        ds->loc = loc;
-        return ds;
-    }
-}
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // parseIfStmt

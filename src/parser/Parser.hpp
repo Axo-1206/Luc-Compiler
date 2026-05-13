@@ -196,6 +196,12 @@ private:
     // Default is Visibility::Private.
     Visibility parseVisibility();
 
+    // Declaration context (file level or local block level)
+    enum class DeclContext {
+        TopLevel,   // File scope: may have pub/export modifiers and attributes
+        Local       // Block scope: no visibility, attributes allowed, private only
+    };
+
     // ─────────────────────────────────────────────────────────────────────────
     // ParserType.cpp — type annotation parsing
     // ─────────────────────────────────────────────────────────────────────────
@@ -243,6 +249,15 @@ private:
     // and calls the appropriate sub-parser. Returns nullptr on unrecognised input
     // (caller records an error and calls synchronize()).
     DeclPtr parseTopLevelDecl();
+
+    // Parse a declaration with the given context.
+    // If ctx == DeclContext::TopLevel:
+    //   - Visibility modifiers (pub, export) are allowed.
+    //   - Attributes are allowed.
+    // If ctx == DeclContext::Local:
+    //   - Visibility modifiers are forbidden.
+    //   - Attributes are allowed (but often redundant for local private declarations).
+    DeclPtr parseDeclaration(DeclContext ctx);
 
     // package IDENTIFIER
     ASTPtr<PackageDeclAST> parsePackageDecl();
@@ -499,7 +514,7 @@ private:
     StmtPtr parseStmt();
 
     // Parses a multi‑assignment statement.
-    ASTPtr<MultiVarDeclAST> parseMultiVarDecl();       
+    ASTPtr<MultiVarDeclAST> parseMultiVarDecl(std::vector<AttributePtr> attrs = {});   
     ASTPtr<MultiAssignStmtAST> parseMultiAssignStmt(); 
 
     // '{' { stmt } '}'
@@ -531,11 +546,6 @@ private:
 
     // continue
     ASTPtr<ContinueStmtAST> parseContinueStmt();
-
-    // Local declaration inside a block: let / const → VarDeclAST or
-    // FuncDeclAST. Wrapped in DeclStmtAST. pub is forbidden inside a block —
-    // recorded as an error if encountered and then ignored so parsing continues.
-    ASTPtr<DeclStmtAST> parseLocalDecl();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Context flags

@@ -918,6 +918,13 @@ bool Parser::looksLikeStmtStart() const {
         case TokenType::SWITCH:
         case TokenType::AT_SIGN:
         case TokenType::HASH:
+        case TokenType::TYPE:
+        // local declarations
+        case TokenType::STRUCT:
+        case TokenType::ENUM:
+        case TokenType::TRAIT:
+        case TokenType::IMPL:
+        case TokenType::FROM:
             LUC_LOG_PARSER_EXTREME("looksLikeStmtStart: true (keyword)");
             return true;
         default:
@@ -1080,133 +1087,99 @@ ASTPtr<ProgramAST> Parser::parse() {
 // ─────────────────────────────────────────────────────────────────────────────
 // parseTopLevelDecl
 // ─────────────────────────────────────────────────────────────────────────────
-
 DeclPtr Parser::parseTopLevelDecl() {
-    LUC_LOG_PARSER("parseTopLevelDecl: current token = '" << peek().value 
-                   << "', type = " << static_cast<int>(peek().type));
+    return parseDeclaration(DeclContext::TopLevel);
+}
 
-    // ── Collect leading '@' attributes ───────────────────────────────────────
-    LUC_LOG_PARSER_VERBOSE("\tParsing attributes...");
+// ─────────────────────────────────────────────────────────────────────────────
+// parseDeclaration (unified entry point for both top‑level and local declarations)
+// ─────────────────────────────────────────────────────────────────────────────
+DeclPtr Parser::parseDeclaration(DeclContext ctx) {
+    SourceLocation loc = currentLoc();
+    LUC_LOG_PARSER("parseDeclaration: ctx=" << (ctx == DeclContext::TopLevel ? "TopLevel" : "Local"));
+
+    // ── Parse attributes (allowed in both contexts) ──────────────────────
     std::vector<AttributePtr> attrs = parseAttributes();
-    LUC_LOG_PARSER_VERBOSE("\tFound " << attrs.size() << " attribute(s)");
 
-    // ── Visibility modifier ───────────────────────────────────────────────────
-    // All remaining top-level declarations may carry a visibility modifier.
-    Visibility vis = parseVisibility();
-    LUC_LOG_PARSER_VERBOSE("\tVisibility: " << (vis == Visibility::Private ? "private" : 
-                                                 vis == Visibility::Package ? "package" : "export"));
+    // ── Visibility modifier (only at top‑level) ───────────────────────────
+    Visibility vis = Visibility::Private;
+    if (ctx == DeclContext::TopLevel) {
+        vis = parseVisibility();
+    } else {
+        // In local context, pub/export are errors
+        if (checkAny({TokenType::PUB, TokenType::EXPORT})) {
+            errorAt(DiagCode::E2006, "'pub'/'export' not allowed inside a block");
+            advance(); // consume the modifier and ignore it
+        }
+    }
 
-    // ── 'use' ─────────────────────────────────────────────────────────────────
-    // 'export use math.vec2' is supported, so use can take a visibility tier.
+    // ── Dispatch based on the current token ──────────────────────────────
+    DeclPtr decl;
+
     if (check(TokenType::USE)) {
-        LUC_LOG_PARSER("\tDetected 'use' declaration");
         if (!attrs.empty())
             errorAt(DiagCode::E2002, "attributes are not valid on 'use' declarations");
-        return parseUseDecl(vis);
+        decl = parseUseDecl(vis);
     }
-
-    // ── 'struct' ──────────────────────────────────────────────────────────────
-    if (check(TokenType::STRUCT)) {
-        LUC_LOG_PARSER("\tDetected 'struct' declaration");
-        auto decl = parseStructDecl(vis);
-        if (decl) decl->attributes = std::move(attrs);
-        return decl;
+    else if (check(TokenType::STRUCT)) {
+        decl = parseStructDecl(vis);
     }
-
-    // ── 'enum' ────────────────────────────────────────────────────────────────
-    if (check(TokenType::ENUM)) {
-        LUC_LOG_PARSER("\tDetected 'enum' declaration");
-        if (!attrs.empty())
+    else if (check(TokenType::ENUM)) {
+        if (ctx == DeclContext::TopLevel && !attrs.empty())
             errorAt(DiagCode::E2002, "attributes are not valid on 'enum' declarations");
-        return parseEnumDecl(vis);
+        decl = parseEnumDecl(vis);
     }
-
-    // ── 'trait' ───────────────────────────────────────────────────────────────
-    if (check(TokenType::TRAIT)) {
-        LUC_LOG_PARSER("\tDetected 'trait' declaration");
-        if (!attrs.empty())
+    else if (check(TokenType::TRAIT)) {
+        if (ctx == DeclContext::TopLevel && !attrs.empty())
             errorAt(DiagCode::E2002, "attributes are not valid on 'trait' declarations");
-        return parseTraitDecl(vis);
+        decl = parseTraitDecl(vis);
     }
-
-    // ── 'impl' ────────────────────────────────────────────────────────────────
-    if (check(TokenType::IMPL)) {
-        LUC_LOG_PARSER("\tDetected 'impl' declaration");
-        if (!attrs.empty())
-            errorAt(DiagCode::E2002, "attributes are not valid on 'impl' declarations");
-        return parseImplDecl(vis);
+    else if (check(TokenType::IMPL)) {
+        decl = parseImplDecl(vis);
     }
-
-    // ── 'from' ────────────────────────────────────────────────────────────────
-    if (check(TokenType::FROM)) {
-        LUC_LOG_PARSER("\tDetected 'from' declaration");
-        if (!attrs.empty())
-            errorAt(DiagCode::E2002, "attributes are not valid on 'from' declarations");
-        return parseFromDecl(vis);
+    else if (check(TokenType::FROM)) {
+        decl = parseFromDecl(vis);
     }
-
-    // ── 'type' ────────────────────────────────────────────────────────────────
-    if (check(TokenType::TYPE)) {
-        LUC_LOG_PARSER("\tDetected 'type' alias declaration");
-        if (!attrs.empty())
-            errorAt(DiagCode::E2002, "attributes are not valid on 'type' alias declarations");
-        return parseTypeAliasDecl(vis);
+    else if (check(TokenType::TYPE)) {
+        decl = parseTypeAliasDecl(vis);
     }
-
-    // ── 'let' / 'const' ──────────────────────────────────────────────────────
-    // Could be a variable declaration or a function declaration.
-    // looksLikeFuncDecl() inspects whether a '(' follows (with optional
-    // generic params / qualifiers) to decide — this works for @extern too,
-    // since an @extern function still has a parameter group.
-    if (checkAny({TokenType::LET, TokenType::CONST})) {
+    else if (checkAny({TokenType::LET, TokenType::CONST})) {
+        // For let/const we need to distinguish var vs func, but the low‑level parsers
+        // expect the keyword to be consumed already. However, they also need the
+        // identifier and lookahead. We'll handle let/const as a special case here
+        // because they are the only ones that can be either a variable or a function.
+        // Better: create a helper that consumes the keyword, checks for function shape,
+        // and calls parseVarDecl or parseFuncDecl.
         Token kwTok = advance();
-        LUC_LOG_PARSER("\tDetected keyword: '" << kwTok.value << "'");
-        
-        DeclKeyword kw;
-        switch (kwTok.type) {
-        case TokenType::LET:
-            kw = DeclKeyword::Let;
-            LUC_LOG_PARSER_VERBOSE("\t\t-> DeclKeyword::Let");
-            break;
-        default:
-            kw = DeclKeyword::Const;
-            LUC_LOG_PARSER_VERBOSE("\t\t-> DeclKeyword::Const");
-            break;
-        }
+        DeclKeyword kw = (kwTok.type == TokenType::LET) ? DeclKeyword::Let : DeclKeyword::Const;
 
-        // After the keyword we expect the name.
         if (!check(TokenType::IDENTIFIER)) {
-            LUC_LOG_PARSER("\tERROR: expected name after keyword");
             errorAt(DiagCode::E2003, "expected name after '" + kwTok.value + "'");
             return nullptr;
         }
 
-        // looksLikeFuncDecl() checks: IDENTIFIER [<generics>] [~qualifiers] '('
-        // This correctly distinguishes functions from variables for both ordinary
-        // and @extern declarations without any registry involvement.
-        LUC_LOG_PARSER("\tChecking if this looks like a function declaration...");
-        bool isFunc = looksLikeFuncDecl();
-        LUC_LOG_PARSER("\tlooksLikeFuncDecl: " << (isFunc ? "true" : "false"));
-        
-        if (isFunc) {
-            LUC_LOG_PARSER("\t-> Parsing as function declaration");
-            return parseFuncDecl(kw, vis, std::move(attrs));
+        if (looksLikeFuncDecl()) {
+            decl = parseFuncDecl(kw, vis, std::move(attrs));
         } else {
-            LUC_LOG_PARSER("\t-> Parsing as variable declaration");
-            auto decl = parseVarDecl(vis, std::move(attrs));
-            return decl;
+            decl = parseVarDecl(vis, std::move(attrs));
         }
     }
-
-    // ── Unrecognised token ────────────────────────────────────────────────────
-    LUC_LOG_PARSER("\tUnrecognised declaration start");
-    if (!attrs.empty()) {
-        errorAt(DiagCode::E2002, "expected a declaration after '@' attribute(s)");
-    } else if (vis != Visibility::Private) {
-        // A modifier was consumed but no valid declaration followed.
-        errorAt(DiagCode::E2002, "expected a declaration after modifier");
-    } else {
-        errorAt(DiagCode::E2002, "unexpected token '" + peek().value + "' at top level");
+    else {
+        // No valid declaration start
+        if (!attrs.empty()) {
+            errorAt(DiagCode::E2002, "expected a declaration after '@' attribute(s)");
+        } else if (ctx == DeclContext::TopLevel && vis != Visibility::Private) {
+            errorAt(DiagCode::E2002, "expected a declaration after modifier");
+        } else {
+            errorAt(DiagCode::E2002, "unexpected token '" + peek().value + "'");
+        }
+        return nullptr;
     }
-    return nullptr;
+
+    if (decl) {
+        // Attach attributes to the declaration (BaseAST field)
+        decl->attributes = std::move(attrs);
+        decl->loc = loc;
+    }
+    return decl;
 }

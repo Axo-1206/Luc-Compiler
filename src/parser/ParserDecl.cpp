@@ -1168,14 +1168,14 @@ MethodDeclPtr Parser::parseMethodDecl() {
 // parseFromDecl
 //
 // Grammar:
-//   from_block  := [ visibility_mod ] 'from' IDENTIFIER '{' from_entry* '}'
+//   from_block  := [ visibility_mod ] 'from' IDENTIFIER generic_params? '{' from_entry* '}'
 //
-//   from_entry  := param_group { param_group } IDENTIFIER '=' func_body
+//   from_entry  := param_group { param_group } IDENTIFIER "->" returnType "=" func_body
 //                  -- one or more param groups   return type
 //
 // Supports curried conversions:
-//   (c Celsius) Fahrenheit = { ... }
-//   (c Celsius) (scale float) Fahrenheit = { ... }
+//   (c Celsius) -> Fahrenheit = { ... }
+//   (c Celsius) (scale float) -> Fahrenheit = { ... }
 // ─────────────────────────────────────────────────────────────────────────────
 ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
     SourceLocation loc = currentLoc();
@@ -1226,10 +1226,12 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
             entry->sig.paramGroups.push_back(parseParamGroup());
         }
 
+        consume(TokenType::ARROW, "expected '->' before return type for conversion entry, found: " + peek().value);
+
         // Parse return type (can be a full type, e.g., Unwrapped<T>)
         TypePtr returnType = parseType();
         if (!returnType) {
-            errorAt(DiagCode::E2005, "expected return type after parameter list");
+            errorAt(DiagCode::E2005, "expected return type after parameter list, found: " + peek().value);
             synchronize();
             if (looksLikeDeclStart() || check(TokenType::RBRACE))
                 break;
@@ -1238,7 +1240,7 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
         entry->returnType = std::move(returnType);
 
         if (!check(TokenType::ASSIGN)) {
-            errorAt(DiagCode::E2001, "expected '=' before body for conversion entry");
+            errorAt(DiagCode::E2001, "expected '=' before body for conversion entry, found: " + peek().value);
             synchronize();
             if (looksLikeDeclStart() || check(TokenType::RBRACE))
                 break;
@@ -1263,14 +1265,14 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
                 block->stmts.push_back(std::move(ret));
                 entry->body = std::move(block);
             } else {
-                errorAt(DiagCode::E2008, "expected expression after '=' in conversion entry");
+                errorAt(DiagCode::E2008, "expected expression after '=' in conversion entry, found: " + peek().value);
             }
         }
 
         node->entries.push_back(std::move(entry));
     }
 
-    consume(TokenType::RBRACE, "expected '}' to close from block");
+    consume(TokenType::RBRACE, "expected '}' to close from block, found: " + peek().value);
     return node;
 }
 
@@ -1282,10 +1284,10 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
 // ─────────────────────────────────────────────────────────────────────────────
 ASTPtr<TypeAliasDeclAST> Parser::parseTypeAliasDecl(Visibility vis) {
     SourceLocation loc = currentLoc();
-    consume(TokenType::TYPE, "expected 'type'");
+    consume(TokenType::TYPE, "expected 'type' before type alias, found: " + peek().value);
 
     if (!check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected type alias name");
+        errorAt(DiagCode::E2003, "expected type alias name, found: " + peek().value);
         return nullptr;
     }
     std::string name = advance().value;

@@ -434,6 +434,12 @@ struct ASTVisitor {
     virtual void visit(UnknownTypeAST&)         {}
 };
 
+// ── Forward declaration of AttributeAST (needed for AttributePtr) ──
+struct AttributeAST;
+struct AttributeArgAST;
+
+using AttributePtr = ASTPtr<AttributeAST>;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // BaseAST
 //
@@ -487,6 +493,11 @@ struct BaseAST {
     // doc generation time." — storing here satisfies that rule universally.
     std::optional<DocComment>   doc;
 
+    // ── Attributes (compiler directives) ──────────────────────────────────────
+    // May be attached to any node, though only declarations are currently
+    // parsed with attributes. Empty vector if none.
+    std::vector<AttributePtr> attributes;
+
     // ── Semantic annotations (written by semantic pass) ───────────────────────
     // Forward-declared as void* so BaseAST.hpp has zero dependency on TypeAST.
     // The semantic pass casts this to the correct TypeAST* after it resolves it.
@@ -539,6 +550,54 @@ struct BaseAST {
     bool hasDoc()  const { return doc.has_value(); }
     bool hasType() const { return resolvedType != nullptr; }
 };
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AttributeArgKind — what kind of literal this argument represents.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum class AttributeArgKind {
+    StringLit,   // "string"
+    IntLit,      // 42, 0xFF, 0b1010
+    BoolLit,     // true, false
+    TypeIdent    // TypeName (e.g., @extern("malloc", C) — "C" is a type identifier)
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AttributeArgAST
+//
+// One argument inside an attribute's parentheses.
+// Valid forms:  "string"  |  42  |  true/false  |  TypeName
+//
+// Now a proper BaseAST node with visitor support, enabling the semantic pass
+// and tools (ASTDumper, LSP) to walk attribute arguments uniformly.
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct AttributeArgAST : BaseAST {
+    static constexpr ASTKind staticKind = ASTKind::AttributeArg;
+
+    AttributeArgKind kind;
+    InternedString      value;   // raw string for StringLit/IntLit/TypeIdent;
+                              // "true"/"false" for BoolLit
+
+    AttributeArgAST(AttributeArgKind k, InternedString v)
+        : BaseAST(ASTKind::AttributeArg), kind(k), value(v) {}
+
+    void accept(ASTVisitor& v) override { v.visit(*this); }
+};
+
+struct AttributeAST : BaseAST {
+    static constexpr ASTKind staticKind = ASTKind::Attribute;
+
+    InternedString name;                                        // "extern", "inline", etc.
+    std::vector<ASTPtr<AttributeArgAST>> args;      // now owns its arguments
+
+    AttributeAST() : BaseAST(ASTKind::Attribute) {}
+    void accept(ASTVisitor& v) override { v.visit(*this); }
+};
+
+using AttributePtr = ASTPtr<AttributeAST>;
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Thin family bases

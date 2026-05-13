@@ -91,10 +91,11 @@ to the package root. Modules are flat; nesting is not supported.
 | `export` | **World**   | Visible to external consumers of the package               |
 
 - `pub` and `export` are top-level modifiers only — **illegal** inside blocks or
-  function bodies
-- `pub impl` / `export impl` controls method accessibility at the block level
-- `pub from` / `export from` controls converter accessibility at the block level
-- If a package has zero `export` declarations it is a private package
+  function bodies. Declarations inside blocks are implicitly private to that block.
+- `pub impl` / `export impl` controls method accessibility at the block level when used at top-level.
+- `pub from` / `export from` controls converter accessibility at the block level when used at top-level.
+- If a package has zero `export` declarations it is a private package.
+- Most declarations (struct, enum, type, trait, impl, from, let, const, func) are allowed in local scopes.
 
 ### Re-Exports
 
@@ -108,11 +109,20 @@ export use math.matrix.Mat2    -- granular re-export of a single type
 
 ### Import
 
+```
+use_decl        := [ visibility_mod ] 'use' module_path [ 'as' IDENTIFIER ]
+
+module_path     := IDENTIFIER { '.' IDENTIFIER }
+```
+
 ```luc
 use math              -- all exported items from the math package
 use math.vec2         -- specific file
 use math as m         -- local alias: m.Vec2
 ```
+
+> [!NOTE]
+> **Local usage:** `use` can be declared inside any block. When local, `visibility_mod` must be omitted.
 
 ---
 
@@ -329,7 +339,7 @@ let next *uint8? = #ptrOffset(buf, 1)      -- pointer arithmetic
 ## Variable Declaration
 
 ```
-var_decl        := decl_keyword IDENTIFIER type_ann [ '=' expr ]
+var_decl        := [ visibility_mod ] decl_keyword IDENTIFIER type_ann [ '=' expr ]
 
 decl_keyword    := 'let' | 'const'
 
@@ -680,10 +690,13 @@ A function signature has three parts: qualifiers, parameter groups, and the
 return boundary `->`.
 
 ```
-func_decl       := decl_keyword IDENTIFIER [ generic_params ]
+func_decl       := [ visibility_mod ] decl_keyword IDENTIFIER [ generic_params ]
                    [ qualifier_list ] param_group { param_group }
                    [ '->' return_list ]
                    '=' func_body
+
+> [!NOTE]
+> **Local usage:** Functions can be declared inside any block. When local, `visibility_mod` must be omitted.
 
 qualifier_list  := { '~' IDENTIFIER }
 
@@ -951,6 +964,9 @@ let f (a int) -> ~nullable (b int) -> int
 struct_decl     := [ visibility_mod ] 'struct' IDENTIFIER [ generic_params ]
                    '{' { field_decl } '}'
 
+> [!NOTE]
+> **Local usage:** Structs can be declared inside any block. When local, `visibility_mod` must be omitted.
+
 field_decl      := IDENTIFIER type [ '=' expr ]    -- name then type, optional default
 
 generic_params  := '<' generic_param { [','] generic_param } '>'
@@ -1043,6 +1059,9 @@ Vec2:length = .. -- ERROR: impl methods cannot be reassigned
 enum_decl       := [ visibility_mod ] 'enum' IDENTIFIER
                    '{' enum_variant { [','] enum_variant } '}'
 
+> [!NOTE]
+> **Local usage:** Enums can be declared inside any block. When local, `visibility_mod` must be omitted.
+
 enum_variant    := IDENTIFIER
                  | IDENTIFIER '=' INT_LITERAL
 ```
@@ -1068,6 +1087,9 @@ type_decl       := [ visibility_mod ] 'type' IDENTIFIER [ generic_params ]
                    '=' type_alias_rhs
 
 type_alias_rhs  := type    -- any valid type expression
+
+> [!NOTE]
+> **Local usage:** Type aliases can be declared inside any block. When local, `visibility_mod` must be omitted.
 ```
 
 A `type` alias introduces a new name for an existing shape — it does not
@@ -1105,7 +1127,7 @@ trait_method    := IDENTIFIER [ qualifier_list ] param_group { param_group }
 ```
 
 Rules:
-- Traits are top-level only — never nested
+- Traits can be top-level or local. When local, `visibility_mod` must be omitted.
 - No field declarations — method signatures only
 - No default implementations
 - A struct satisfies a trait by declaring `impl StructName : TraitName { ... }`
@@ -1149,7 +1171,7 @@ method_decl     := IDENTIFIER [ qualifier_list ] param_group { param_group }
 ```
 
 Rules:
-- `impl` must be in the same file as the struct declaration
+- `impl` must be in the same file (and if local, the same block) as the struct declaration
 - `impl` must appear after the struct declaration
 - Multiple impl blocks for the same struct merge at semantic time
 - Duplicate method names across merged blocks are a semantic error
@@ -1214,18 +1236,22 @@ pub impl Scene<T : Drawable> {
 ```
 from_block          := [ visibility_mod ] 'from' IDENTIFIER [ generic_params ] '{' { from_entry } '}'
 
-from_entry          := param_group { param_group } type '=' func_body
+from_entry          := param_group { param_group } '->' type '=' func_body
                    -- source param(s), target type name, body
                    -- target type name must match the enclosing from target
+
+> [!NOTE]
+> **Local usage:** From blocks can be declared inside any block. When local, `visibility_mod` must be omitted.
 ```
 
 Rules:
-- Top-level only — never nested
-- Must be in the same file as the target struct
-- Multiple `from` blocks for the same target are valid if each accepts a
-  different source parameter type
-- `TypeName(expr)` call syntax dispatches to the matching `from` entry
-- One hop of implicit casting only — multi-hop must be written explicitly
+A from block defines implicit conversions from a source type (described by the parameter groups) to a target struct type. Each entry contains:
+- One or more parameter groups (currying allowed) – the source value(s).
+- The arrow -> (mandatory).
+- A single return type – must be the struct type named in the enclosing from declaration.
+- `=` followed by the conversion body (a block or expression).
+
+The body may return a value of the target type, typically via a struct literal or a call to another conversion.
 
 ### Implicit casting contexts
 
@@ -1556,10 +1582,9 @@ elements of both operands.
 ## Statements
 
 ```
-stmt            := var_decl
+stmt            := { attribute } actual_decl
                  | multi_assign         -- declaration with let/const
                  | multi_assign_stmt    -- reassignment to existing variables
-                 | func_decl
                  | assign_stmt
                  | if_stmt
                  | switch_stmt
@@ -1576,6 +1601,39 @@ block           := '{' { stmt } '}'
 expr_stmt       := expr
 assign_stmt     := expr assign_op expr
 ```
+> [!WARNING]
+> **Visibility inside blocks:**  
+> `pub` and `export` are **not allowed** on any local declaration – they are top‑level only. The parser emits an error if they appear inside a block.
+
+> **Attributes on local declarations:**  
+> Attributes (`@inline`, `@deprecated`, `@unroll`, etc.) **are allowed** on local declarations (type, struct, enum, impl, from, var, func). They are attached to the declaration node and may be used by the semantic pass.
+
+### Examples of valid local declarations
+
+```luc
+let compute () -> int = {
+    @deprecated("use newVec")
+    type Vec2 = struct { x float, y float }
+
+    @inline
+    let add (a int, b int) -> int = { return a + b }
+
+    struct Point { x int, y int }
+
+    enum Color { Red, Green, Blue }
+
+    impl Point {
+        length () -> float = { return #sqrt(x*x + y*y) }
+    }
+
+    from Point {
+        (v float) -> Point = { return Point { x = v, y = v } }
+    }
+
+    let p Point = Point(5.0)
+    p:length()
+}
+
 
 ### If / Else — Statement Form
 

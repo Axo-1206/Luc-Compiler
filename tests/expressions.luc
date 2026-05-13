@@ -160,112 +160,129 @@ export const main (args []string) -> int = {
     -- }
 
     -- Match with secondary values (some arms supply second value)
-    let primary string
-    let secondary string?
-    primary, secondary = match a {
-        200 => "OK", "success"
-        404 => "Not Found"   -- secondary becomes nil
-        default => "Unknown"
-    }
+    -- let primary string
+    -- let secondary string?
+    -- primary, secondary = match a {
+    --     200 => "OK", "success"
+    --     404 => "Not Found"   -- secondary becomes nil
+    --     default => "Unknown"
+    -- }
 
-    -- ========================================================================
-    -- While loop
-    -- ========================================================================
-    let i int = 0
-    while i < 5 {
-        i = i + 1
-    }
+    -- -- ========================================================================
+    -- -- While loop
+    -- -- ========================================================================
+    -- let i int = 0
+    -- while i < 5 {
+    --     i = i + 1
+    -- }
 
-    -- ========================================================================
-    -- Do-while loop
-    -- ========================================================================
-    let j int = 0
-    do {
-        j = j + 1
-    } while j < 3
+    -- -- ========================================================================
+    -- -- Do-while loop
+    -- -- ========================================================================
+    -- let j int = 0
+    -- do {
+    --     j = j + 1
+    -- } while j < 3
 
-    -- ========================================================================
-    -- For loop with range (inclusive, exclusive, step)
-    -- ========================================================================
-    let sum int = 0
-    for idx int in 0..10 {
-        sum = sum + idx
-    }
+    -- -- ========================================================================
+    -- -- For loop with range (inclusive, exclusive, step)
+    -- -- ========================================================================
+    -- let sum int = 0
+    -- for idx int in 0..10 {
+    --     sum = sum + idx
+    -- }
 
-    for idx int in 0..<10 {
-        sum = sum + idx
-    }
+    -- for idx int in 0..<10 {
+    --     sum = sum + idx
+    -- }
 
-    for step int in 0..20..2 {
-        sum = sum + step
-    }
+    -- for step int in 0..20..2 {
+    --     sum = sum + step
+    -- }
 
-    -- For loop over array (dynamic array)
-    let numbers [*]int = [1, 2, 3, 4, 5]
-    for num in numbers {
-        sum = sum + num
-    }
+    -- -- For loop over array (dynamic array)
+    -- let numbers [*]int = [1, 2, 3, 4, 5]
+    -- for num in numbers {
+    --     sum = sum + num
+    -- }
 
-    -- ========================================================================
-    -- Break and continue
-    -- ========================================================================
-    let k int = 0
-    while k < 10 {
-        k = k + 1
-        if k % 2 == 0 { continue }
-        if k > 7 { break }
-    }
+    -- -- ========================================================================
+    -- -- Break and continue
+    -- -- ========================================================================
+    -- let k int = 0
+    -- while k < 10 {
+    --     k = k + 1
+    --     if k % 2 == 0 { continue }
+    --     if k > 7 { break }
+    -- }
 
-    -- ========================================================================
-    -- Return statement (void and with value)
-    -- ========================================================================
-    let testReturn (x int) -> int = {
-        if x < 0 { return 0 }
-        return x * 2
-    }
+    -- -- ========================================================================
+    -- -- Return statement (void and with value)
+    -- -- ========================================================================
+    -- let testReturn (x int) -> int = {
+    --     if x < 0 { return 0 }
+    --     return x * 2
+    -- }
 
-    -- ========================================================================
-    -- Pipeline operator (|>)
-    -- ========================================================================
-    let Double (x int) -> int = { return x * 2 }
-    let toString (x int) -> string = { return string(x) }
+    -- -- ========================================================================
+    -- -- Pipeline operator (|>)
+    -- -- ========================================================================
+    -- let Double (x int) -> int = { return x * 2 }
+    -- let toString (x int) -> string = { return string(x) }
 
-    let pipelineResult string = 5 |> Double |> toString
+    -- let pipelineResult string = 5 |> Double |> toString
 
-    -- Pipeline with argument pack (!)
-    let add (a int, b int) -> int = { return a + b }
-    let pipedAdd int = 10 |> add(5)!
+    -- -- Pipeline with argument pack (!)
+    -- let add (a int, b int) -> int = { return a + b }
+    -- let pipedAdd int = 10 |> add(5)!
 
-    -- Pipeline with method reference
-    let p Point = Point { x = 3, y = 4 }
-    let pX int = p |> Point.x  
-    let xVal int = p |> Point:getX
+    -- -- Pipeline with method reference
+    -- let p Point = Point { x = 3, y = 4 }
+    -- let pX int = p |> Point.x  
+    -- let xVal int = p |> Point:getX
 
-    -- Pipeline with anonymous function
-    let anonPipeline int = 10 |> (x int) -> int { return x + 5 }
+    -- -- Pipeline with anonymous function
+    -- let anonPipeline int = 10 |> (x int) -> int { return x + 5 }
 
-    -- ========================================================================
-    -- Composition operator (+>)
-    -- ========================================================================
-    let doubleFn (x int) -> int = { return x * 2 }
-    let toStringFn (x int) -> string = { return string(x) }
-    let composed (x int) string = doubleFn +> toStringFn
-    let composedResult string = composed(42)
+    -- -- ========================================================================
+    -- -- Composition operator (+>)
+    -- -- ========================================================================
+    -- let doubleFn (x int) -> int = { return x * 2 }
+    -- let toStringFn (x int) -> string = { return string(x) }
+    -- let composed (x int) string = doubleFn +> toStringFn
+    -- let composedResult string = composed(42)
 
-    -- ========================================================================
-    -- Null-coalescing operator (??)
-    -- ========================================================================
-    let maybe int? = nil
-    let value int = maybe ?? 100
+    -- -- ========================================================================
+    -- -- Null-coalescing operator (??)
+    -- -- ========================================================================
+    -- let maybe int? = nil
+    -- let value int = maybe ?? 100
 
     -- ========================================================================
     -- Safe navigation operator (?.)
     -- ========================================================================
-    struct Container {
-        data &Point?
+    type ABC = int
+    let test &ABC? = nil
+    let test *ABC? = 6
+
+    struct test {}
+
+    from abd {
+        (method int) -> int = {} 
     }
-    let container Container? = nil
-    let coordX int? = container?.data?.x
+
+    impl abc {}
+
+    trait Name {
+        method (param int) -> any   
+        
+    }
+
+    -- struct Container {
+    --     data &Point?
+    -- }
+    -- let container Container? = nil
+    -- let coordX int? = container?.data?.x
 
     -- ========================================================================
     -- Catch step (|> catch)

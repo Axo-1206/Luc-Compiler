@@ -693,9 +693,7 @@ void ASTDumper::visit(ExprStmtAST& node) {
 
 void ASTDumper::visit(DeclStmtAST& node) {
     printNodeHeader(node, "DeclStmtAST");
-    std::visit([this](const auto& declPtr) {
-        if (declPtr) visitChild(declPtr.get());
-    }, node.decl);
+    if (node.decl) visitChild(node.decl.get());
 }
 
 void ASTDumper::visit(IfStmtAST& node) {

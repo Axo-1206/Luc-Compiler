@@ -20,7 +20,6 @@
 #include <vector>
 #include <memory>
 #include <optional>
-#include <variant>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StmtAST.hpp — all statement nodes
@@ -121,65 +120,48 @@ struct ExprStmtAST : StmtAST {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LocalDecl — the two declaration kinds that are valid inside a block.
-//
-// Only VarDeclAST and FuncDeclAST may appear inside a block body.
-// This variant enforces that structurally — neither pub/export nor extern can
-// sneak in because:
-//
-//   - DeclPtr (the base DeclAST*) is NOT used here. Using the base pointer
-//     would allow any declaration kind including StructDeclAST, ImplDeclAST,
-//     ExternDeclAST, etc. — none of which are valid inside a block.
-//
-//   - pub/export is a file-to-package visibility modifier. Inside a block every
-//     name is scoped to that block and gone when the block exits. 'pub'/'export'
-//     is structurally meaningless and the parser must set isPub = false
-//     on any VarDeclAST or FuncDeclAST it constructs for a block context.
-//
-//   - extern is a linker-level directive. Linkage is a global program
-//     concern — the linker has no concept of block scope. Both the
-//     parser and the semantic pass reject extern in non-top-level position.
-//
-// The parser constructs one of these two types when it sees a declaration
-// inside a block and wraps it in DeclStmtAST.
-// ─────────────────────────────────────────────────────────────────────────────
-
-using LocalDecl = std::variant<
-    ASTPtr<VarDeclAST>,    // let x int = 5
-    ASTPtr<FuncDeclAST>    // let f (x int) int = { ... }
->;
-
-// ─────────────────────────────────────────────────────────────────────────────
 // DeclStmtAST
 //
-// A local declaration inside a block body — variable or function only.
-//   let x     int    = 5
-//   imt limit int    = 100
-//   let f     (n int) int = { return n * 2 }
+// A local declaration inside a block body – now supports ANY declaration kind.
+// Previously restricted to only VarDeclAST and FuncDeclAST. After refactoring,
+// DeclStmtAST can hold any DeclAST node (type alias, struct, enum, trait, impl,
+// from, var, func). The parser enforces which declaration kinds are semantically
+// valid inside a block (visibility modifiers and attributes are rejected locally).
 //
-// decl holds exactly one of the two LocalDecl alternatives. The parser sets
-// isPub = false on whichever node it constructs — the semantic pass may
-// assert this as a sanity check but never needs to enforce it by inspecting
-// a modifier field on a base pointer.
+// Usage in the AST:
+//   - BlockStmtAST::stmts contains StmtPtr, which may point to a DeclStmtAST.
+//   - The decl field points to the actual declaration node (e.g., TypeAliasDeclAST).
 //
-// At top level, declarations live as DeclPtr in ProgramAST::decls.
-// This node is only produced when the parser is inside a block body.
+// Semantic handling:
+//   - The semantic pass visits DeclStmtAST, then dispatches to the specific
+//     declaration via decl->accept(visitor). The visitor then registers the
+//     declared name in the current block's type/value scope depending on the
+//     declaration kind.
+//   - Types declared locally (type aliases, structs, enums) are visible only
+//     inside the block where they appear – scoping follows block nesting.
+//
+// Example AST structure for a local type alias:
+//   BlockStmtAST
+//     └─ DeclStmtAST
+//          └─ decl: TypeAliasDeclAST { name = "Vec2", aliasedType = ... }
 // ─────────────────────────────────────────────────────────────────────────────
-
 struct DeclStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::DeclStmt;
 
-    LocalDecl decl;
+    DeclPtr decl;   // now holds any declaration (type alias, struct, var, func, ...)
 
-    explicit DeclStmtAST(LocalDecl d)
-        : StmtAST(ASTKind::DeclStmt), decl(std::move(d)) {}
+    explicit DeclStmtAST(DeclPtr d) : StmtAST(ASTKind::DeclStmt), decl(std::move(d)) {}
 
-    // Convenience helpers — avoid having to write std::get<> at every call site.
-    bool isVar()  const { return std::holds_alternative<ASTPtr<VarDeclAST>>(decl);  }
-    bool isFunc() const { return std::holds_alternative<ASTPtr<FuncDeclAST>>(decl); }
-
-    VarDeclAST*  asVar()  const { return std::get<ASTPtr<VarDeclAST>>(decl).get();  }
-    FuncDeclAST* asFunc() const { return std::get<ASTPtr<FuncDeclAST>>(decl).get(); }
+    // Convenience helpers – use decl->isa<T>() directly in most cases.
+    bool isVar()        const { return decl && decl->isa<VarDeclAST>(); }
+    bool isFunc()       const { return decl && decl->isa<FuncDeclAST>(); }
+    bool isTypeAlias()  const { return decl && decl->isa<TypeAliasDeclAST>(); }
+    bool isStruct()     const { return decl && decl->isa<StructDeclAST>(); }
+    bool isImplDecl()   const { return decl && decl->isa<ImplDeclAST>(); }
+    bool isFromDecl()   const { return decl && decl->isa<FromDeclAST>(); }
+    bool isEnum()       const { return decl && decl->isa<EnumDeclAST>(); }
+    bool isUseDecl()    const { return decl && decl->isa<UseDeclAST>(); }
+    bool isTrait()      const { return decl && decl->isa<TraitDeclAST>(); }
 
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
@@ -469,7 +451,6 @@ struct ContinueStmtAST : StmtAST {
 // vars    – list of (name, type) pairs
 // rhs     – initialiser expression
 // ─────────────────────────────────────────────────────────────────────────────
-
 struct MultiVarDeclAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::MultiVarDecl;
 
