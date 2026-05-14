@@ -315,7 +315,7 @@ functions, check for nil, but never dereference directly.
 ### Boundary crossing (intrinsics)
 
 ```luc
-#ptrToRef(T, ptr)   -- *T → &T  (assert validity, cross to safe reference)
+#ptrToRef(ptr)   -- *T → &T  (assert validity, cross to safe reference)
 #refToPtr(ref)      -- &T → *T  (convert back to raw pointer)
 #ptrOffset(ptr, n)  -- pointer arithmetic, returns new *T
 #ptrDiff(p1, p2)    -- distance between two pointers as int64
@@ -328,7 +328,7 @@ const malloc (size uint64) -> *uint8?
 let buf *uint8? = malloc(1024)
 if buf == nil { return 1 }
 
-let ref &uint8 = #ptrToRef(&uint8, buf)    -- cross the boundary
+let ref &uint8 = #ptrToRef(buf)    -- cross the boundary
 ref = 0xFF                                  -- work with it safely
 
 let next *uint8? = #ptrOffset(buf, 1)      -- pointer arithmetic
@@ -2090,7 +2090,7 @@ All memory intrinsics operate on raw pointers (`*T`) and are only valid inside
 
 | Intrinsic            | Args       | Returns | Notes                                 |
 | -------------------- | ---------- | ------- | ------------------------------------- |
-| `#ptrToRef(T, ptr)`  | type, `*T` | `&T`    | Assert valid, cross to safe reference |
+| `#ptrToRef(ptr)`     | type, `*T` | `&T`    | Assert valid, cross to safe reference |
 | `#refToPtr(ref)`     | `&T`       | `*T`    | Convert reference to raw pointer      |
 | `#ptrOffset(ptr, n)` | `*T`, int  | `*T`    | Pointer arithmetic (element offset)   |
 | `#ptrDiff(p1, p2)`   | `*T`, `*T` | `int64` | Distance between pointers in elements |
@@ -2100,7 +2100,7 @@ perform pointer arithmetic.
 
 ```luc
 let buf *uint8 = malloc(1024)
-let ref &uint8 = #ptrToRef(&uint8, buf)
+let ref &uint8 = #ptrToRef(buf)
 ref = 0xFF
 
 let next *uint8 = #ptrOffset(buf, 1)

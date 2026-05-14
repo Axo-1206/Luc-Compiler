@@ -1049,10 +1049,13 @@ ExprPtr Parser::parseAnonFuncExpr() {
                             << node->sig.paramGroups.back().size() << " params");
     }
     
-    // ── Optional '->' and return list (multiple returns) ──────────────────
-    if (match(TokenType::ARROW)) {
+    // ── '->' and return list (multiple returns) ──────────────────
+    if (check(TokenType::ARROW)) {
+        advance(); // consume '->' manually to guarantee progress
         node->sig.returnTypes = parseReturnList();
-        LUC_LOG_EXPR_VERBOSE("\tparsed " << node->sig.returnTypes.size() << " return type(s)");
+        if (node->sig.returnTypes.empty() && !check(TokenType::LBRACE)) {
+            errorAt(DiagCode::E2005, "expected return type after '->' in anonymous function");
+        }
     } else {
         // void anonymous function (no return types)
         LUC_LOG_EXPR_VERBOSE("\tvoid anonymous function (no return types)");
@@ -1660,23 +1663,37 @@ PipelineStepPtr Parser::parsePipelineStep() {
         }
         
         if (hasParamGroups) {
-            // After parameter groups, skip comments and optional '->' return type
+            // After parameter groups, skip comments
             while (testPos < tokens_.size() && (tokens_[testPos].type == TokenType::LINE_COMMENT ||
                                                 tokens_[testPos].type == TokenType::DOC_COMMENT)) {
                 ++testPos;
             }
             
-            // Skip optional '->' and return type
+            // handle optional '->' and return type.
             if (testPos < tokens_.size() && tokens_[testPos].type == TokenType::ARROW) {
-                ++testPos;
+                ++testPos; // consume '->'
                 // Skip comments after '->'
                 while (testPos < tokens_.size() && (tokens_[testPos].type == TokenType::LINE_COMMENT ||
                                                     tokens_[testPos].type == TokenType::DOC_COMMENT)) {
                     ++testPos;
                 }
-                // Skip return type (just consume until we hit a '{' or something else)
-                // For lookahead, we just need to know if a '{' follows after valid return type syntax
-                // This is simplified - we trust that if we see a '{' after this, it's an anon func
+                // Consume the return type (simple type: primitive, identifier, or with generic args)
+                if (testPos < tokens_.size()) {
+                    TokenType retStart = tokens_[testPos].type;
+                    if (isPrimitiveTypeToken(retStart) || retStart == TokenType::IDENTIFIER) {
+                        ++testPos; // consume the type name
+                        // If generic arguments follow (e.g., List<int>), skip them
+                        if (testPos < tokens_.size() && tokens_[testPos].type == TokenType::LESS) {
+                            int depth = 1;
+                            ++testPos;
+                            while (testPos < tokens_.size() && depth > 0) {
+                                if (tokens_[testPos].type == TokenType::LESS) ++depth;
+                                else if (tokens_[testPos].type == TokenType::GREATER) --depth;
+                                ++testPos;
+                            }
+                        }
+                    } 
+                }
             }
             
             // Skip more comments before checking for '{'
@@ -1698,10 +1715,25 @@ PipelineStepPtr Parser::parsePipelineStep() {
     // ── If it looks like an anonymous function, parse it as such ───────────────
     if (isAnonFunc) {
         LUC_LOG_EXPR_VERBOSE("parsePipelineStep: parsing anonymous function");
-        
+        std::size_t beforePos = pos_;
         ExprPtr anonFuncExpr = parseAnonFuncExpr();
-        if (!anonFuncExpr) {
-            errorAt(DiagCode::E2002, "expected anonymous function as pipeline step");
+        if (!anonFuncExpr || anonFuncExpr->isa<UnknownExprAST>()) {
+            errorAt(DiagCode::E2002, "expected valid anonymous function as pipeline step");
+            // Recover: skip to the next '{' or to the end of the step
+            while (!isAtEnd() && !check(TokenType::LBRACE) && !check(TokenType::PIPELINE) &&
+                !check(TokenType::SEMICOLON) && !check(TokenType::RBRACE)) {
+                advance();
+            }
+            if (check(TokenType::LBRACE)) {
+                // Skip the entire block to avoid further errors
+                int braceDepth = 1;
+                advance();
+                while (!isAtEnd() && braceDepth > 0) {
+                    if (match(TokenType::LBRACE)) braceDepth++;
+                    else if (match(TokenType::RBRACE)) braceDepth--;
+                    else advance();
+                }
+            }
             step->kind = PipelineStepKind::Ident;
             step->ident = pool_.intern("<error>");
             return step;
@@ -2034,7 +2066,7 @@ MatchArmPtr Parser::parseMatchArm() {
 // ─────────────────────────────────────────────────────────────────────────────
 // parseDefaultArm
 //
-// Grammar:  'default' '->' arm_body
+// Grammar:  'default' '=>' arm_body
 // ─────────────────────────────────────────────────────────────────────────────
 DefaultArmPtr Parser::parseDefaultArm() {
     SourceLocation loc = currentLoc();

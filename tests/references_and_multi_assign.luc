@@ -107,6 +107,7 @@ let usePointer () -> int = {
 
     let dummy (a int) -> (int, string) = { return a, "ok" }
     let x int, y string = dummy(42)
+    x, y = dummy(42)
 
     -- Mixed with 'const' is not allowed per grammar, but single line with both 'let'
     -- is fine as long as each has keyword.

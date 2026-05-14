@@ -63,7 +63,8 @@ StmtPtr Parser::parseStmt() {
     // ── 3. All other local declarations (type, struct, enum, impl, trait, from, let/const) ──
     if (checkAny({TokenType::TYPE, TokenType::STRUCT, TokenType::ENUM,
                   TokenType::IMPL, TokenType::TRAIT, TokenType::FROM,
-                  TokenType::LET, TokenType::CONST, TokenType::AT_SIGN})) {
+                  TokenType::LET, TokenType::CONST, TokenType::AT_SIGN,
+                  TokenType::USE})) {
         // Unified local declaration parser – consumes the keyword,
         // handles attributes, rejects pub/export, returns DeclPtr.
         DeclPtr decl = parseDeclaration(DeclContext::Local);
@@ -106,6 +107,27 @@ StmtPtr Parser::parseStmt() {
     if (check(TokenType::RETURN))   return parseReturnStmt();
     if (check(TokenType::BREAK))    return parseBreakStmt();
     if (check(TokenType::CONTINUE)) return parseContinueStmt();
+
+    // ── Detect invalid variable declaration missing let/const: IDENTIFIER type '='
+    if (check(TokenType::IDENTIFIER)) {
+        std::size_t savedPos = pos_;
+        advance(); // consume the identifier
+        if (looksLikeType() && check(TokenType::ASSIGN)) {
+            // Invalid: variable declaration without let/const
+            errorAt(DiagCode::E2002,
+                    "variable declaration requires 'let' or 'const' (found: '" +
+                    tokens_[savedPos].value + " " + peek().value + " = ...')");
+            // Recover: skip until the end of the statement (semicolon or closing brace)
+            while (!isAtEnd() && !check(TokenType::SEMICOLON) && !check(TokenType::RBRACE)) {
+                advance();
+            }
+            if (check(TokenType::SEMICOLON)) advance();
+            auto unknown = arena_.make<UnknownStmtAST>();
+            unknown->loc = currentLoc();
+            return unknown;
+        }
+        pos_ = savedPos; // restore position for normal parsing
+    }
 
     // ── 6. Expression statement ──────────────────────────────────────────
     if (!looksLikeStmtStart()) {
