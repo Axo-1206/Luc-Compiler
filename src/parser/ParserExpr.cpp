@@ -1770,11 +1770,38 @@ PipelineStepPtr Parser::parsePipelineStep() {
         LUC_LOG_EXPR_VERBOSE("parsePipelineStep: identifier '" << name << "'");
     }
     
-    // ── BehaviorRef: IDENTIFIER ':' IDENTIFIER ────────────────────────────────
+    // ── BehaviorRef: IDENTIFIER ':' IDENTIFIER [ '(' args ')' '!' ] ───────────
     if (check(TokenType::COLON)) {
         if (peekNext().type == TokenType::IDENTIFIER) {
             advance(); // consume ':'
             std::string method = advance().value;
+            
+            // Check for optional argument pack: '(' args ')' '!'
+            if (check(TokenType::LPAREN)) {
+                // Parse argument pack
+                consume(TokenType::LPAREN, "expected '('");
+                std::vector<ExprPtr> packArgs;
+                if (!check(TokenType::RPAREN)) {
+                    packArgs = parseArgList();
+                }
+                consume(TokenType::RPAREN, "expected ')'");
+                
+                if (!match(TokenType::BANG)) {
+                    errorAt(DiagCode::E2001, "expected '!' to mark argument pack in pipeline step");
+                    step->kind = PipelineStepKind::Ident;
+                    step->ident = pool_.intern("<error>");
+                    return step;
+                }
+                
+                step->kind = PipelineStepKind::BehaviorArgPack;
+                step->typeName = std::move(pool_.intern(name));
+                step->method = std::move(pool_.intern(method));
+                step->packArgs = std::move(packArgs);
+                LUC_LOG_EXPR_VERBOSE("parsePipelineStep: BehaviorArgPack " << pool_.lookup(step->typeName) << ":" << pool_.lookup(step->method) << " with " << step->packArgs.size() << " args");
+                return step;
+            }
+            
+            // No argument pack – plain BehaviorRef
             step->kind = PipelineStepKind::BehaviorRef;
             step->typeName = std::move(pool_.intern(name));
             step->method = std::move(pool_.intern(method));

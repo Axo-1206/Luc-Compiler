@@ -126,6 +126,7 @@ enum class PipelineStepKind {
     Ident,        // fn          — bare function name
     BehaviorRef,  // Type:method — impl method reference
     FieldRef,     // obj.field   — data field of non-nullable function type
+    BehaviorArgPack, // Type:method(args)!   (method with argument pack)
     ArgPack,      // fn(args)!   — argument pack, upstream injected as first arg
     AnonFunc,     // (x T) R { } — inline anonymous function
 };

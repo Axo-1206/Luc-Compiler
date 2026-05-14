@@ -970,29 +970,79 @@ bool Parser::looksLikeDeclStart() const {
 }
 
 bool Parser::looksLikeMultiAssignStart() const {
-    std::size_t i = pos_;
-    // Skip any initial comment tokens
+    std::size_t i = pos_;  // start from current parser position (without consuming)
+
+    // ── 1. Skip leading comments ─────────────────────────────────────────────
     while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
                                   tokens_[i].type == TokenType::DOC_COMMENT))
         ++i;
     if (i >= tokens_.size()) return false;
-    // First token must be an identifier (simplest case)
+
+    // ── 2. The first token of the first lvalue must be an identifier ─────────
+    //    Example: "pair" in "pair.first, ..." or "arr" in "arr[0], ..."
     if (tokens_[i].type != TokenType::IDENTIFIER) return false;
     ++i;
-    // Skip comments again
+
+    // ── 3. Parse optional suffixes that are part of the *same* lvalue ────────
+    //    Allowed suffixes: .field   or   [expr]   (both are assignable locations)
+    //    We stop when we encounter a token that cannot be part of an lvalue.
+    while (i < tokens_.size()) {
+        // Skip comments before checking suffix
+        while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
+                                      tokens_[i].type == TokenType::DOC_COMMENT))
+            ++i;
+        if (i >= tokens_.size()) break;
+
+        // ── Field access: .identifier ────────────────────────────────────────
+        if (tokens_[i].type == TokenType::DOT) {
+            ++i;
+            // Skip comments after '.'
+            while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
+                                          tokens_[i].type == TokenType::DOC_COMMENT))
+                ++i;
+            if (i >= tokens_.size()) return false;
+            if (tokens_[i].type != TokenType::IDENTIFIER) return false;
+            ++i;  // consume the field name
+        }
+        // ── Array / slice index: [ expr ] ────────────────────────────────────
+        //    Handles simple and nested brackets (e.g., arr[0] or matrix[2][3]).
+        //    We skip the whole expression inside brackets because we only need
+        //    to know that there is an index, not its content.
+        else if (tokens_[i].type == TokenType::LBRACKET) {
+            ++i;
+            int bracketDepth = 1;
+            while (i < tokens_.size() && bracketDepth > 0) {
+                if (tokens_[i].type == TokenType::LBRACKET)
+                    ++bracketDepth;
+                else if (tokens_[i].type == TokenType::RBRACKET)
+                    --bracketDepth;
+                ++i;  // move past this token
+                // Note: We do NOT check for comments inside brackets – they
+                // are already ignored because they are not LBRACKET/RBRACKET.
+            }
+            // If brackets are unbalanced, i may go out of bounds; treat as false.
+            if (bracketDepth != 0) return false;
+        }
+        else {
+            break;  // No more lvalue suffixes – end of the first lvalue
+        }
+    }
+
+    // ── 4. After finishing the first lvalue, look for a comma ────────────────
     while (i < tokens_.size() && (tokens_[i].type == TokenType::LINE_COMMENT ||
                                   tokens_[i].type == TokenType::DOC_COMMENT))
         ++i;
     if (i >= tokens_.size()) return false;
-    // Must be a comma
     if (tokens_[i].type != TokenType::COMMA) return false;
-    // Scan forward until we find '=', ';', '{', '}', or EOF
+
+    // ── 5. A comma means there are at least two lvalues. Now scan for '=' ─────
+    ++i;  // skip the comma
     while (i < tokens_.size()) {
         TokenType tt = tokens_[i].type;
-        if (tt == TokenType::ASSIGN) return true;
-        if (tt == TokenType::SEMICOLON || tt == TokenType::LBRACE || tt == TokenType::RBRACE ||
-            tt == TokenType::EOF_TOKEN)
-            return false;
+        if (tt == TokenType::ASSIGN) return true;          // found the '=' – it's a multi‑assign
+        if (tt == TokenType::SEMICOLON || tt == TokenType::LBRACE ||
+            tt == TokenType::RBRACE || tt == TokenType::EOF_TOKEN)
+            return false;                                  // statement ends without '='
         ++i;
     }
     return false;
