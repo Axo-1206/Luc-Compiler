@@ -1,5 +1,5 @@
 #include "QualifierRegistry.hpp"
-#include "diagnostics/DiagnosticEngine.hpp" 
+#include "diagnostics/DiagnosticEngine.hpp"
 #include <cassert>
 #include <sstream>
 
@@ -14,9 +14,9 @@ namespace {
     };
 
     const BuiltinQualifier kBuiltinQualifiers[] = {
-        { "async",    QualifierBits::Async,    true,  true,  false, false },
-        { "nullable", QualifierBits::Nullable, true,  true,  false, false },
-        { "parallel", QualifierBits::Parallel, true,  true,  false, false },
+        { "async",    QualifierBits::Async,    true, true,  false, false },
+        { "nullable", QualifierBits::Nullable, true, true,  false, false },
+        { "parallel", QualifierBits::Parallel, false, true,  false, false },
     };
     const size_t kNumBuiltinQualifiers = sizeof(kBuiltinQualifiers) / sizeof(kBuiltinQualifiers[0]);
 }

@@ -418,7 +418,7 @@ expr_lhs        := IDENTIFIER
 
 > [!NOTE] 
 > **For Reassignment to existing variables (no let/const)**
-> - Each expr_lhs must be a valid lvalue (assignable location): a variable name, a field access, or an array/slice index. Function calls, literals, and other value expressions are not allowed.
+> - Each expr_lhs must be a valid lvalue (assignable location): a variable name, a field access, or an array/slice index. Function calls, literals, and other rvalue expressions are not allowed.
 > - The right‑hand side expr must evaluate to exactly as many return values as there are left‑hand side expressions.
 > - The values are assigned from left to right.
 > - This statement is only allowed in block scopes – not at top level.
@@ -470,9 +470,7 @@ x, y = 3.14, 2.718 -- ERROR: RHS must be a single expression
 
 ## Qualifiers
 
-Qualifiers are **call-site metadata on the binding**. They are not part of the
-type identity — two functions with identical parameter and return types are the
-**same type** regardless of qualifiers.
+Qualifiers are part of the function type for `~async` and `~nullable`. Two functions with identical parameter and return types but different `~async` or `~nullable` qualifiers are different types. The `~parallel` qualifier does not affect type identity – it is an implementation attribute.
 
 ```
 qualifier       := '~' IDENTIFIER
@@ -490,20 +488,17 @@ known qualifiers:
 **Not part of type identity** — qualifiers are ignored for type equality:
 
 ```luc
--- all three are the same type: (a int) -> int
+-- Different types due to qualifiers
 let f ~async    (a int) -> int = { ... }
 let g ~nullable (a int) -> int = nil
 let h           (a int) -> int = { ... }
 
 type Op = (a int) -> int
 
-let op Op = f    -- valid
-let op Op = g    -- valid
-let op Op = h    -- valid
+let op Op = f    -- ERROR: ~async vs no qualifier
+let op Op = g    -- ERROR: ~nullable vs no qualifier
+let op Op = h    -- OK
 ```
-
-**Qualifiers live on the binding, not the value.** You can assign any
-same-signature function to a qualified binding:
 
 ```luc
 let f ~async (a int) -> int = { ... }
@@ -571,14 +566,9 @@ let fetch ~async (url string) -> string = { ... }
 fetch("url")           -- ERROR: ~async binding must be called with await
 await fetch("url")     -- OK
 
--- await is only valid inside a ~async function body
 let process ~async (url string) -> string = {
     let raw string = await fetch(url)    -- OK: fetch is ~async, process is ~async
     return raw
-}
-
-let bad (url string) -> string = {
-    return await fetch(url)    -- ERROR: await inside non-async function body
 }
 ```
 
@@ -589,17 +579,17 @@ let bad (url string) -> string = {
 > 3. Checks whether that function's declaration carries the `~async` qualifier
 > 4. If yes: valid, suspend and wait for result
 > 5. If no: ERROR — cannot await a non-async function
->
-> `await` is only valid inside a function body whose declaration carries `~async`.
 
 **`~nullable` — requires nil guard:**
+
+A variable of type ~nullable (A) -> B cannot be assigned to a variable of type (A) -> B without a nil check. The call site must guard against nil
 
 ```luc
 let handler ~nullable (e Event) = nil
 
-handler(event)           -- WARNING: ~nullable called without nil guard
+let plain (e Event) = handler   -- ERROR: cannot assign nullable to non-nullable
 if handler != nil {
-    handler(event)       -- OK: guarded
+    let plain = handler         -- OK: inside guard, type is narrowed
 }
 ```
 
@@ -624,47 +614,41 @@ parallelFor(mesh.vertices, (vertex Vertex) {
 })
 ```
 
-### `~parallel` Replaces the `parallel` Keyword
+## Attributes vs. Qualifiers
 
-The `parallel` keyword is removed. Parallel execution is expressed through
-`~parallel` library functions. This gives developers full control over the
-execution strategy:
+Both use a prefix symbol (`@` and `~`) and appear before a declaration or type, but they serve different purposes.
 
-```luc
--- data-parallel iteration
-let parallelFor<T> ~parallel (items [*]T, body (item T)) = { ... }
+| Feature                  | Attribute (`@name`)                            | Qualifier (`~name`)                              |
+| ------------------------ | ---------------------------------------------- | ------------------------------------------------ |
+| **Attached to**          | Declaration (function, variable, struct, etc.) | Function **type** (or function binding)          |
+| **Affects type?**        | No – metadata only                             | Yes for `~async`/`~nullable`; No for `~parallel` |
+| **When evaluated**       | Compile time (by the compiler)                 | Type checking & call‑site rules                  |
+| **Examples**             | `@extern`, `@inline`, `@deprecated`            | `~async`, `~nullable`, `~parallel`               |
+| **Can be user‑defined?** | No (fixed set)                                 | No (fixed set)                                   |
 
-parallelFor(mesh.vertices, (vertex Vertex) {
-    vertex.pos    = vertex.pos    |> transform
-    vertex.normal = vertex.normal |> normalize
-})
+### Why not make `~nullable` an attribute?
 
--- task-parallel execution
-let parallelRun ~parallel (tasks [*]()) = { ... }
+- An attribute would only mark the **declaration** (e.g., `@nullable let f = ...`).  
+  But then every call to `f` would need a nil check – that’s a **type‑level contract**, not mere metadata.  
+- A qualifier becomes part of the function’s **type**, so the type system can enforce nil‑guards and prevent assignment of a nullable function to a non‑nullable variable.  
+- Attributes are “passive” (they influence compilation but not type checking); qualifiers are “active” (they change how the function can be used).
 
-parallelRun([
-    () { loadTextures()   },
-    () { compileShaders() },
-    () { loadMeshes()     }
-])
+### Why not make `@extern` a qualifier?
 
--- custom strategies
-let parallelGPU<T>     ~parallel (items [*]T, body (v T))             = { ... }
-let parallelSIMD<T>    ~parallel (items [*]T, body (f T))             = { ... }
-let parallelChunked<T> ~parallel (items [*]T, size int, body (c []T)) = { ... }
-```
+- `@extern` specifies **linkage and ABI** (calling convention, symbol name) – it does not affect the function’s signature or how it is called in Luc code.  
+- A qualifier would incorrectly imply that an `@extern` function has a different type from a normal Luc function, which is not true (both have the same parameter/return types).  
+- Attributes are the right tool for compiler‑directed metadata that does not participate in type checking.
 
 ### Composition `+>` and Qualifiers
 
-`+>` returns a plain function with **NO qualifiers**. Qualifiers on the result come
-from the binding, not from the components:
+`+>` composes two functions only if neither operand has `~async` or `~nullable` qualifiers (i.e., both are plain functions). The resulting function is plain (no qualifiers). If you need to compose async or nullable functions, you must explicitly handle them before composition (e.g., guard against nil or await the result separately).
 
 ```luc
 -- result is plain regardless of component qualifiers
-let pipeline = fetchData +> processData
+let pipeline (url string) -> string= fetchData +> processData
 
 -- assign qualifier to the result binding if needed
-let pipeline ~async = fetchData +> processData
+let pipeline ~async (url string) -> string = fetchData +> processData
 
 -- nullable components must be guarded before composing
 if transform != nil {
@@ -689,6 +673,9 @@ type AsyncMaybeOp = ~async ~nullable (a int) -> int
 
 A function signature has three parts: qualifiers, parameter groups, and the
 return boundary `->`.
+
+> [!NOTE]
+> Type identity: The qualifiers ~async and ~nullable are part of the function's type. Two function types that differ only in these qualifiers are different types. The ~parallel qualifier does not affect type identity.
 
 ```
 func_decl       := [ visibility_mod ] decl_keyword IDENTIFIER [ generic_params ]
@@ -864,6 +851,9 @@ f(int) -> (
 An anonymous function is a **plain value** — it has no qualifiers. The
 qualifier context comes from the declaration or parameter type the anonymous
 function is assigned to, not from the function value itself.
+
+> [!NOTE]
+> type of an anonymous function is inferred from context, and that type may include `~async` or `~nullable` if the context demands it (e.g., assigned to a ~async variable or passed to a `~async` parameter)
 
 ```
 anon_func   := param_group { param_group } [ '->' return_list ] block
@@ -1303,6 +1293,7 @@ A from block defines implicit conversions from a source type (described by the p
 - The arrow -> (mandatory).
 - A single return type – must be the struct type named in the enclosing from declaration.
 - `=` followed by the conversion body (a block or expression).
+- Qualifiers: from entries cannot have qualifiers (`~async`, `~nullable`, `~parallel`), they are plain functions. This is enforced by the parser.
 
 The body may return a value of the target type, typically via a struct literal or a call to another conversion.
 
@@ -1389,6 +1380,16 @@ let scale (v Vec2, factor float) -> Vec2 = { ... }
 v |> scale(2.0)!     -- calls scale(v, 2.0)
 v |> scale(2.0)      -- ERROR: looks like a complete call, no place for upstream
 ```
+
+### Rules
+
+Qualifiers in pipeline steps:
+- Steps with `~async` are allowed. The pipeline expression becomes `~async` (its type includes `~async`). The caller must await the entire pipeline result.
+
+- Steps with `~nullable` are forbidden
+
+- Steps with `~parallel` are forbidden – pipeline execution is synchronous.
+
 
 ### Data fields as pipeline steps
 
@@ -1669,7 +1670,7 @@ let b [] (int) -> int = [f]
 if a == b { ... }   -- ERROR: cannot compare arrays of function type
 ```
 
-2. Qualifiers are not part of type identity – Storing a ~async function in an array does not make the array element ~async. The qualifier belongs to the binding at the call site, not to the value. The stored value is a plain function pointer or closure.
+2. Qualifiers (`~async` and `~nullable`) are part of the function type, so an array of `~async (int) -> int` is distinct from an array of `(int) -> int`. Storing an async function in an array of plain functions is a type error."
 
 ```luc
 let asyncFn ~async (x int) -> int = { ... }
@@ -1946,7 +1947,7 @@ Valid for: primitives, enums, nullable types.
 
 Not valid for:
 - Struct types — implement `Equatable<T>` and use `:equals()` instead
-- Function types — function bodies are incomparable
+- Function types are never comparable, regardless of qualifiers. Even if two functions have identical types (including qualifiers), == is not allowed.
 - Array types — use collection library comparison
 
 ### `===` — Reference Equality
@@ -2385,8 +2386,7 @@ pub impl Vec2 {
 
 ```
 pub export package use as impl trait type from
-let const struct enum
-await
+let const struct enum await
 bool byte short int long ubyte ushort uint ulong
 int8 int16 int32 int64 uint8 uint16 uint32 uint64
 float double decimal string char any nil

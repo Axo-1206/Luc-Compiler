@@ -34,6 +34,8 @@
  *   pushGenericParams()               – pushes a generic parameter list onto the stack.
  *   popGenericParams()                – pops the topmost generic parameter list.
  *   isGenericParam()                  – checks if a name is a generic parameter.
+ *   resolveGenericParamConstraints()  - ensures that constraint trait names are valid.
+ *   satisfiesConstraints()            - verify that each concrete type argument satisfies the constraints.
  *   pushSubstitutionMap()             – pushes a substitution map onto the stack.
  *   popSubstitutionMap()              – pops the topmost substitution map.
  *   lookupSubstitution()              – looks up a name in the substitution stack.

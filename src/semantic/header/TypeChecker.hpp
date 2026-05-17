@@ -81,7 +81,7 @@
 
 class TypeChecker {
 public:
-    explicit TypeChecker(StringPool& pool, ASTArena& arena);
+    explicit TypeChecker(SymbolTable& symbols, StringPool& pool, ASTArena& arena);
 
     // ── Type compatibility ───────────────────────────────────────────────────
     bool isEqual(TypeAST* a, TypeAST* b);
@@ -114,6 +114,7 @@ public:
     bool isBoolOrNullable(TypeAST* type);
 
 private:
+    SymbolTable& symbols_;
     StringPool& pool_;
     ASTArena& arena_;
 };

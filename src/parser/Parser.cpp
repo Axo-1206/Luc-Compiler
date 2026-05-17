@@ -578,10 +578,13 @@ std::vector<ASTPtr<ParamAST>> Parser::parseParamGroup() {
 //      -> (x int) -> int          -- one parameter, returns int
 //      -> () -> int               -- zero parameters, returns int
 //      -> ()                      -- zero parameters, returns void
+//      -> ~async (x int) -> int   -- with qualifier
 //    Detection:
 //      - Empty parentheses "()" always indicate a function type (zero params).
 //      - Parentheses containing an identifier followed by a type start
 //        (primitive, identifier, '[', '&', '*', '(') indicate a function type.
+//      - Parentheses whose first token is '~' (qualifier) also indicate a
+//        function type, because a qualifier can only appear on a function type.
 //    Action: calls parseFuncType() to consume the entire function type and
 //            returns a vector with the resulting FuncTypeAST.
 //
@@ -648,6 +651,14 @@ std::vector<TypePtr> Parser::parseReturnList() {
                 types.push_back(std::move(funcType));
             return types;
         }
+    }
+
+    // // Qualifier starts a function type
+    if (afterParen == TokenType::TILDE) {
+        TypePtr funcType = parseFuncType();
+        if (funcType && !funcType->isa<UnknownTypeAST>())
+            types.push_back(std::move(funcType));
+        return types;
     }
 
     // Otherwise: parenthesised multi‑return list

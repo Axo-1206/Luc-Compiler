@@ -50,7 +50,7 @@ SemanticAnalyzer::SemanticAnalyzer(DiagnosticEngine& dc, StringPool& pool, ASTAr
     : _dc(dc), _pool(pool), _arena(arena),
       _symbols(std::make_unique<SymbolTable>()),
       _typeResolver(std::make_unique<TypeResolver>(*_symbols, dc, pool, arena)),
-      _typeChecker(std::make_unique<TypeChecker>(pool, arena)) {
+      _typeChecker(std::make_unique<TypeChecker>(*_symbols, pool, arena)) {
     LUC_LOG_SEMANTIC("SemanticAnalyzer constructed");
 }
 

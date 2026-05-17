@@ -70,8 +70,8 @@
 #include <cstdlib> 
 #include <cerrno>
 
-TypeChecker::TypeChecker(StringPool& pool, ASTArena& arena)
-    : pool_(pool), arena_(arena) {
+TypeChecker::TypeChecker(SymbolTable& symbols, StringPool& pool, ASTArena& arena)
+    : pool_(pool), arena_(arena), symbols_(symbols) {
     LUC_LOG_SEMANTIC("TypeChecker constructed");
 }
 
@@ -465,9 +465,60 @@ bool TypeChecker::isAssignable(TypeAST* from, TypeAST* to) {
 
     // 3. Function types.
     if (from->isa<FuncTypeAST>() && to->isa<FuncTypeAST>()) {
-        bool result = isEqual(from, to);
-        LUC_LOG_SEMANTIC("\tFuncType: " << (result ? "true" : "false"));
-        return result;
+        auto* fFrom = from->as<FuncTypeAST>();
+        auto* fTo   = to->as<FuncTypeAST>();
+        
+        // Compare qualifiers that affect type equality, except ~nullable.
+        // The equalityMask includes Async and Nullable, but we want to compare
+        // Async and Parallel, ignoring Nullable for now.
+        uint32_t mask = QualifierRegistry::instance().equalityMask();
+        uint32_t nullableBit = QualifierBits::Nullable;
+        uint32_t fromBits = fFrom->sig.qualifiers & mask;
+        uint32_t toBits   = fTo->sig.qualifiers & mask;
+        
+        // Remove nullable from comparison – we handle it separately.
+        fromBits &= ~nullableBit;
+        toBits   &= ~nullableBit;
+        
+        if (fromBits != toBits) {
+            LUC_LOG_SEMANTIC("\tFuncType other qualifiers mismatch -> false");
+            return false;
+        }
+        
+        // Compare parameter groups and return types (structural equality).
+        if (fFrom->sig.paramGroups.size() != fTo->sig.paramGroups.size())
+            return false;
+        for (size_t g = 0; g < fFrom->sig.paramGroups.size(); ++g) {
+            if (fFrom->sig.paramGroups[g].size() != fTo->sig.paramGroups[g].size())
+                return false;
+            for (size_t i = 0; i < fFrom->sig.paramGroups[g].size(); ++i) {
+                if (!isEqual(fFrom->sig.paramGroups[g][i]->type.get(),
+                             fTo->sig.paramGroups[g][i]->type.get()))
+                    return false;
+            }
+        }
+        if (fFrom->sig.returnTypes.size() != fTo->sig.returnTypes.size())
+            return false;
+        for (size_t i = 0; i < fFrom->sig.returnTypes.size(); ++i) {
+            if (!isEqual(fFrom->sig.returnTypes[i].get(), fTo->sig.returnTypes[i].get()))
+                return false;
+        }
+        
+        // Now check nullability: non‑nullable → nullable is allowed.
+        bool fromNullable = fFrom->sig.isNullable();
+        bool toNullable   = fTo->sig.isNullable();
+        
+        if (!fromNullable && toNullable) {
+            LUC_LOG_SEMANTIC("\tFuncType: non‑nullable -> nullable (allowed) -> true");
+            return true;
+        }
+        if (fromNullable && !toNullable) {
+            LUC_LOG_SEMANTIC("\tFuncType: nullable -> non‑nullable (forbidden) -> false");
+            return false;
+        }
+        
+        LUC_LOG_SEMANTIC("\tFuncType: qualifiers match, nullability same -> true");
+        return true;
     }
 
     // Fallback: use structural equality for all other types
@@ -1591,8 +1642,14 @@ bool TypeChecker::isReferenceComparable(TypeAST* type) {
     }
 
     if (type->isa<NamedTypeAST>()) {
-        LUC_LOG_SEMANTIC_EXTREME("isReferenceComparable: NamedType -> true");
-        return true;
+        auto* named = type->as<NamedTypeAST>();
+        Symbol* sym = symbols_.lookup(named->name);
+        if (sym && sym->kind == SymbolKind::Struct) {
+            LUC_LOG_SEMANTIC_EXTREME("isReferenceComparable: struct -> true");
+            return true;
+        }
+        LUC_LOG_SEMANTIC_EXTREME("isReferenceComparable: NamedType (not a struct) -> false");
+        return false;
     }
 
     if (type->isa<NullableTypeAST>()) {
