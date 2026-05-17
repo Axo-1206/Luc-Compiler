@@ -152,12 +152,12 @@ private:
 // ─────────────────────────────────────────────────────────────────────────────
 class SymbolTableScopeGuard {
 public:
-    explicit SymbolTableScopeGuard(SymbolTable& table) : table_(table) {
-        table_.pushScope();
+    explicit SymbolTableScopeGuard(SymbolTable& table) : _table(table) {
+        _table.pushScope();
     }
     
     ~SymbolTableScopeGuard() {
-        table_.popScope();
+        _table.popScope();
     }
     
     // Disable copy/move
@@ -165,5 +165,5 @@ public:
     SymbolTableScopeGuard& operator=(const SymbolTableScopeGuard&) = delete;
     
 private:
-    SymbolTable& table_;
+    SymbolTable& _table;
 };
