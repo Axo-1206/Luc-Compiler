@@ -1083,6 +1083,11 @@ bool Parser::looksLikeType() const {
         result = true;
         break;
         
+    // DOUBLE_COLON is never a type start – it's a static access operator
+    case TokenType::DOUBLE_COLON:
+        result = false;
+        break;
+        
     default:
         result = false;
         break;
@@ -1664,6 +1669,184 @@ bool Parser::looksLikeMultiAssignStart() const {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// looksLikeBehaviorAccess
+//
+// Predicate that checks whether the current position looks like a behavior
+// access expression (method reference) as opposed to a plain identifier or
+// struct literal.
+//
+// Grammar:
+//   behavior_access := IDENTIFIER [ '<' generic_args '>' ] ':' IDENTIFIER
+//
+// Examples:
+//   Vec2:normalize
+//   Buffer<int>:create
+//   Map<string, int>::find   (NOT this – static access uses '::')
+//
+// ─── Pure Lookahead – No Token Consumption ─────────────────────────────────
+// - Uses a local index `i` starting at `pos_`. Does not modify parser state.
+// - Skips comments using the internal `skipCommentsAt` lambda.
+// - Does not allocate AST nodes or call any parsing functions that modify `pos_`.
+//
+// ─── Detection Strategy ─────────────────────────────────────────────────────
+// 1. The current token must be IDENTIFIER (type name).
+// 2. Optionally, the identifier may be followed by a generic argument list:
+//      '<' ... '>' – balanced bracket counting with depth.
+//      The scan stops if a SEMICOLON or RBRACE is encountered inside the list,
+//      which would indicate malformed input.
+// 3. After the identifier (and optional generic args), there must be a COLON ':'.
+// 4. After the colon, there must be an IDENTIFIER (method name).
+//
+// ─── Loop Safety & Infinite Loop Prevention ─────────────────────────────────
+// - The generic argument scan uses a depth counter. Each iteration increments `i`.
+// - The loop terminates when depth reaches 0, or when end of file / a
+//   statement boundary (SEMICOLON, RBRACE) is encountered.
+// - Because `i` is a local copy and moves forward on every iteration, infinite
+//   loops are impossible.
+//
+// ─── Error Handling ─────────────────────────────────────────────────────────
+// - No errors are reported. If the pattern does not match, the function returns
+//   `false` silently. The caller is responsible for error reporting when a
+//   behavior access is expected but not found.
+//
+// ─── Return Value ───────────────────────────────────────────────────────────
+//   - `true`  if the current token stream matches the behavior access pattern.
+//   - `false` otherwise.
+// ─────────────────────────────────────────────────────────────────────────────
+bool Parser::looksLikeBehaviorAccess() const {
+    std::size_t i = pos_;
+    auto skipCommentsAt = [&](std::size_t& idx) {
+        while (idx < tokens_.size() && (tokens_[idx].type == TokenType::LINE_COMMENT ||
+                                        tokens_[idx].type == TokenType::DOC_COMMENT))
+            ++idx;
+    };
+    skipCommentsAt(i);
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::IDENTIFIER)
+        return false;
+    ++i; // past identifier
+    // Optional generic args: '<' ... '>'
+    if (i < tokens_.size() && tokens_[i].type == TokenType::LESS) {
+        int depth = 1;
+        ++i;
+        while (i < tokens_.size() && depth > 0) {
+            skipCommentsAt(i);
+            if (i >= tokens_.size()) break;
+            TokenType tt = tokens_[i].type;
+            if (tt == TokenType::LESS) ++depth;
+            else if (tt == TokenType::GREATER) --depth;
+            else if (tt == TokenType::SEMICOLON || tt == TokenType::RBRACE) return false;
+            ++i;
+        }
+        if (depth != 0) return false;
+    }
+    skipCommentsAt(i);
+    // Must have ':'
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::COLON)
+        return false;
+    ++i;
+    skipCommentsAt(i);
+    // Must have method identifier
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::IDENTIFIER)
+        return false;
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// looksLikeStaticAccess
+//
+// Predicate that checks whether the current position looks like a static
+// extension access expression (namespaced static method call).
+//
+// Grammar:
+//   static_access := type_name [ '<' generic_args '>' ] '::' IDENTIFIER '.' IDENTIFIER
+//   type_name     := IDENTIFIER   (may be a primitive type via alias)
+//
+// Examples:
+//   int::math.abs(-5)
+//   Vec2::math.normalize(point)
+//   Wrapper<int>::container.unwrap(wrapped)
+//
+// ─── Pure Lookahead – No Token Consumption ─────────────────────────────────
+// - Uses a local index `i` starting at `pos_`. Does not modify parser state.
+// - Skips comments using the internal `skipCommentsAt` lambda.
+// - Does not allocate AST nodes or call any parsing functions that modify `pos_`.
+//
+// ─── Detection Strategy ─────────────────────────────────────────────────────
+// 1. The current token must be IDENTIFIER (type name).
+// 2. Optionally, the identifier may be followed by a generic argument list:
+//      '<' ... '>' – balanced bracket counting with depth.
+//      The scan stops if a SEMICOLON or RBRACE is encountered inside the list,
+//      which would indicate malformed input.
+// 3. After the identifier (and optional generic args), there must be DOUBLE_COLON '::'.
+// 4. After '::', there must be an IDENTIFIER (namespace name).
+// 5. After the namespace identifier, there must be a DOT '.'.
+// 6. After the dot, there must be an IDENTIFIER (method name).
+//
+// ─── Loop Safety & Infinite Loop Prevention ─────────────────────────────────
+// - The generic argument scan uses a depth counter. Each iteration increments `i`.
+// - The loop terminates when depth reaches 0, or when end of file / a
+//   statement boundary (SEMICOLON, RBRACE) is encountered.
+// - Because `i` is a local copy and moves forward on every iteration, infinite
+//   loops are impossible.
+//
+// ─── Error Handling ─────────────────────────────────────────────────────────
+// - No errors are reported. If the pattern does not match, the function returns
+//   `false` silently. The caller is responsible for error reporting when a
+//   static access is expected but not found.
+//
+// ─── Return Value ───────────────────────────────────────────────────────────
+//   - `true`  if the current token stream matches the static access pattern.
+//   - `false` otherwise.
+// ─────────────────────────────────────────────────────────────────────────────
+bool Parser::looksLikeStaticAccess() const {
+    std::size_t i = pos_;
+    auto skipCommentsAt = [&](std::size_t& idx) {
+        while (idx < tokens_.size() && (tokens_[idx].type == TokenType::LINE_COMMENT ||
+                                        tokens_[idx].type == TokenType::DOC_COMMENT))
+            ++idx;
+    };
+    skipCommentsAt(i);
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::IDENTIFIER)
+        return false;
+    ++i; // past identifier
+    // Optional generic args: '<' ... '>'
+    if (i < tokens_.size() && tokens_[i].type == TokenType::LESS) {
+        int depth = 1;
+        ++i;
+        while (i < tokens_.size() && depth > 0) {
+            skipCommentsAt(i);
+            if (i >= tokens_.size()) break;
+            TokenType tt = tokens_[i].type;
+            if (tt == TokenType::LESS) ++depth;
+            else if (tt == TokenType::GREATER) --depth;
+            else if (tt == TokenType::SEMICOLON || tt == TokenType::RBRACE) return false;
+            ++i;
+        }
+        if (depth != 0) return false;
+    }
+    skipCommentsAt(i);
+    // Must have '::'
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::DOUBLE_COLON)
+        return false;
+    ++i;
+    skipCommentsAt(i);
+    // Must have namespace identifier
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::IDENTIFIER)
+        return false;
+    ++i;
+    skipCommentsAt(i);
+    // Must have '.'
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::DOT)
+        return false;
+    ++i;
+    skipCommentsAt(i);
+    // Must have method identifier
+    if (i >= tokens_.size() || tokens_[i].type != TokenType::IDENTIFIER)
+        return false;
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Top‑Level Parsing
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1912,6 +2095,9 @@ DeclPtr Parser::parseDeclaration(DeclContext ctx) {
     else if (check(TokenType::FROM)) {
         decl = parseFromDecl(vis);
     }
+    else if (check(TokenType::EXTENSION)) {
+        decl = parseExtensionDecl(vis);
+    }
     else if (check(TokenType::TYPE)) {
         decl = parseTypeAliasDecl(vis);
     }
@@ -1931,9 +2117,9 @@ DeclPtr Parser::parseDeclaration(DeclContext ctx) {
         }
 
         if (looksLikeFuncDecl()) {
-            decl = parseFuncDecl(kw, vis, std::move(attrs));
+            decl = parseFuncDecl(kw, vis);
         } else {
-            decl = parseVarDecl(vis, std::move(attrs));
+            decl = parseVarDecl(vis);
         }
     }
     else {

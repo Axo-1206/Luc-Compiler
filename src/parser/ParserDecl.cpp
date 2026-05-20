@@ -577,7 +577,7 @@ ASTPtr<UseDeclAST> Parser::parseUseDecl(Visibility vis) {
 // - The keyword (let/const) is retrieved from the previous token (pos_ - 1).
 // - The semantic phase enforces @extern constraints and const initialiser rules.
 // ─────────────────────────────────────────────────────────────────────────────
-ASTPtr<VarDeclAST> Parser::parseVarDecl(Visibility vis, std::vector<AttributePtr> attrs) {
+ASTPtr<VarDeclAST> Parser::parseVarDecl(Visibility vis) {
     // The keyword was consumed by parseTopLevelDecl before this call.
     const Token &kwTok = tokens_[pos_ - 1];
     DeclKeyword kw;
@@ -631,7 +631,6 @@ ASTPtr<VarDeclAST> Parser::parseVarDecl(Visibility vis, std::vector<AttributePtr
     node->type = std::move(type);
     node->init = std::move(init);
     node->visibility = vis;
-    node->attributes = std::move(attrs);
 
     return node;
 }
@@ -686,7 +685,7 @@ ASTPtr<VarDeclAST> Parser::parseVarDecl(Visibility vis, std::vector<AttributePtr
 // - Qualifier loop consumes '~' and following IDENTIFIER per iteration.
 // - No unbounded loops; each loop is bounded by the number of tokens present.
 // ─────────────────────────────────────────────────────────────────────────────
-ASTPtr<FuncDeclAST> Parser::parseFuncDecl(DeclKeyword kw, Visibility vis, std::vector<AttributePtr> attrs) {
+ASTPtr<FuncDeclAST> Parser::parseFuncDecl(DeclKeyword kw, Visibility vis) {
     SourceLocation loc = currentLoc();
 
     LUC_LOG_PARSER("=== parseFuncDecl START ===");
@@ -707,7 +706,6 @@ ASTPtr<FuncDeclAST> Parser::parseFuncDecl(DeclKeyword kw, Visibility vis, std::v
     node->keyword = kw;
     node->name = name;
     node->visibility = vis;
-    node->attributes = std::move(attrs);
 
     // Optional generic params
     if (check(TokenType::LESS)) {
@@ -1332,32 +1330,32 @@ TraitMethodPtr Parser::parseTraitMethod() {
 // ─────────────────────────────────────────────────────────────────────────────
 // parseImplDecl
 //
-// Parses an impl block that binds methods to a struct (with optional trait conformance).
+// Parses an impl block that binds methods to a type (with optional trait conformance).
 //
 // Grammar:
-//   impl_decl := [ vis ] 'impl' [ generic_params ] IDENTIFIER [ generic_args ]
-//                [ ':' trait_ref ] '{' { method_decl } '}'
-//
-//   impl_member := method_decl | from_decl (from_decl only valid in pub/export impl)
+//   impl_decl := [ vis ] 'impl' type_name [ generic_params ] [ ':' trait_ref ] '{' { method_decl } '}'
+//   type_name := IDENTIFIER [ generic_args ]   -- any named type (struct, enum, type alias)
 //
 // Examples:
-//   impl Vec2 { length () -> float = { ... } }
-//   pub impl Circle : Drawable { draw () = { ... } bounds () -> Rect = { ... } }
-//   impl Scene<T : Drawable> { drawAll () = { ... } }
+//   impl Vec2 { length () -> float = { ... } }                    -- direct on struct
+//   impl Direction { isNorth () -> bool = { ... } }               -- direct on enum
+//   impl IntOps { isEven () -> bool = { ... } }                   -- via type alias
+//   impl Callback { andThen (next Callback) -> Callback = { ... } } -- via alias for function type
+//   impl Circle : Drawable { draw () = { ... } }                  -- with trait conformance
+//   impl Scene<T : Drawable> { drawAll () = { ... } }             -- generic impl
 //
 // ─── Token Consumption ───────────────────────────────────────────────────────
 // - Consumes the 'impl' keyword.
-// - Consumes an IDENTIFIER (struct name).
+// - Parses the target type (named type with optional generic args).
 // - Optional generic parameters (definition style) via parseGenericParams().
-// - If generic parameters were parsed, synthesises structGenericArgs from them.
 // - Optional trait conformance ':' followed by parseTraitRef().
 // - Consumes '{' to open the impl body.
 // - Repeatedly calls parseMethodDecl() to consume method definitions until '}'.
 // - Consumes the closing '}'.
 //
 // ─── Error Handling & Recovery ──────────────────────────────────────────────
-// - Missing struct name after 'impl': reports error, returns nullptr.
-// - Missing '{' after name/generics/trait: reports error, returns nullptr.
+// - Missing target type after 'impl': reports error, returns nullptr.
+// - Missing '{' after type/generics/trait: reports error, returns nullptr.
 // - If parseMethodDecl() returns nullptr:
 //     * If no progress was made (pos_ == savedPos), forcibly consumes one token.
 //     * Calls synchronize() to skip to the next method or closing brace.
@@ -1372,9 +1370,9 @@ TraitMethodPtr Parser::parseTraitMethod() {
 //
 // ─── Notes ──────────────────────────────────────────────────────────────────
 // - genericParams stores the impl's own type parameters (e.g., <T : Drawable>).
-// - structGenericArgs stores NamedTypeAST nodes bound to those parameters.
-// - The semantic phase merges multiple impl blocks for the same struct.
-// - from_decl is only valid inside pub/export impl (rejected elsewhere).
+// - The target type can be any named type (struct, enum, type alias).
+// - The semantic phase merges multiple impl blocks for the same type.
+// - Trait conformance is checked against the target type in the semantic pass.
 // ─────────────────────────────────────────────────────────────────────────────
 ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
     LUC_LOG_PARSER("parseImplDecl: parsing impl");
@@ -1385,36 +1383,53 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
     node->loc = loc;
     node->visibility = vis;
 
-    // 1. Struct name comes first in the new syntax
+    // ── Parse target type (any named type: struct, enum, type alias) ─────────
     if (!check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected struct name after 'impl'");
+        errorAt(DiagCode::E2003, "expected target type after 'impl'");
         return nullptr;
     }
-    node->structName = pool_.intern(advance().value);
-    LUC_LOG_PARSER("\timpl for struct: '" << pool_.lookup(node->structName) << "'");
 
-    // 2. Optional generic params (definition style): impl Scene<T : Drawable>
+    // Optional receiver alias: 'as' IDENTIFIER
+    if (match(TokenType::AS)) {
+        if (!check(TokenType::IDENTIFIER)) {
+            errorAt(DiagCode::E2003, "expected identifier after 'as' for receiver alias");
+        } else {
+            node->receiverAlias = pool_.intern(advance().value);
+        }
+    } else {
+        // Default: empty receiverAlias means "self"
+        node->receiverAlias = InternedString(); // already default-initialized
+    }
+
+    // Parse the named type (may have generic arguments like Scene<T>)
+    TypePtr targetType = parseNamedType();
+    if (!targetType || targetType->isa<UnknownTypeAST>()) {
+        errorAt(DiagCode::E2005, "invalid target type in impl block");
+        return nullptr;
+    }
+    node->targetType = std::move(targetType);
+
+    LUC_LOG_PARSER("\timpl for type: " << LucDebug::kindToString(node->targetType->kind)
+                   << " (details omitted for brevity)");
+
+    // ── Optional generic parameters (definition style): impl Scene<T : Drawable> ──
+    // These are the impl's own type parameters, not to be confused with the
+    // target type's generic arguments.
     if (check(TokenType::LESS)) {
         node->genericParams = parseGenericParams();
-
-        // 3. Synthesis: Populate structGenericArgs with NamedTypeAST nodes.
-        // This maintains the existing AST structure where ImplDeclAST expects
-        // a list of type arguments to bind to the struct's parameters.
-        for (const auto& gp : node->genericParams) {
-            auto nt = arena_.make<NamedTypeAST>(gp->name);
-            nt->loc = gp->loc;
-            node->structGenericArgs.push_back(std::move(nt));
-        }
+        LUC_LOG_PARSER("\timpl has " << node->genericParams.size() << " generic parameter(s)");
     }
 
-    // 4. Optional trait conformance: ':' trait_ref
+    // ── Optional trait conformance: ':' trait_ref ────────────────────────────
     if (check(TokenType::COLON)) {
         node->traitRef = parseTraitRef();
+        LUC_LOG_PARSER("\timpl conforms to trait: " << (node->traitRef ? "yes" : "no"));
     }
 
+    // ── Consume opening brace ────────────────────────────────────────────────
     consume(TokenType::LBRACE, "expected '{' to open impl body");
 
-    // Parse impl members
+    // ── Parse impl members (method declarations) ─────────────────────────────
     while (!check(TokenType::RBRACE) && !isAtEnd()) {
         match(TokenType::SEMICOLON);
         match(TokenType::COMMA);
@@ -1424,7 +1439,7 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
         std::optional<DocComment> mdoc = harvestDocComment();
         std::size_t savedPos = pos_;
 
-        // method_decl — regular method body
+        // Method declaration
         if (check(TokenType::IDENTIFIER)) {
             MethodDeclPtr md = parseMethodDecl();
             if (md) {
@@ -1444,7 +1459,7 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
     }
 
     consume(TokenType::RBRACE, "expected '}' to close impl body");
-    LUC_LOG_PARSER("\tparsed " << node->methods.size() << " methods");
+    LUC_LOG_PARSER("\tparsed " << node->methods.size() << " methods for impl");
     return node;
 }
 
@@ -1663,22 +1678,27 @@ MethodDeclPtr Parser::parseMethodDecl() {
 // Parses a 'from' declaration that defines implicit conversions to a target type.
 //
 // Grammar:
-//   from_block  := [ vis ] 'from' IDENTIFIER [ generic_params ] '{' from_entry* '}'
-//
+//   from_block  := [ vis ] 'from' type_name [ generic_params ] '{' from_entry* '}'
+//   type_name   := IDENTIFIER [ generic_args ]   -- any named type (struct, enum, alias)
 //   from_entry  := param_group { param_group } '->' type '=' func_body
 //
 // Examples:
-//   export from Fahrenheit {
-//       (c Celsius) -> Fahrenheit = { return Fahrenheit { value = c.value * 9/5 + 32 } }
-//       (k Kelvin)  -> Fahrenheit = { return Fahrenheit { value = (k.value - 273.15) * 9/5 + 32 } }
+//   export from Fahrenheit {                    -- direct on struct
+//       (c Celsius) -> Fahrenheit = { ... }
 //   }
-//
-//   from Wrapper<T> { (val T) -> Wrapper<T> = { return Wrapper<T> { value = val } } }
+//   from int {                                  -- via type alias
+//       (s string) -> int = { return #parseInt(s) }
+//   }
+//   from Direction {                            -- direct on enum
+//       (s string) -> Direction = { ... }
+//   }
+//   from Wrapper<T> {                           -- generic from block
+//       (val T) -> Wrapper<T> = { ... }
+//   }
 //
 // ─── Token Consumption ───────────────────────────────────────────────────────
 // - Consumes the 'from' keyword.
-// - Consumes an IDENTIFIER (target struct name).
-// - Optional generic parameters on the target struct via parseGenericParams().
+// - Parses a named type (the target type) with optional generic parameters.
 // - Consumes '{' to open the from block.
 // - Repeatedly parses from_entry blocks until '}'.
 // - Consumes the closing '}'.
@@ -1686,11 +1706,11 @@ MethodDeclPtr Parser::parseMethodDecl() {
 // ─── From Entry Parsing ──────────────────────────────────────────────────────
 // - Each entry begins with one or more parameter groups (curried conversion sources).
 // - Consumes '->' (mandatory).
-// - Consumes a return type (must match the target struct name semantically).
+// - Consumes a return type (must match the target type semantically).
 // - Consumes '=' followed by the conversion body (block or expression).
 //
 // ─── Error Handling & Recovery ──────────────────────────────────────────────
-// - Missing target struct name: reports error, returns nullptr.
+// - Missing target type name: reports error, returns nullptr.
 // - Missing '{' after name/generics: reports error, returns nullptr.
 // - If entry has no '(' (parameter group start): reports error, synchronizes.
 // - Missing '->' before return type: reports error, synchronizes.
@@ -1705,34 +1725,61 @@ MethodDeclPtr Parser::parseMethodDecl() {
 //
 // ─── Notes ──────────────────────────────────────────────────────────────────
 // - From blocks can be top‑level or local. When local, visibility modifiers are omitted.
+// - The target type must be a named type (struct, enum, or type alias).
 // - The semantic phase registers conversions for implicit casting contexts.
-// - Generic parameters on the target struct are stored in genericParams.
+// - Multiple from blocks for the same target type are allowed in different scopes.
 // ─────────────────────────────────────────────────────────────────────────────
 ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
+    LUC_LOG_PARSER("parseFromDecl: parsing from block");
     SourceLocation loc = currentLoc();
     consume(TokenType::FROM, "expected 'from'");
-
-    // Parse target struct name
-    if (!check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected struct name after 'from'");
-        return nullptr;
-    }
-    std::string targetName = advance().value;
-
-    // Optional generic parameters on the target struct
-    std::vector<GenericParamPtr> genericParams;
-    if (check(TokenType::LESS)) {
-        genericParams = parseGenericParams();
-    }
 
     auto node = arena_.make<FromDeclAST>();
     node->loc = loc;
     node->visibility = vis;
-    node->targetTypeName = pool_.intern(targetName);
-    node->genericParams = std::move(genericParams);  // add this field to FromDeclAST
 
-    consume(TokenType::LBRACE, "expected '{' after target name" + std::string(node->genericParams.empty() ? "" : " (including generic)") );
+    // ── Parse the target type (must be a named type) ─────────────────────────
+    // Grammar: type_name := IDENTIFIER [ generic_args ]
+    // The target can be any named type (struct, enum, or type alias).
+    if (!check(TokenType::IDENTIFIER)) {
+        errorAt(DiagCode::E2003, "expected target type name after 'from'");
+        return nullptr;
+    }
 
+    // Parse the named type (may have generic arguments like Wrapper<T>)
+    TypePtr targetType = parseNamedType();
+    if (!targetType || targetType->isa<UnknownTypeAST>()) {
+        errorAt(DiagCode::E2005, "invalid target type in from block");
+        return nullptr;
+    }
+    node->targetType = std::move(targetType);
+
+    // ── Extract generic parameters from the target type (if any) ─────────────
+    // For a generic from block like "from Wrapper<T> { ... }",
+    // the generic parameter T should be stored in node->genericParams.
+    if (node->targetType->isa<NamedTypeAST>()) {
+        auto* named = node->targetType->as<NamedTypeAST>();
+        // The generic arguments on the target type are the placeholders (T, U, etc.)
+        // We need to convert them to GenericParamAST nodes.
+        for (auto& arg : named->genericArgs) {
+            if (arg && arg->isa<NamedTypeAST>()) {
+                auto* argNamed = arg->as<NamedTypeAST>();
+                if (argNamed->isGenericParam || argNamed->genericArgs.empty()) {
+                    // This is a generic parameter placeholder like T
+                    auto gp = arena_.make<GenericParamAST>(argNamed->name);
+                    gp->loc = argNamed->loc;
+                    node->genericParams.push_back(std::move(gp));
+                }
+            }
+        }
+    }
+
+    LUC_LOG_PARSER("\tfrom target: " << node->targetType.get());
+
+    // ── Consume opening brace ────────────────────────────────────────────────
+    consume(TokenType::LBRACE, "expected '{' to open from block");
+
+    // ── Parse from entries until '}' ─────────────────────────────────────────
     while (!check(TokenType::RBRACE) && !isAtEnd()) {
         match(TokenType::SEMICOLON);
         match(TokenType::COMMA);
@@ -1740,7 +1787,6 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
             break;
 
         SourceLocation entryLoc = currentLoc();
-
         std::size_t entrySavedPos = pos_;
 
         // Parse one or more parameter groups
@@ -1756,18 +1802,27 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
         auto entry = arena_.make<FromEntryAST>();
         entry->loc = entryLoc;
 
+        // Parse all parameter groups (curried conversion sources)
         while (check(TokenType::LPAREN)) {
             std::size_t groupSavedPos = pos_;
             entry->sig.paramGroups.push_back(parseParamGroup());
             if (pos_ == groupSavedPos) break; // emergency break
         }
 
-        consume(TokenType::ARROW, "expected '->' before return type for conversion entry, found: " + peek().value);
+        // Consume '->' (required)
+        if (!check(TokenType::ARROW)) {
+            errorAt(DiagCode::E2001, "expected '->' before return type for conversion entry");
+            synchronize();
+            if (looksLikeDeclStart() || check(TokenType::RBRACE))
+                break;
+            continue;
+        }
+        advance(); // consume '->'
 
-        // Parse return type (can be a full type, e.g., Unwrapped<T>)
+        // Parse return type (must match the target type semantically)
         TypePtr returnType = parseType();
         if (!returnType) {
-            errorAt(DiagCode::E2005, "expected return type after parameter list, found: " + peek().value);
+            errorAt(DiagCode::E2005, "expected return type after '->'");
             synchronize();
             if (looksLikeDeclStart() || check(TokenType::RBRACE))
                 break;
@@ -1775,8 +1830,9 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
         }
         entry->returnType = std::move(returnType);
 
+        // Consume '=' before body
         if (!check(TokenType::ASSIGN)) {
-            errorAt(DiagCode::E2001, "expected '=' before body for conversion entry, found: " + peek().value);
+            errorAt(DiagCode::E2001, "expected '=' before body for conversion entry");
             synchronize();
             if (looksLikeDeclStart() || check(TokenType::RBRACE))
                 break;
@@ -1784,7 +1840,7 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
         }
         advance();
 
-        // Normalized body parsing
+        // Parse the body (block or expression)
         SourceLocation bodyLoc = currentLoc();
         if (check(TokenType::LBRACE)) {
             entry->body = parseBlock();
@@ -1795,20 +1851,168 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
                 auto ret = arena_.make<ReturnStmtAST>();
                 ret->loc = bodyLoc;
                 ret->values.push_back(std::move(expr));
-                
+
                 auto block = arena_.make<BlockStmtAST>();
                 block->loc = bodyLoc;
                 block->stmts.push_back(std::move(ret));
                 entry->body = std::move(block);
             } else {
-                errorAt(DiagCode::E2008, "expected expression after '=' in conversion entry, found: " + peek().value);
+                errorAt(DiagCode::E2008, "expected expression after '=' in conversion entry");
             }
         }
 
         node->entries.push_back(std::move(entry));
     }
 
-    consume(TokenType::RBRACE, "expected '}' to close from block, found: " + peek().value);
+    consume(TokenType::RBRACE, "expected '}' to close from block");
+    LUC_LOG_PARSER("\tparsed " << node->entries.size() << " conversion entries");
+    return node;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// parseExtensionDecl
+//
+// Parses an extension declaration that adds static methods to an existing type.
+//
+// Grammar:
+//   extension_decl := [ vis ] 'extension' type_name IDENTIFIER '{' { func_decl } '}'
+//   type_name      := IDENTIFIER [ generic_args ]   -- only named types (structs, enums, aliases)
+//
+// Examples:
+//   extension Vec2 math { ... }                     -- direct on struct
+//   extension Direction helpers { ... }             -- direct on enum
+//   extension IntOps std { ... }                    -- via type alias (for primitives)
+//   extension Wrapper<T> container { ... }          -- generic extension
+//
+// ─── Token Consumption ───────────────────────────────────────────────────────
+// - Consumes the 'extension' keyword.
+// - Parses a named type (the type being extended): IDENTIFIER [ generic_args ]
+// - Consumes an IDENTIFIER (the namespace name).
+// - Consumes '{' to open the extension block.
+// - Repeatedly calls parseFuncDecl() to parse static methods until '}'.
+// - Consumes the closing '}'.
+//
+// ─── Error Handling & Recovery ──────────────────────────────────────────────
+// - Missing type name after 'extension': reports error, returns nullptr.
+// - Missing namespace identifier: reports error, returns nullptr.
+// - Missing '{' after namespace: reports error, returns nullptr.
+// - If parseFuncDecl() returns nullptr:
+//     * If no progress was made (pos_ == savedPos), forcibly consumes one token.
+//     * Calls synchronize() to skip to the next method or closing brace.
+// - Missing closing '}': reports error (consume tries to recover).
+//
+// ─── Loop Safety ─────────────────────────────────────────────────────────────
+// - The method loop uses a progress guard: saves pos_ before parseFuncDecl().
+// - If parseFuncDecl() fails to advance, consumes one token, then calls
+//   synchronize() – guarantees forward progress.
+// - The loop terminates when RBRACE is found or EOF is reached.
+//
+// ─── Notes ──────────────────────────────────────────────────────────────────
+// - Extension blocks can be top‑level or local. When local, visibility modifiers are omitted.
+// - Methods are static – they do not receive a self parameter.
+// - The target type must be a named type (struct, enum, or type alias).
+// - Generic parameters (e.g., Wrapper<T>) are stored in genericParams.
+// - The semantic phase registers the methods under mangled names (Type::namespace.method).
+// ─────────────────────────────────────────────────────────────────────────────
+ASTPtr<ExtensionDeclAST> Parser::parseExtensionDecl(Visibility vis) {
+    LUC_LOG_PARSER("parseExtensionDecl: parsing extension");
+    SourceLocation loc = currentLoc();
+    consume(TokenType::EXTENSION, "expected 'extension'");
+
+    auto node = arena_.make<ExtensionDeclAST>();
+    node->loc = loc;
+    node->visibility = vis;
+
+    // ── Parse the type being extended (must be a named type) ─────────────────
+    // Grammar: type_name := IDENTIFIER [ generic_args ]
+    // Only named types (structs, enums, type aliases) can be extended.
+    // Primitives require a type alias: type IntOps = int; extension IntOps std { ... }
+    if (!check(TokenType::IDENTIFIER)) {
+        errorAt(DiagCode::E2005, "expected type name to extend (e.g., 'Vec2', 'Direction', or 'IntOps')");
+        return nullptr;
+    }
+
+    // Parse the named type (may have generic arguments like Wrapper<T>)
+    TypePtr targetType = parseNamedType();
+    if (!targetType || targetType->isa<UnknownTypeAST>()) {
+        errorAt(DiagCode::E2005, "invalid type to extend");
+        return nullptr;
+    }
+    node->targetType = std::move(targetType);
+
+    // ── Extract generic parameters from the target type (if any) ─────────────
+    // For a generic extension like "extension Wrapper<T> container { ... }",
+    // the generic parameter T should be stored in node->genericParams.
+    if (node->targetType->isa<NamedTypeAST>()) {
+        auto* named = node->targetType->as<NamedTypeAST>();
+        // The generic arguments on the target type are the placeholders (T, U, etc.)
+        // We need to convert them to GenericParamAST nodes.
+        for (auto& arg : named->genericArgs) {
+            if (arg && arg->isa<NamedTypeAST>()) {
+                auto* argNamed = arg->as<NamedTypeAST>();
+                if (argNamed->isGenericParam || argNamed->genericArgs.empty()) {
+                    // This is a generic parameter placeholder like T
+                    auto gp = arena_.make<GenericParamAST>(argNamed->name);
+                    gp->loc = argNamed->loc;
+                    node->genericParams.push_back(std::move(gp));
+                }
+            }
+        }
+    }
+
+    // ── Parse the namespace identifier (required) ────────────────────────────
+    if (!check(TokenType::IDENTIFIER)) {
+        errorAt(DiagCode::E2003, "expected namespace name for extension");
+        return nullptr;
+    }
+    node->namespaceName = pool_.intern(advance().value);
+    LUC_LOG_PARSER("\textension for type: " << node->targetType.get()
+                   << ", namespace: '" << pool_.lookup(node->namespaceName) << "'");
+
+    // ── Consume opening brace ────────────────────────────────────────────────
+    consume(TokenType::LBRACE, "expected '{' to open extension body");
+
+    // ── Parse methods (static functions) until '}' ───────────────────────────
+    while (!check(TokenType::RBRACE) && !isAtEnd()) {
+        match(TokenType::SEMICOLON);
+        match(TokenType::COMMA);
+        if (check(TokenType::RBRACE))
+            break;
+
+        // Harvest doc comment for the method
+        std::optional<DocComment> mdoc = harvestDocComment();
+        std::size_t savedPos = pos_;
+
+        // Extension methods are plain function declarations (static, no self parameter)
+        // They use 'let' or 'const' keyword
+        if (!checkAny({TokenType::LET, TokenType::CONST})) {
+            errorAt(DiagCode::E2003, "expected 'let' or 'const' for extension method");
+            if (pos_ == savedPos) advance();
+            synchronize();
+            continue;
+        }
+
+        // Determine the keyword from the current token
+        TokenType kwType = peek().type;
+        DeclKeyword kw = (kwType == TokenType::LET) ? DeclKeyword::Let : DeclKeyword::Const;
+        advance(); // consume let/const
+
+        // Parse a function declaration
+        ASTPtr<FuncDeclAST> method = parseFuncDecl(kw, vis);
+        if (method) {
+            attachDoc(*method, std::move(mdoc));
+            node->methods.push_back(std::move(method));
+        } else {
+            if (pos_ == savedPos) {
+                LUC_LOG_PARSER("parseExtensionDecl: parser didn't advance, forcing advance");
+                advance();
+            }
+            synchronize();
+        }
+    }
+
+    consume(TokenType::RBRACE, "expected '}' to close extension body");
+    LUC_LOG_PARSER("\tparsed " << node->methods.size() << " extension methods");
     return node;
 }
 

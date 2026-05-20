@@ -44,6 +44,7 @@ actual_decl     := use_decl
                  | from_decl
                  | var_decl
                  | func_decl
+                 | extension_decl
 ```
 
 ### Entry Point (main)
@@ -1007,9 +1008,6 @@ let f (a int) -> ~nullable (b int) -> int
 struct_decl     := [ visibility_mod ] 'struct' IDENTIFIER [ generic_params ]
                    '{' { field_decl } '}'
 
-> [!NOTE]
-> **Local usage:** Structs can be declared inside any block. When local, `visibility_mod` must be omitted.
-
 field_decl      := IDENTIFIER type [ '=' expr ]    -- name then type, optional default
 
 generic_params  := '<' generic_param { [','] generic_param } '>'
@@ -1077,21 +1075,24 @@ origin.x = 5.0               -- write (only valid if origin is 'let')
 ## Member Access
 
 ```
-member_access   := expr '.' IDENTIFIER        -- data member: field from struct body
-                 | IDENTIFIER ':' IDENTIFIER  -- behavior member: method from impl block
+member_access   := expr '.' IDENTIFIER        -- data member
+                 | IDENTIFIER ':' IDENTIFIER  -- behavior member (impl)
+                 | type_name '::' IDENTIFIER '.' IDENTIFIER   -- static extension
 ```
 
 - `.` — data field access. Reassignable if the containing variable is `let`.
-- `:` — impl method access. Never reassignable. Behavior members are plain
-  function references and can be passed as values, stored in typed variables,
-  or used as pipeline steps.
+- `:` — impl method access. Never reassignable. Behavior members are plain function references and can be passed as values, stored in typed variables, or used as pipeline steps.
+- `::` – static method access. The left side is a type name (not an expression).  
+  This calls an `extension` method.
 
 ```luc
-v.x              -- read field
-v.x = 5.0        -- write field (let only)
-Vec2:normalize   -- function reference to normalize from Vec2's impl
-Vec2:length      -- function reference to length from Vec2's impl
-Vec2:length = .. -- ERROR: impl methods cannot be reassigned
+v.x                 -- read field
+v.x = 5.0           -- write field (let only)
+Vec2:normalize      -- function reference to normalize from Vec2's impl
+Vec2:length         -- function reference to length from Vec2's impl
+Vec2:length = ..    -- ERROR: impl methods cannot be reassigned
+int::math.abs(-5)   -- method in the `math` namespace
+int::math.abs = ..       -- ERROR: extension methods cannot be reassigned
 ```
 
 ---
@@ -1131,8 +1132,6 @@ type_decl       := [ visibility_mod ] 'type' IDENTIFIER [ generic_params ]
 
 type_alias_rhs  := type    -- any valid type expression
 
-> [!NOTE]
-> **Local usage:** Type aliases can be declared inside any block. When local, `visibility_mod` must be omitted.
 ```
 
 A `type` alias introduces a new name for an existing shape — it does not
@@ -1155,6 +1154,11 @@ type Transform<T> = (v T) -> T                -- T can be any type
 -- nullable alias
 type Transform    = (v Vec2) -> Vec2
 ```
+
+### Consistency Rule
+Consistent rule: Any named type can have `impl`, `from`, and `extension` blocks.
+- This includes structs, enums, and type aliases.
+- Type aliases can name any type – primitives, function types, arrays, etc.
 
 ---
 
@@ -1202,8 +1206,9 @@ pub trait AsyncFetcher {
 ## Impl Block
 
 ```
-impl_decl       := [ visibility_mod ] 'impl' IDENTIFIER [ generic_params ]
-                   [ ':' trait_ref ] '{' { method_decl } '}'
+impl_decl       := [ visibility_mod ] 'impl' type_name
+                    [ 'as' IDENTIFIER ]                -- optional alias (default = 'self')
+                    [ generic_params ] [ ':' trait_ref ] '{' { method_decl } '}'
 
 visibility_mod  := 'pub' | 'export'
 
@@ -1213,62 +1218,83 @@ method_decl     := IDENTIFIER [ qualifier_list ] param_group { param_group }
                    [ '->' return_list ] '=' func_body
 ```
 
+
+| Type            | Can we impl directly? | Should we allow via alias?  | Notes                                     |
+| --------------- | --------------------- | --------------------------- | ----------------------------------------- |
+| Primitive (int) | ❌ No                  | ✅ Yes via type IntOps = int | Primitives have no methods natively       |
+| Struct          | ✅ Yes (direct)        | ✅ Yes (via alias)           | Already works                             |
+| Enum            | ✅ Yes (direct)        | ✅ Yes (via alias)           | Already works                             |
+| Trait           | ❌ No                  | ❌ No                        | Traits are contracts, not implementations |
+| Function type   | ❌ No (no name)        | ✅ Yes via alias             | Structural types need naming              |
+| Array type      | ❌ No (structural)     | ✅ Yes via alias             | type IntArray = []int                     |
+Type alias itself	✅ Yes (direct)	N/A	Alias is the named target
+
 Rules:
-- `impl` must be in the same file (and if local, the same block) as the struct declaration
-- `impl` must appear after the struct declaration
-- Multiple impl blocks for the same struct merge at semantic time
-- Duplicate method names across merged blocks are a semantic error
+- `impl` can be attached to **any named type**:
+  - Structs (direct or via alias)
+  - Enums (direct or via alias)
+  - Type aliases (including those aliasing primitives, function types, arrays)
+- The type must be declared in the current scope (or an outer scope).
+- The impl block can only be written after the type declaration.
+- For function types and other structural types, a type alias **must** be used as the target.
+- Multiple impl blocks for the same named type merge at semantic time.
 - `export impl` — methods callable externally
 - `pub impl` — methods callable within the package
 - `impl` — methods callable only within the file
+- If the `as IDENTIFIER` clause is omitted, the receiver is implicitly named `self` inside the block.
+- `self` is not a reserved keyword in general Luc; it is only treated specially inside `impl` method bodies (like `self.x` refers to the receiver's field `x`). Outside of an `impl` block, `self` can be used as a normal identifier.
+- The receiver alias (explicit or implicit) is in scope for every method body inside the `impl` block. It is a read‑only reference to the instance on which the method was called.
+- Generic parameters follow the type name, not the alias.
+
+
+### Examples
 
 ```luc
+-- Direct impl on struct
 pub impl Vec2 {
-    length () -> float = {
-        return #sqrt(x*x + y*y)
-    }
+    length () -> float = { return #sqrt(x*x + y*y) }
+}
 
-    dot (other Vec2) -> float = {
-        return x*other.x + y*other.y
-    }
+-- Direct impl on enum
+impl Direction {
+    isNorth () -> bool = { return self == Direction.North }
+}
 
-    scale (factor float) -> Vec2 = {
-        return Vec2 { x = x * factor  y = y * factor }
+-- Impl on primitive via type alias
+type IntOps = int
+impl IntOps {
+    isEven () -> bool = { return self % 2 == 0 }
+}
+
+-- Impl on function type via alias
+type Callback = (event Event) -> bool
+impl Callback {
+    andThen (next Callback) -> Callback = { ... }
+}
+
+-- Impl on array type via alias
+type IntSlice = []int
+impl IntSlice {
+    sum () -> int = {
+        let s int = 0
+        for v in self { s += v }
+        return s
     }
 }
 
-export impl Vec2 {
-    normalize () -> Vec2 = {
-        let len float = Vec2:length()
-        return Vec2 { x = x / len  y = y / len }
-    }
-}
-
+-- Implicit self (default)
 impl Vec2 {
-    -- private helper, file-only
-    isZero () -> bool = {
-        return x == 0.0 and y == 0.0
-    }
+    length () -> float = { return #sqrt(self.x*self.x + self.y*self.y) }
 }
 
--- trait conformance
-pub impl Circle : Drawable {
-    draw   ()         = { ... }
-    bounds () -> Rect = { ... }
+-- Explicit receiver alias 'v'
+impl Vec2 as v {
+    length () -> float = { return #sqrt(v.x*v.x + v.y*v.y) }
 }
 
--- async method
-pub impl HttpClient {
-    fetch ~async (url string) -> string = {
-        return await httpGet(url)
-    }
-}
-
--- generic impl
-pub impl Scene<T : Drawable> {
-    drawAll () = {
-        for obj in objects { obj.draw() }
-    }
+-- With generic parameters
+impl Wrapper<T> as w {
+    get () -> T = { return w.value }
 }
 ```
 
@@ -1277,25 +1303,57 @@ pub impl Scene<T : Drawable> {
 ## From Declaration
 
 ```
-from_block          := [ visibility_mod ] 'from' IDENTIFIER [ generic_params ] '{' { from_entry } '}'
+from_block      := [ visibility_mod ] 'from' type_name [ generic_params ] '{' { from_entry } '}'
 
-from_entry          := param_group { param_group } '->' type '=' func_body
-                   -- source param(s), target type name, body
-                   -- target type name must match the enclosing from target
-
-> [!NOTE]
-> **Local usage:** From blocks can be declared inside any block. When local, `visibility_mod` must be omitted.
+from_entry := param_group { param_group } '->' type '=' func_body
+-- source param(s), target type name, body
+-- target type name must match the enclosing from target
 ```
 
-Rules:
-A from block defines implicit conversions from a source type (described by the parameter groups) to a target struct type. Each entry contains:
+> [!NOTE]
+> Local usage: From blocks can be declared inside any block. When local, visibility_mod must be omitted.
+
+
+A `from` block defines implicit conversions from a source type (described by the parameter groups) to a target type. The target type can be **any type** (primitive, struct, enum, or named type alias), not just structs.
+
+### Target Types
+
+The target type in a `from` block can be:
+
+| Target Type    | Example                                                   | Notes                        |
+| -------------- | --------------------------------------------------------- | ---------------------------- |
+| **Primitive**  | `from int { (x string) -> int = { ... } }`                | Convert from string to int   |
+| **Struct**     | `from Fahrenheit { (c Celsius) -> Fahrenheit = { ... } }` | Convert between structs      |
+| **Enum**       | `from Direction { (s string) -> Direction = { ... } }`    | Parse string to enum variant |
+| **Type alias** | `from ID { (x int) -> ID = { ... } }`                     | Convert to aliased type      |
+
+### Rules
+
+A from block defines implicit conversions from a source type (described by the parameter groups) to a target type. Each entry contains:
 - One or more parameter groups (currying allowed) – the source value(s).
-- The arrow -> (mandatory).
-- A single return type – must be the struct type named in the enclosing from declaration.
+- The arrow `->` (mandatory).
+- A single return type – must be the type named in the enclosing from declaration.
 - `=` followed by the conversion body (a block or expression).
 - Qualifiers: from entries cannot have qualifiers (`~async`, `~nullable`, `~parallel`), they are plain functions. This is enforced by the parser.
+- A `from` block defines implicit conversions **to** a named target type.
+- The target type can be **any named type**:
+  - Primitive (via type alias)
+  - Struct (direct or via alias)
+  - Enum (direct or via alias)
+  - Function type (via alias)
+  - Array type (via alias)
+- For structural types (functions, arrays, slices), a type alias **must** be used.
+- The conversion body must return a value of the target type.
+- From blocks can appear in any scope (standard lexical scoping)
 
-The body may return a value of the target type, typically via a struct literal or a call to another conversion.
+The body must return a value of the target type, typically via a literal, struct literal, or a call to another conversion.
+
+### Scope and Visibility
+
+From blocks can appear in **any scope** (top-level or local) and are visible following standard lexical scoping rules:
+- A from block is visible in the scope where it is declared and all nested scopes.
+- Multiple from blocks for the same target type are allowed in different scopes.
+- When looking for a conversion, the compiler searches from the innermost scope outward, using the first matching conversion found.
 
 ### Implicit casting contexts
 
@@ -1307,40 +1365,229 @@ compiler automatically desugars in these contexts:
 3. **Function return** — assigning `Celsius` return to `Fahrenheit` variable
 4. **Assignment** — `currentTemp = newReading`
 
+### Examples
+
 ```luc
+-- Convert from string to int (primitive target)
+from int {
+    (s string) -> int = {
+        return #parseInt(s)
+    }
+}
+
+-- Convert from Celsius to Fahrenheit (struct target)
 export from Fahrenheit {
-    (c Celsius) Fahrenheit = {
+    (c Celsius) -> Fahrenheit = {
         return Fahrenheit { value = c.value * 9.0 / 5.0 + 32.0 }
     }
-    (k Kelvin) Fahrenheit = {
+    (k Kelvin) -> Fahrenheit = {
         return Fahrenheit { value = (k.value - 273.15) * 9.0 / 5.0 + 32.0 }
     }
 }
 
+-- Convert from Celsius to Kelvin (struct target)
 pub from Kelvin {
-    (c Celsius) Kelvin = {
+    (c Celsius) -> Kelvin = {
         return Kelvin { value = c.value + 273.15 }
     }
 }
 
--- Generic from block
+-- Convert from string to Direction (enum target)
+from Direction {
+    (s string) -> Direction = {
+        match s {
+            "north" => Direction.North
+            "south" => Direction.South
+            "east"  => Direction.East
+            "west"  => Direction.West
+            default => Direction.North
+        }
+    }
+}
+
+-- Generic from block (target is a generic struct)
 struct Wrapper<T> { value T }
 
 from Wrapper<T> {
-    (val T) Wrapper<T> = {
+    (val T) -> Wrapper<T> = {
         return Wrapper<T> { value = val }
     }
 }
 
--- call site
-let boiling Celsius    = Celsius { value = 100.0 }
-let hot     Fahrenheit = Fahrenheit(boiling)
+-- Local from block (only visible inside this function)
+let process () -> int = {
+    from string {
+        (s string) -> int = {
+            return #parseInt(s)
+        }
+    }
+    
+    let x int = "42"  -- Uses the local from block
+    return x
+}
 
--- works as a pipeline step
-boiling |> Fahrenheit |> io.printl
+-- Call site examples
+let boiling Celsius    = Celsius { value = 100.0 }
+let hot     Fahrenheit = Fahrenheit(boiling)      -- Uses from block
+let temp    int        = int("123")               -- Uses from int block
+let dir     Direction  = Direction("north")       -- Uses from Direction block
+let wrapped Wrapper<int> = Wrapper<int>(42)       -- Uses generic from block
+
+-- Direct from on struct
+export from Fahrenheit {
+    (c Celsius) -> Fahrenheit = { ... }
+}
+
+-- From on primitive via alias
+type IntOps = int
+from IntOps {
+    (s string) -> int = { return #parseInt(s) }
+}
+
+-- From on function type via alias
+type Callback = (event Event) -> bool
+from Callback {
+    (fn (Event) -> bool) -> Callback = { return fn }
+}
+
+-- From on array type via alias
+type IntSlice = []int
+from IntSlice {
+    (arr [3]int) -> []int = { return arr[:] }
+}
+
 ```
 
+> [!NOTE]
+> - From blocks are scope‑based – they are only considered for conversions if they are visible in the current scope.
+> - The compiler does not chain conversions (e.g., A → B → C). Only a single direct conversion is applied.
+> - Explicit casts using `T(value)` syntax will also use the same from block lookup.
+> - If multiple visible from blocks provide a conversion from the same source to the same target with the same signature, the nearest (innermost scope) wins; ambiguous conversions produce a compile error.
+
 ---
+
+## Extension Declaration
+
+```
+extension_decl  := [ visibility_mod ] 'extension' type_name IDENTIFIER '{' {     func_decl } '}'
+```
+
+### Calling convention
+
+All extension methods are plain functions – they are called as `Type::namespace.method(args)`. The call syntax is resolved at compile time; no dynamic dispatch occurs.
+
+An `extension` block adds **static methods** (namespaced functions) to an existing **named type**.  
+These methods are called using the `::` operator and are resolved at compile time.
+
+| Target Type                | Can we extend directly? | How to extend                           |
+| -------------------------- | ----------------------- | --------------------------------------- |
+| **Struct**                 | ✅ Yes                   | `extension Vec2 math { ... }`           |
+| **Enum**                   | ✅ Yes                   | `extension Direction helpers { ... }`   |
+| **Type alias**             | ✅ Yes                   | `extension IntOps std { ... }`          |
+| **Primitive (int, float)** | ❌ No                    | Use type alias: `type IntOps = int`     |
+| **Function type**          | ❌ No (no name)          | Use type alias: `type Callback = ...`   |
+| **Array type**             | ❌ No (structural)       | Use type alias: `type IntSlice = []int` |
+
+> [!NOTE]
+> Static extension methods always require an explicit namespace.  
+> Example: `int::std.abs(-5)`.  
+> The namespace `std` is conventional for the standard library, but any identifier is allowed.  
+> There is no bare `Type::method` form – you must always write the namespace.
+
+### Rules
+
+- `extension` can only be attached to **named types**:
+  - Structs (direct)
+  - Enums (direct)
+  - Type aliases (including those aliasing primitives, function types, arrays)
+- Primitive types (`int`, `float`, `string`, `bool`, etc.) **cannot** be extended directly – you must create a type alias first.
+- Methods are **static** – they do not receive a `self` parameter.
+- The first parameter of each method is the first argument, not the receiver.
+- Duplicate method signatures (same name, same parameter types) are forbidden within the same extension block.
+- Overloading across different extension blocks or different namespaces is allowed.
+- The compiler resolves `Type::namespace.method` by looking up the mangled symbol `Type::namespace.method` in the symbol table.
+- Extension blocks can be generic: `extension Wrapper<T> container { … }` – the type parameter T is in scope inside the method bodies.
+
+### Examples
+
+```luc
+-- Direct extension on struct
+extension Vec2 math {
+    length (v Vec2) -> float = { return #sqrt(v.x*v.x + v.y*v.y) }
+}
+
+-- Direct extension on enum
+extension Direction helpers {
+    isNorth (d Direction) -> bool = { return d == Direction.North }
+}
+
+-- Extend primitive via type alias
+type IntOps = int
+extension IntOps std {
+    abs (x int) -> int = { return #abs(x) }
+    clamp (x int, lo int, hi int) -> int = {
+        return #min(#max(x, lo), hi)
+    }
+}
+
+-- Extend function type via alias
+type Callback = (event Event) -> bool
+extension Callback combinators {
+    andThen (c Callback, next Callback) -> Callback = {
+        return (e Event) -> bool { return c(e) and next(e) }
+    }
+}
+
+-- Extend array type via alias
+type IntSlice = []int
+extension IntSlice utils {
+    sum (arr []int) -> int = {
+        let s int = 0
+        for v in arr { s += v }
+        return s
+    }
+}
+
+-- Call site examples
+let result float = Vec2::math.length(Vec2 { x = 3.0, y = 4.0 })
+let isNorth bool = Direction::helpers.isNorth(Direction.North)
+let absVal int = IntOps::std.abs(-5)           -- IntOps is aliased to int
+let clamped int = IntOps::std.clamp(42, 0, 100)
+let total int = []IntOps::utils.sum([1, 2, 3])  -- IntSlice is aliased to []int
+
+-- Generic extension
+struct Wrapper<T> { value T }
+
+extension Wrapper<T> container {
+    unwrap (w Wrapper<T>) -> T = {
+        return w.value
+    }
+
+    map (w Wrapper<T>, f (T) -> U) -> Wrapper<U> = {
+        return Wrapper<U> { value = f(w.value) }
+    }
+}
+
+let wrapped = Wrapper<int> { value = 42 }
+let value int = Wrapper<int>::container.unwrap(wrapped)
+```
+
+### Generic extension
+
+```luc 
+extension Wrapper<T> container {
+    unwrap (w Wrapper<T>) -> T = {
+        return w.value
+    }
+
+    map (w Wrapper<T>, f (T) -> U) -> Wrapper<U> = {
+        return Wrapper<U> { value = f(w.value) }
+    }
+}
+
+let wrapped = Wrapper<int> { value = 42 }
+let value int = Wrapper<int>::container.unwrap(wrapped)
+```
 
 ## Pipeline Operator `|>`
 
@@ -1509,6 +1756,7 @@ postfix_expr    := primary_expr { postfix_op }
 
 postfix_op      := '.' IDENTIFIER
                  | ':' IDENTIFIER
+                 | '::' IDENTIFIER '.' IDENTIFIER
                  | '?.' IDENTIFIER
                  | '??' expr
                  | '[' expr ']'
@@ -2386,7 +2634,7 @@ pub impl Vec2 {
 
 ```
 pub export package use as impl trait type from
-let const struct enum await
+let const struct enum extension await
 bool byte short int long ubyte ushort uint ulong
 int8 int16 int32 int64 uint8 uint16 uint32 uint64
 float double decimal string char any nil

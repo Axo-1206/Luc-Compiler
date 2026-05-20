@@ -189,6 +189,8 @@ struct FuncDeclAST : DeclAST {
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
+using FuncDeclPtr = ASTPtr<FuncDeclAST>;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FieldDeclAST
 //
@@ -503,8 +505,8 @@ using FromEntryPtr = ASTPtr<FromEntryAST>;
 struct FromDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::FromDecl;
 
-    Visibility      visibility = Visibility::Private;
-    InternedString  targetTypeName; // "Fahrenheit"
+    Visibility visibility = Visibility::Private;
+    TypePtr targetType; // e.g., NamedTypeAST("Wrapper") with genericArgs = [ NamedTypeAST("T") ]
     std::vector<GenericParamPtr> genericParams;  // e.g. <T> in from Unwrapped<T>
     std::vector<FromEntryPtr> entries;
 
@@ -542,14 +544,57 @@ struct FromDeclAST : DeclAST {
 struct ImplDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::ImplDecl;
 
+    InternedString receiverAlias;   // empty = default "self"
     Visibility visibility = Visibility::Private;
     std::vector<GenericParamPtr> genericParams; // impl-level type params
-    InternedString structName;                  // "Vec2", "Scene"
-    std::vector<TypePtr> structGenericArgs;     // <T> in Scene<T>
+    TypePtr targetType;
     TraitRefPtr traitRef;                       // nullptr if no conformance
     std::vector<MethodDeclPtr> methods;
 
     ImplDeclAST() : DeclAST(ASTKind::ImplDecl) {}
+    void accept(ASTVisitor& v) override { v.visit(*this); }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ExtensionDeclAST
+//
+// A static method namespace block – adds namespaced functions to an existing type.
+//   type Int = int -- type alias on primitive int
+//   extension Int std {
+//       abs (x int) -> int = { return #abs(x) }
+//       clamp (x int, lo int, hi int) -> int = { ... }
+//   }
+//
+// Grammar: [visibility_mod] 'extension' type_path IDENTIFIER '{' { func_decl } '}'
+//   - type_path: the type being extended (e.g., Int, Vec2, Wrapper<int>)
+//   - IDENTIFIER: the namespace name (e.g., "std", "math", "bitops")
+//   - func_decl: each function is a static method – no self parameter
+//
+// Visibility (pub/export) controls accessibility of all methods in the block.
+// Local extension blocks (inside a function) must omit visibility modifiers.
+// Duplicate method signatures within the same extension block are forbidden.
+// Multiple extension blocks for the same type are allowed with different namespaces.
+//
+// The compiler resolves Type::namespace.method by looking up the mangled symbol.
+// Mangled name format: Type::namespace.method
+//
+// Call site examples:
+//   Int::std.abs(-5)
+//   Vec2::math.normalize(point)
+//   Wrapper<int>::container.unwrap(wrapped)
+// ─────────────────────────────────────────────────────────────────────────────
+struct ExtensionDeclAST : DeclAST {
+    static constexpr ASTKind staticKind = ASTKind::ExtensionDecl;
+
+    Visibility visibility = Visibility::Private;
+    TypePtr targetType;                     // the type being extended (e.g., int, Vec2)
+    InternedString namespaceName;           // the namespace identifier (e.g., "std", "math")
+    std::vector<FuncDeclPtr> methods;       // static method declarations
+    std::vector<GenericParamPtr> genericParams; // generic parameters for the extension block
+                                                // (e.g., extension Wrapper<T> container { ... })
+
+    ExtensionDeclAST() : DeclAST(ASTKind::ExtensionDecl) {}
+
     void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 

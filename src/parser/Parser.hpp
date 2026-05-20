@@ -278,14 +278,14 @@ private:
     ASTPtr<UseDeclAST> parseUseDecl(Visibility vis);
 
     // [vis] let / const IDENTIFIER type [ '=' expr ]
-    ASTPtr<VarDeclAST> parseVarDecl(Visibility vis, std::vector<AttributePtr> attrs = {});
+    ASTPtr<VarDeclAST> parseVarDecl(Visibility vis);
 
     // [vis] let / const IDENTIFIER [<generics>] param_group+ [return_type]
     // '=' body Distinguishes a function from a variable by lookahead after the
     // name:
     //   function → next meaningful token after name (and optional generics) is '('
     //   variable → type keyword, named type, '[', '&', '*', or '?'
-    ASTPtr<FuncDeclAST> parseFuncDecl(DeclKeyword kw, Visibility vis, std::vector<AttributePtr> attrs = {});
+    ASTPtr<FuncDeclAST> parseFuncDecl(DeclKeyword kw, Visibility vis);
 
     // Parse one parameter group '(' [ param_list ] ')'.
     // Used by parseFuncDecl and parseFuncType.
@@ -332,6 +332,9 @@ private:
 
     // [vis] from '(' IDENTIFIER type ')' IDENTIFIER '=' body
     ASTPtr<FromDeclAST> parseFromDecl(Visibility vis);
+
+    // [vis] extension type_path IDENTIFIER '{' { func_decl } '}'
+    ASTPtr<ExtensionDeclAST> parseExtensionDecl(Visibility vis);
 
     // [vis] type IDENTIFIER [<generics>] '=' type
     ASTPtr<TypeAliasDeclAST> parseTypeAliasDecl(Visibility vis);
@@ -644,4 +647,7 @@ private:
 
     // Look for multiple assignment statements
     bool looksLikeMultiAssignStart() const;
+
+    bool looksLikeBehaviorAccess() const;
+    bool looksLikeStaticAccess() const;
 };

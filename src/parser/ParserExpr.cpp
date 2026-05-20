@@ -1129,89 +1129,56 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
             return parseStructLiteralExpr(std::move(name), std::move(genericArgs));
         }
 
-        // ── Behavior access: IDENTIFIER [ '<' type { ',' type } '>' ] ':' IDENTIFIER ──
-        // Perform a non‑destructive lookahead to verify the pattern.
-        std::size_t savedPos = pos_;
-        bool isBehavior = false;
-        std::vector<TypePtr> genericArgs;
-        std::string methodName;
-
-        // Manual scan: we need to check if there is an optional '<' ... '>' followed by ':' and an identifier.
-        // We'll use a temporary index `scan` that starts after the current token (the identifier).
-        std::size_t scan = savedPos + 1; // position after the identifier
-
-        // Skip any comments before checking for '<'
-        skipComments(scan);
-
-        // If the next token is '<', try to parse generic arguments.
-        if (scan < tokens_.size() && tokens_[scan].type == TokenType::LESS) {
-            // Count brackets to find the matching '>'
-            int depth = 1;
-            ++scan; // move past '<'
-            while (scan < tokens_.size() && depth > 0) {
-                // Skip comments inside the generic argument list
-                while (scan < tokens_.size() && (tokens_[scan].type == TokenType::LINE_COMMENT ||
-                                                tokens_[scan].type == TokenType::DOC_COMMENT))
-                    ++scan;
-                if (scan >= tokens_.size()) break;
-                TokenType tt = tokens_[scan].type;
-                if (tt == TokenType::LESS) ++depth;
-                else if (tt == TokenType::GREATER) --depth;
-                ++scan;
-            }
-            if (depth == 0) {
-                // Now after the '>', skip comments and check for ':'
-                while (scan < tokens_.size() && (tokens_[scan].type == TokenType::LINE_COMMENT ||
-                                                tokens_[scan].type == TokenType::DOC_COMMENT))
-                    ++scan;
-                if (scan < tokens_.size() && tokens_[scan].type == TokenType::COLON) {
-                    ++scan; // move past ':'
-                    skipComments(scan);
-                    if (scan < tokens_.size() && tokens_[scan].type == TokenType::IDENTIFIER) {
-                        isBehavior = true;
-                        methodName = tokens_[scan].value;
-                    }
-                }
-            }
-        } else {
-            // No generic args: check for ':' directly
-            if (scan < tokens_.size() && tokens_[scan].type == TokenType::COLON) {
-                ++scan; // move past ':'
-                while (scan < tokens_.size() && (tokens_[scan].type == TokenType::LINE_COMMENT ||
-                                                tokens_[scan].type == TokenType::DOC_COMMENT))
-                    ++scan;
-                if (scan < tokens_.size() && tokens_[scan].type == TokenType::IDENTIFIER) {
-                    isBehavior = true;
-                    methodName = tokens_[scan].value;
-                }
-            }
-        }
-
-        if (isBehavior) {
-            // Commit: consume the identifier, then optional generic args, then ':', then method name.
-            advance(); // consume the identifier (name)
+        // ── Behavior access: IDENTIFIER [ '<' generic_args '>' ] ':' IDENTIFIER ──
+        if (looksLikeBehaviorAccess()) {
+            std::string typeName = advance().value;
+            std::vector<TypePtr> genericArgs;
             if (check(TokenType::LESS)) {
-                genericArgs = parseGenericArgs(); // consumes '<' ... '>'
+                genericArgs = parseGenericArgs();
             }
-            // Consume ':'
-            if (!check(TokenType::COLON)) {
-                errorAt(DiagCode::E2001, "expected ':' in behavior access");
-            } else {
-                advance();
-            }
-            // Consume method name
+            consume(TokenType::COLON, "expected ':' in behavior access");
             if (!check(TokenType::IDENTIFIER)) {
                 errorAt(DiagCode::E2003, "expected method name after ':'");
                 return arena_.make<UnknownExprAST>();
             }
-            methodName = advance().value;
+            std::string method = advance().value;
 
             auto node = arena_.make<BehaviorAccessExprAST>();
             node->loc = loc;
-            node->typeName = pool_.intern(name);
+            node->typeName = pool_.intern(typeName);
             node->genericArgs = std::move(genericArgs);
-            node->method = pool_.intern(methodName);
+            node->method = pool_.intern(method);
             node->isBehaviorMember = true;
+            return node;
+        }
+
+        if (looksLikeStaticAccess()) {
+            // Parse static access: type_name [<generic_args>] :: namespace . method
+            std::string typeName = advance().value;
+            std::vector<TypePtr> genericArgs;
+            if (check(TokenType::LESS)) {
+                genericArgs = parseGenericArgs();
+            }
+            consume(TokenType::DOUBLE_COLON, "expected '::' after type name");
+            if (!check(TokenType::IDENTIFIER)) {
+                errorAt(DiagCode::E2003, "expected namespace name after '::'");
+                return arena_.make<UnknownExprAST>();
+            }
+            std::string namespaceName = advance().value;
+            consume(TokenType::DOT, "expected '.' after namespace name");
+            if (!check(TokenType::IDENTIFIER)) {
+                errorAt(DiagCode::E2003, "expected method name after '.'");
+                return arena_.make<UnknownExprAST>();
+            }
+            std::string method = advance().value;
+
+            auto node = arena_.make<StaticAccessExprAST>();
+            node->loc = loc;
+            auto targetType = arena_.make<NamedTypeAST>(pool_.intern(typeName));
+            targetType->genericArgs = std::move(genericArgs);
+            node->targetType = std::move(targetType);
+            node->namespaceName = pool_.intern(namespaceName);
+            node->method = pool_.intern(method);
             return node;
         }
 

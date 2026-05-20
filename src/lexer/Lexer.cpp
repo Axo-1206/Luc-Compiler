@@ -24,6 +24,7 @@ Lexer::Lexer(const std::string &source)
     keywords["enum"] = TokenType::ENUM;
     keywords["trait"] = TokenType::TRAIT;
     keywords["from"] = TokenType::FROM;
+    keywords["extension"] = TokenType::EXTENSION;
 
     // ── Declarations ───────────────────────────────────────────────────────────
     keywords["let"] = TokenType::LET;
@@ -616,6 +617,10 @@ Token Lexer::getNextToken() {
         return makeToken(TokenType::DOT, ".");
 
     case ':':
+        if (match(':')) {
+            LUC_LOG_LEXER_EXTREME("getNextToken: '::'");
+            return makeToken(TokenType::DOUBLE_COLON, "::");
+        }
         LUC_LOG_LEXER_EXTREME("getNextToken: ':'");
         return makeToken(TokenType::COLON, ":");
 

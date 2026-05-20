@@ -2,6 +2,8 @@
 build/
 .github/
 .vscode/
+.clang-format
+archive/
+.cache/
 tests/
 language_support/
-.git/

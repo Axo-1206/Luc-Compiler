@@ -357,21 +357,52 @@ void ASTDumper::visit(TraitDeclAST& node) {
 }
 
 void ASTDumper::visit(ImplDeclAST& node) {
-    std::string header = "ImplDeclAST '" + toStr(pool, node.structName) + "'";
+    std::string header = "ImplDeclAST";
+    
+    // Add visibility
+    if (node.visibility == Visibility::Package) {
+        header = "pub " + header;
+    } else if (node.visibility == Visibility::Export) {
+        header = "export " + header;
+    }
+    
+    // Add target type
+    if (node.targetType) {
+        header += " for " + formatType(node.targetType.get());
+    } else {
+        header += " for <unknown>";
+    }
+
+    // Add receiver alias if present (non‑empty)
+    if (node.receiverAlias.isValid()) {
+        header += " as " + toStr(pool, node.receiverAlias);
+    } else {
+        header += " (default self)"; // optional, for clarity
+    }
+
+    // Add trait conformance if present
     if (node.traitRef) {
         header += " : " + toStr(pool, node.traitRef->name);
         if (!node.traitRef->genericArgs.empty()) {
             header += "<";
             for (size_t i = 0; i < node.traitRef->genericArgs.size(); ++i) {
+                if (i > 0) header += ", ";
                 header += formatType(node.traitRef->genericArgs[i].get());
-                if (i + 1 < node.traitRef->genericArgs.size()) header += ", ";
             }
             header += ">";
         }
     }
+    
     printNodeHeader(node, header);
-    for (const auto& gp : node.genericParams) visitChild(gp.get());
-    for (const auto& method : node.methods) visitChild(method.get());
+    
+    indentLevel++;
+    for (const auto& gp : node.genericParams) {
+        if (gp) visitChild(gp.get());
+    }
+    for (const auto& method : node.methods) {
+        if (method) visitChild(method.get());
+    }
+    indentLevel--;
 }
 
 void ASTDumper::visit(MethodDeclAST& node) {
@@ -409,10 +440,44 @@ void ASTDumper::visit(MethodDeclAST& node) {
 }
 
 void ASTDumper::visit(FromDeclAST& node) {
-    printNodeHeader(node, "FromDeclAST");
-    for (const auto& entry : node.entries) {
-        visitChild(entry.get());
+    std::string header = "FromDeclAST";
+    
+    // Add visibility
+    if (node.visibility == Visibility::Package) {
+        header = "pub " + header;
+    } else if (node.visibility == Visibility::Export) {
+        header = "export " + header;
     }
+    
+    // Add target type
+    if (node.targetType) {
+        header += " to " + formatType(node.targetType.get());
+    } else {
+        header += " to <unknown>";
+    }
+    
+    // Add generic parameters if any
+    if (!node.genericParams.empty()) {
+        header += " <";
+        for (size_t i = 0; i < node.genericParams.size(); ++i) {
+            if (i > 0) header += ", ";
+            if (node.genericParams[i]) {
+                header += toStr(pool, node.genericParams[i]->name);
+            }
+        }
+        header += ">";
+    }
+    
+    printNodeHeader(node, header);
+    
+    indentLevel++;
+    for (const auto& entry : node.entries) {
+        if (entry) visitChild(entry.get());
+    }
+    for (const auto& gp : node.genericParams) {
+        if (gp) visitChild(gp.get());
+    }
+    indentLevel--;
 }
 
 void ASTDumper::visit(FromEntryAST& node) {
@@ -429,6 +494,50 @@ void ASTDumper::visit(FromEntryAST& node) {
     }
     printNodeHeader(node, header);
     if (node.body) visitChild(node.body.get());
+}
+
+void ASTDumper::visit(ExtensionDeclAST& node) {
+    std::string header = "ExtensionDeclAST";
+    
+    // Add visibility if not private
+    if (node.visibility == Visibility::Package) {
+        header = "pub " + header;
+    } else if (node.visibility == Visibility::Export) {
+        header = "export " + header;
+    }
+    
+    // Add target type
+    if (node.targetType) {
+        header += " for " + formatType(node.targetType.get());
+    } else {
+        header += " for <unknown>";
+    }
+    
+    // Add namespace
+    if (node.namespaceName.isValid()) {
+        header += " as " + toStr(pool, node.namespaceName);
+    }
+    
+    printNodeHeader(node, header);
+    
+    indentLevel++;
+    
+    // Print generic parameters if any
+    for (const auto& gp : node.genericParams) {
+        if (gp) visitChild(gp.get());
+    }
+    
+    // Print methods
+    for (const auto& method : node.methods) {
+        if (method) visitChild(method.get());
+    }
+    
+    // Print attributes
+    for (const auto& attr : node.attributes) {
+        if (attr) visitChild(attr.get());
+    }
+    
+    indentLevel--;
 }
 
 void ASTDumper::visit(TypeAliasDeclAST& node) {
@@ -508,6 +617,27 @@ void ASTDumper::visit(FieldAccessExprAST& node) {
 
 void ASTDumper::visit(BehaviorAccessExprAST& node) {
     printNodeHeader(node, "BehaviorAccessExprAST " + toStr(pool, node.typeName) + ":" + toStr(pool, node.method));
+}
+
+void ASTDumper::visit(StaticAccessExprAST& node) {
+    std::string header = "StaticAccessExprAST";
+    
+    if (node.targetType) {
+        header += " " + formatType(node.targetType.get());
+    } else {
+        header += " <unknown-type>";
+    }
+    
+    header += "::" + toStr(pool, node.namespaceName) + "." + toStr(pool, node.method);
+    
+    printNodeHeader(node, header);
+    
+    // Optionally dump the resolved mangled name if present
+    if (!node.resolvedMangledName.empty()) {
+        indentLevel++;
+        indent(); out += "\tresolvedMangledName: " + node.resolvedMangledName + "\n";
+        indentLevel--;
+    }
 }
 
 void ASTDumper::visit(NullableChainExprAST& node) {

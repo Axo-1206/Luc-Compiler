@@ -47,13 +47,13 @@ add_executable(luc-comp
     src/semantic/SemanticStmt.cpp
     src/semantic/TypeChecker.cpp
     src/semantic/Annotator.cpp
+    src/semantic/SemanticUtils.cpp
     src/debug/ASTDumper.cpp
     src/registry/BuiltinMethodRegistry.cpp
     src/registry/QualifierRegistry.cpp
     src/registry/AttributeRegistry.cpp
     src/registry/IntrinsicRegistry.cpp
     src/ast/support/StringPool.cpp
-    src/semantic/SemanticUtils.cpp
     # src/codegen/CodeGen.cpp
     # src/codegen/CodeGenExpr.cpp
     # src/codegen/CodeGenDecl.cpp

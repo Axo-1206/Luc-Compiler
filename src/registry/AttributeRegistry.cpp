@@ -55,7 +55,8 @@ namespace {
         { "deprecated", AttributeContext::Func | AttributeContext::Var | 
                         AttributeContext::Struct | AttributeContext::Impl | 
                         AttributeContext::Enum | AttributeContext::Trait |
-                        AttributeContext::From, true, 0, 1, AttrArgKind::String, false, "" },
+                        AttributeContext::From | AttributeContext::Extension, 
+                        true, 0, 1, AttrArgKind::String, false, "" },
     };
     const size_t kNumBuiltinAttrs = sizeof(kBuiltinAttrs) / sizeof(kBuiltinAttrs[0]);
 }

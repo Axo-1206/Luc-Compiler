@@ -93,6 +93,7 @@ enum class ASTKind : uint16_t {
     FromDecl,
     FromEntry,
     ImplDecl,
+    ExtensionDecl,
     TypeAliasDecl,
 
     // ── Expression nodes ──────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ enum class ASTKind : uint16_t {
     IdentifierExpr,
     FieldAccessExpr,
     BehaviorAccessExpr,
+    StaticAccessExpr,
     CallExpr,
     IndexExpr,
     BinaryExpr,
@@ -186,6 +188,7 @@ struct MethodDeclAST;
 struct FromDeclAST;         // from [method definition] - use for type casting
 struct FromEntryAST;        // entry inside the from block
 struct ImplDeclAST;
+struct ExtensionDeclAST;
 struct TypeAliasDeclAST;
 
 // ExprAST.hpp
@@ -200,6 +203,7 @@ struct CallExprAST;
 struct IndexExprAST;
 struct FieldAccessExprAST;
 struct BehaviorAccessExprAST;
+struct StaticAccessExprAST;
 struct NullableChainExprAST;
 struct NullCoalesceExprAST;
 struct AssignExprAST;
@@ -361,6 +365,7 @@ struct ASTVisitor {
     virtual void visit(MethodDeclAST&)      {}
     virtual void visit(FromDeclAST&)        {}
     virtual void visit(FromEntryAST&)       {}
+    virtual void visit(ExtensionDeclAST&)   {}
     virtual void visit(TypeAliasDeclAST&)   {}
     virtual void visit(ParamAST&)           {}
     virtual void visit(GenericParamAST&)    {}
@@ -378,6 +383,7 @@ struct ASTVisitor {
     virtual void visit(IndexExprAST&)           {}
     virtual void visit(FieldAccessExprAST&)     {}
     virtual void visit(BehaviorAccessExprAST&)  {}
+    virtual void visit(StaticAccessExprAST&)    {}
     virtual void visit(NullableChainExprAST&)   {}
     virtual void visit(NullCoalesceExprAST&)    {}
     virtual void visit(AssignExprAST&)          {}
@@ -507,9 +513,6 @@ struct BaseAST {
     bool    isBehaviorMember = false;    // true → Type:method, never reassignable
     bool    isConst          = false;    // true → compile-time constant (const decl or literal)
     int     scopeDepth       = 0;        // 0 = file scope, +1 per nested block
-
-    // ── Structural ────────────────────────────────────────────────────────────
-    BaseAST* parent          = nullptr;  // set by parser when child is attached
 
     // ── Behavioural bitmask ───────────────────────────────────────────────────
     uint32_t effectFlags     = 0;

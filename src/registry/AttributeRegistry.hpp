@@ -30,6 +30,7 @@ enum class AttributeContext : uint32_t {
     Enum    = 1 << 5,
     Trait   = 1 << 6,
     From    = 1 << 7,
+    Extension = 1 << 8
 };
 
 inline AttributeContext operator|(AttributeContext a, AttributeContext b) {

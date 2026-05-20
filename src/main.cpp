@@ -179,6 +179,8 @@ int main(int argc, char* argv[]) {
 
     AttributeRegistry::instance().resetStringPool();
     IntrinsicRegistry::instance().resetStringPool();
+    BuiltinMethodRegistry::instance().resetStringPool();
+    QualifierRegistry::instance().resetStringPool();
     
     file.close();
     
