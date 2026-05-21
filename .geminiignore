@@ -1,4 +1,3 @@
-# .geminiignore
 build/
 .github/
 .vscode/
