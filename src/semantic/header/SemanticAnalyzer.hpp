@@ -114,7 +114,7 @@ public:
 
     // Returns the compilation mode determined from the @aot / @jit directive
     // on the main entry point. Only meaningful after analyze() returns true.
-    CompilationMode getCompilationMode() const { return _compilationMode; }
+    CompilationMode getCompilationMode() const { return compilationMode_; }
 
 private:
     void resolveImports(std::vector<ProgramAST*>& files);  // Phase 0: cycle detection
@@ -125,20 +125,20 @@ private:
     void validateNoDuplicateSymbols();
 
     // Sub-components owned by the analyzer.
-    std::unique_ptr<SymbolTable>   _symbols;
-    std::unique_ptr<TypeResolver>  _typeResolver;
-    std::unique_ptr<TypeChecker>   _typeChecker;
+    std::unique_ptr<SymbolTable>   symbols_;
+    std::unique_ptr<TypeResolver>  typeResolver_;
+    std::unique_ptr<TypeChecker>   typeChecker_;
 
-    DiagnosticEngine& _dc;
-    StringPool& _pool;      // For interned string lookups
-    ASTArena& _arena;       // For allocating temporary types during semantic passes
+    DiagnosticEngine& dc_;
+    StringPool& pool_;      // For interned string lookups
+    ASTArena& arena_;       // For allocating temporary types during semantic passes
 
     // Compilation mode determined from @aot / @jit on main.
     // Set during Phase 3.5 entry point validation.
-    CompilationMode _compilationMode = CompilationMode::AOT;
+    CompilationMode compilationMode_ = CompilationMode::AOT;
 
     // Context flags shared across Phase 3 sub-passes.
-    bool _insideExtern  = false;
-    int  _loopDepth     = 0;
-    int  _parallelDepth = 0;
+    bool insideExtern_  = false;
+    int  loopDepth_     = 0;
+    int  parallelDepth_ = 0;
 };

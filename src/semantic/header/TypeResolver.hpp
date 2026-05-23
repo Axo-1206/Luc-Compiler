@@ -126,14 +126,14 @@ public:
 
     // Call this before resolving types in an @extern-declared declaration
     // so that *T raw pointer types are permitted in that context.
-    void setInsideExtern(bool val) { _insideExtern = val; }
+    void setInsideExtern(bool val) { insideExtern_ = val; }
 
     void setStructTraits(const std::unordered_map<InternedString, std::vector<InternedString>>* map) {
-        _structTraits = map;
+        structTraits_ = map;
     }
 
-    StringPool& getPool() const { return _pool; }
-    ASTArena& getArena() const { return _arena; }
+    StringPool& getPool() const { return pool_; }
+    ASTArena& getArena() const { return arena_; }
 
     void pushGenericParams(const std::vector<GenericParamPtr>* params);
     void popGenericParams();
@@ -144,13 +144,13 @@ public:
     TypeAST* lookupSubstitution(InternedString name) const;
 
 private:
-    SymbolTable& _symbols;
-    DiagnosticEngine& _dc;
-    StringPool& _pool;
-    ASTArena& _arena;
-    TypeAST* _resolved = nullptr;
-    bool _insideExtern = false;
-    const std::unordered_map<InternedString, std::vector<InternedString>>* _structTraits = nullptr;
+    SymbolTable& symbols_;
+    DiagnosticEngine& dc_;
+    StringPool& pool_;
+    ASTArena& arena_;
+    TypeAST* resolved_ = nullptr;
+    bool insideExtern_ = false;
+    const std::unordered_map<InternedString, std::vector<InternedString>>* structTraits_ = nullptr;
 
     // Stack for nested generic parameters
     std::vector<const std::vector<GenericParamPtr>*> genericParamsStack_;

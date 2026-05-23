@@ -98,7 +98,7 @@
 // diagnostic engine to log error messages directly during resolution.
 // ─────────────────────────────────────────────────────────────────────────────
 TypeResolver::TypeResolver(SymbolTable& symbols, DiagnosticEngine& dc, StringPool& pool, ASTArena& arena)
-    : _symbols(symbols), _dc(dc), _pool(pool), _arena(arena) {
+    : symbols_(symbols), dc_(dc), pool_(pool), arena_(arena) {
     LUC_LOG_SEMANTIC("TypeResolver constructed");
 }
 
@@ -157,13 +157,13 @@ TypeAST* TypeResolver::resolveType(TypeAST* typeNode) {
         return nullptr;
     }
     
-    _resolved = nullptr;
+    resolved_ = nullptr;
     typeNode->accept(*this);
     
-    bool success = (_resolved != nullptr);
+    bool success = (resolved_ != nullptr);
     LUC_LOG_SEMANTIC_VERBOSE("resolveType: " << (success ? "success" : "failed"));
     
-    return _resolved;
+    return resolved_;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -286,7 +286,7 @@ bool TypeResolver::isGenericParam(InternedString name) const {
         if (!params) continue;
         for (const auto& gp : *params) {
             if (gp && gp->name == name) {
-                LUC_LOG_SEMANTIC_EXTREME("isGenericParam: found " << _pool.lookup(name) << " at depth "
+                LUC_LOG_SEMANTIC_EXTREME("isGenericParam: found " << pool_.lookup(name) << " at depth "
                                          << (genericParamsStack_.rend() - it - 1));
                 return true;
             }
@@ -322,10 +322,10 @@ bool TypeResolver::isGenericParam(InternedString name) const {
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::resolveGenericParamConstraints(GenericParamAST& gp) {
     for (auto traitName : gp.constraints) {
-        Symbol* sym = _symbols.lookup(traitName);
+        Symbol* sym = symbols_.lookup(traitName);
         if (!sym || sym->kind != SymbolKind::Trait) {
-            std::string_view traitStr = _pool.lookup(traitName);
-            _dc.error(DiagnosticCategory::Semantic, gp.loc, DiagCode::E3001,
+            std::string_view traitStr = pool_.lookup(traitName);
+            dc_.error(DiagnosticCategory::Semantic, gp.loc, DiagCode::E3001,
                       "trait '" + std::string(traitStr) + "' not found");
         }
     }
@@ -371,9 +371,9 @@ bool TypeResolver::satisfiesConstraints(TypeAST* type, const std::vector<Interne
     if (requiredTraits.empty()) return true;
     if (!type->isa<NamedTypeAST>()) return false; // only named structs can implement traits
     auto* named = type->as<NamedTypeAST>();
-    if (!_structTraits) return false;
-    auto it = _structTraits->find(named->name);
-    if (it == _structTraits->end()) return false;
+    if (!structTraits_) return false;
+    auto it = structTraits_->find(named->name);
+    if (it == structTraits_->end()) return false;
     const auto& implemented = it->second;
     for (InternedString req : requiredTraits) {
         bool found = false;
@@ -502,7 +502,7 @@ TypeAST* TypeResolver::lookupSubstitution(InternedString name) const {
         if (!map) continue;
         auto found = map->find(name);
         if (found != map->end()) {
-            LUC_LOG_SEMANTIC_EXTREME("lookupSubstitution: found " << _pool.lookup(name) 
+            LUC_LOG_SEMANTIC_EXTREME("lookupSubstitution: found " << pool_.lookup(name) 
                                      << " at depth " << (substitutionMapStack_.rend() - it - 1));
             return found->second;
         }
@@ -518,10 +518,10 @@ TypeAST* TypeResolver::cloneType(const TypeAST* type) {
     if (!type) return nullptr;
     switch (type->kind) {
         case ASTKind::PrimitiveType:
-            return _arena.make<PrimitiveTypeAST>(type->as<PrimitiveTypeAST>()->primitiveKind).release();
+            return arena_.make<PrimitiveTypeAST>(type->as<PrimitiveTypeAST>()->primitiveKind).release();
         case ASTKind::NamedType: {
             auto* src = type->as<NamedTypeAST>();
-            auto* dst = _arena.make<NamedTypeAST>(src->name).release();
+            auto* dst = arena_.make<NamedTypeAST>(src->name).release();
             for (const auto& arg : src->genericArgs) {
                 dst->genericArgs.push_back(ASTPtr<TypeAST>(cloneType(arg.get())));
             }
@@ -529,22 +529,22 @@ TypeAST* TypeResolver::cloneType(const TypeAST* type) {
             return dst;
         }
         case ASTKind::NullableType:
-            return _arena.make<NullableTypeAST>(TypePtr(cloneType(type->as<NullableTypeAST>()->inner.get()))).release();
+            return arena_.make<NullableTypeAST>(TypePtr(cloneType(type->as<NullableTypeAST>()->inner.get()))).release();
         case ASTKind::RefType:
-            return _arena.make<RefTypeAST>(TypePtr(cloneType(type->as<RefTypeAST>()->inner.get()))).release();
+            return arena_.make<RefTypeAST>(TypePtr(cloneType(type->as<RefTypeAST>()->inner.get()))).release();
         case ASTKind::PtrType:
-            return _arena.make<PtrTypeAST>(TypePtr(cloneType(type->as<PtrTypeAST>()->inner.get()))).release();
+            return arena_.make<PtrTypeAST>(TypePtr(cloneType(type->as<PtrTypeAST>()->inner.get()))).release();
         case ASTKind::FixedArrayType: {
             auto* src = type->as<FixedArrayTypeAST>();
-            return _arena.make<FixedArrayTypeAST>(src->size, TypePtr(cloneType(src->element.get()))).release();
+            return arena_.make<FixedArrayTypeAST>(src->size, TypePtr(cloneType(src->element.get()))).release();
         }
         case ASTKind::SliceType:
-            return _arena.make<SliceTypeAST>(TypePtr(cloneType(type->as<SliceTypeAST>()->element.get()))).release();
+            return arena_.make<SliceTypeAST>(TypePtr(cloneType(type->as<SliceTypeAST>()->element.get()))).release();
         case ASTKind::DynamicArrayType:
-            return _arena.make<DynamicArrayTypeAST>(TypePtr(cloneType(type->as<DynamicArrayTypeAST>()->element.get()))).release();
+            return arena_.make<DynamicArrayTypeAST>(TypePtr(cloneType(type->as<DynamicArrayTypeAST>()->element.get()))).release();
         case ASTKind::FuncType: {
             auto* src = type->as<FuncTypeAST>();
-            auto* dst = _arena.make<FuncTypeAST>().release();
+            auto* dst = arena_.make<FuncTypeAST>().release();
             // Deep‑clone the signature (copy qualifiers, rawQualifiers)
             dst->sig.qualifiers = src->sig.qualifiers;
             dst->sig.rawQualifiers = src->sig.rawQualifiers;
@@ -556,7 +556,7 @@ TypeAST* TypeResolver::cloneType(const TypeAST* type) {
                         newGroup.push_back(nullptr);
                         continue;
                     }
-                    auto* newParam = _arena.make<ParamAST>().release();
+                    auto* newParam = arena_.make<ParamAST>().release();
                     newParam->name = param->name;
                     newParam->type = TypePtr(cloneType(param->type.get()));
                     newParam->isVariadic = param->isVariadic;
@@ -577,7 +577,7 @@ TypeAST* TypeResolver::cloneType(const TypeAST* type) {
 }
 
 FuncTypeAST* TypeResolver::cloneFuncSignature(const FuncSignature& sig, const SourceLocation& loc) {
-    auto* dst = _arena.make<FuncTypeAST>().release();
+    auto* dst = arena_.make<FuncTypeAST>().release();
     dst->sig.qualifiers = sig.qualifiers;
     dst->sig.rawQualifiers = sig.rawQualifiers;
     for (const auto& group : sig.paramGroups) {
@@ -587,7 +587,7 @@ FuncTypeAST* TypeResolver::cloneFuncSignature(const FuncSignature& sig, const So
                 newGroup.push_back(nullptr);
                 continue;
             }
-            auto* newParam = _arena.make<ParamAST>().release();
+            auto* newParam = arena_.make<ParamAST>().release();
             newParam->name = param->name;
             newParam->type = TypePtr(cloneType(param->type.get()));
             newParam->isVariadic = param->isVariadic;
@@ -654,8 +654,8 @@ void TypeResolver::resolveStructFields(StructDeclAST& node) {
             TypeAST* resolvedFieldType = resolveType(field->type.get());
             if (!resolvedFieldType) {
                 LUC_LOG_SEMANTIC("\tERROR: failed to resolve field type for '" 
-                               << _pool.lookup(field->name) << "' in struct '" 
-                               << _pool.lookup(node.name) << "'");
+                               << pool_.lookup(field->name) << "' in struct '" 
+                               << pool_.lookup(node.name) << "'");
             }
         }
     }
@@ -782,7 +782,7 @@ TypeAST* TypeResolver::getFunctionReturnType(const FuncTypeAST& type, const Sour
     }
     if (type.sig.returnTypes.size() > 1) {
         if (loc) {
-            _dc.error(DiagnosticCategory::Semantic, *loc, DiagCode::E3002,
+            dc_.error(DiagnosticCategory::Semantic, *loc, DiagCode::E3002,
                       "function has multiple return types but single return expected");
         }
         return nullptr;
@@ -803,7 +803,7 @@ TypeAST* TypeResolver::getFunctionReturnType(const FuncTypeAST& type, const Sour
 void TypeResolver::visit(PrimitiveTypeAST& node) {
     LUC_LOG_SEMANTIC_VERBOSE("visit(PrimitiveTypeAST): kind=" 
                         << static_cast<int>(node.primitiveKind));
-    _resolved = &node;
+    resolved_ = &node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -814,23 +814,23 @@ void TypeResolver::visit(PrimitiveTypeAST& node) {
 // and recurses correctly into verifying any generic inner arguments included.
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(NamedTypeAST& node) {
-    LUC_LOG_SEMANTIC("visit(NamedTypeAST): name='" << std::string(_pool.lookup(node.name)) << "'");
+    LUC_LOG_SEMANTIC("visit(NamedTypeAST): name='" << std::string(pool_.lookup(node.name)) << "'");
     LUC_LOG_SEMANTIC_VERBOSE("\tgenericArgs count=" << node.genericArgs.size());
     
     // CHECK 1: Is this name a generic type parameter?
     if (isGenericParam(node.name)) {
-        LUC_LOG_SEMANTIC_VERBOSE("\tfound as generic param: '" << _pool.lookup(node.name) << "'");
+        LUC_LOG_SEMANTIC_VERBOSE("\tfound as generic param: '" << pool_.lookup(node.name) << "'");
              
         TypeAST* subst = lookupSubstitution(node.name);
         if (subst) {
-            LUC_LOG_SEMANTIC("\tsubstituting '" << _pool.lookup(node.name) << "' with concrete type");
-            _resolved = subst;
+            LUC_LOG_SEMANTIC("\tsubstituting '" << pool_.lookup(node.name) << "' with concrete type");
+            resolved_ = subst;
             return;
         }
         
         node.isGenericParam = true;
         LUC_LOG_SEMANTIC("\tresolved as generic parameter (isGenericParam=true)");
-        _resolved = &node;
+        resolved_ = &node;
         return;
     }
 
@@ -843,12 +843,12 @@ void TypeResolver::visit(NamedTypeAST& node) {
 
     // CHECK 2: Lookup the identifier in the global symbol table.
     // Lookup the identifier natively defined by the programmer in the symbol table.
-    Symbol* sym = _symbols.lookup(node.name);
+    Symbol* sym = symbols_.lookup(node.name);
     if (!sym) {
-        LUC_LOG_SEMANTIC("\tERROR: type '" << std::string(_pool.lookup(node.name)) << "' not declared");
-        _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
-                  "type '" + std::string(_pool.lookup(node.name)) + "' is not declared");
-        _resolved = nullptr;
+        LUC_LOG_SEMANTIC("\tERROR: type '" << std::string(pool_.lookup(node.name)) << "' not declared");
+        dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
+                  "type '" + std::string(pool_.lookup(node.name)) + "' is not declared");
+        resolved_ = nullptr;
         return;
     }
     
@@ -857,23 +857,23 @@ void TypeResolver::visit(NamedTypeAST& node) {
     // Strict typing: We can only resolve identifiers that actually represent a type.
     if (sym->kind != SymbolKind::Struct && sym->kind != SymbolKind::Enum &&
         sym->kind != SymbolKind::Trait && sym->kind != SymbolKind::TypeAlias) {
-        LUC_LOG_SEMANTIC("\tERROR: '" << std::string(_pool.lookup(node.name)) << "' is a value, not a type");
-        _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                  "'" + std::string(_pool.lookup(node.name)) + "' is a value, not a type");
-        _resolved = nullptr;
+        LUC_LOG_SEMANTIC("\tERROR: '" << std::string(pool_.lookup(node.name)) << "' is a value, not a type");
+        dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                  "'" + std::string(pool_.lookup(node.name)) + "' is a value, not a type");
+        resolved_ = nullptr;
         return;
     }
     
     // Transparently unwrap TypeAlias types.
     if (sym->kind == SymbolKind::TypeAlias) {
-        LUC_LOG_SEMANTIC("\tunwrapping type alias '" << std::string(_pool.lookup(node.name)) << "'");
+        LUC_LOG_SEMANTIC("\tunwrapping type alias '" << std::string(pool_.lookup(node.name)) << "'");
         TypeAST* resolvedAlias = resolveType(sym->type);
         if (resolvedAlias) {
             LUC_LOG_SEMANTIC("\talias resolved to: " << LucDebug::kindToString(resolvedAlias->kind));
-            _resolved = resolvedAlias;
+            resolved_ = resolvedAlias;
         } else {
             LUC_LOG_SEMANTIC("\tERROR: failed to resolve alias");
-            _resolved = nullptr;
+            resolved_ = nullptr;
         }
         return;
     }
@@ -889,33 +889,33 @@ void TypeResolver::visit(NamedTypeAST& node) {
     if (sym->kind == SymbolKind::Struct && !node.genericArgs.empty()) {
         auto* structDecl = sym->decl->as<StructDeclAST>();
         if (structDecl->genericParams.size() != node.genericArgs.size()) {
-            _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
-                      "struct '" + std::string(_pool.lookup(node.name)) +
+            dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                      "struct '" + std::string(pool_.lookup(node.name)) +
                       "' expects " + std::to_string(structDecl->genericParams.size()) +
                       " generic arguments, got " + std::to_string(node.genericArgs.size()));
-            _resolved = nullptr;
+            resolved_ = nullptr;
             return;
         }
         for (size_t i = 0; i < structDecl->genericParams.size(); ++i) {
             GenericParamAST* gp = structDecl->genericParams[i].get();
             TypeAST* argType = node.genericArgs[i].get();
             if (!satisfiesConstraints(argType, gp->constraints)) {
-                std::string_view argName = _pool.lookup(
+                std::string_view argName = pool_.lookup(
                     argType->kind == ASTKind::NamedType
                         ? argType->as<NamedTypeAST>()->name
                         : InternedString());
-                _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+                dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                           "type '" + std::string(argName) +
                           "' does not satisfy constraints for generic parameter '" +
-                          std::string(_pool.lookup(gp->name)) + "'");
-                _resolved = nullptr;
+                          std::string(pool_.lookup(gp->name)) + "'");
+                resolved_ = nullptr;
                 return;
             }
         }
     }
     
-    LUC_LOG_SEMANTIC("\tresolved NamedTypeAST: '" << std::string(_pool.lookup(node.name)) << "'");
-    _resolved = &node;
+    LUC_LOG_SEMANTIC("\tresolved NamedTypeAST: '" << std::string(pool_.lookup(node.name)) << "'");
+    resolved_ = &node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -930,7 +930,7 @@ void TypeResolver::visit(NullableTypeAST& node) {
         LUC_LOG_SEMANTIC_EXTREME("\tresolving inner type");
         resolveType(node.inner.get());
     }
-    _resolved = &node;
+    resolved_ = &node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -945,14 +945,14 @@ void TypeResolver::visit(FixedArrayTypeAST& node) {
     
     if (node.size == 0) {
         LUC_LOG_SEMANTIC("\tERROR: array size must be > 0");
-        _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+        dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                   "fixed array size must be greater than zero");
     }
     if (node.element) {
         LUC_LOG_SEMANTIC_EXTREME("\tresolving element type");
         resolveType(node.element.get());
     }
-    _resolved = &node;
+    resolved_ = &node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -967,7 +967,7 @@ void TypeResolver::visit(SliceTypeAST& node) {
         LUC_LOG_SEMANTIC_EXTREME("\tresolving element type");
         resolveType(node.element.get());
     }
-    _resolved = &node;
+    resolved_ = &node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -981,7 +981,7 @@ void TypeResolver::visit(DynamicArrayTypeAST& node) {
         LUC_LOG_SEMANTIC_EXTREME("\tresolving element type");
         resolveType(node.element.get());
     }
-    _resolved = &node;
+    resolved_ = &node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -995,7 +995,7 @@ void TypeResolver::visit(RefTypeAST& node) {
         LUC_LOG_SEMANTIC_EXTREME("\tresolving inner type");
         resolveType(node.inner.get());
     }
-    _resolved = &node;
+    resolved_ = &node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1007,7 +1007,7 @@ void TypeResolver::visit(RefTypeAST& node) {
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(PtrTypeAST& node) {
     LUC_LOG_SEMANTIC_VERBOSE("visit(PtrTypeAST)");
-    LUC_LOG_SEMANTIC_VERBOSE("\t_insideExtern=" << (_insideExtern ? "true" : "false"));
+    LUC_LOG_SEMANTIC_VERBOSE("\t_insideExtern=" << (insideExtern_ ? "true" : "false"));
     
     // Raw pointers are now allowed anywhere (just storage).
     // Operation restrictions are enforced in checkBinaryExpr, checkIndexExpr, etc.
@@ -1015,7 +1015,7 @@ void TypeResolver::visit(PtrTypeAST& node) {
         LUC_LOG_SEMANTIC_EXTREME("\tresolving inner type");
         resolveType(node.inner.get());
     }
-    _resolved = &node;
+    resolved_ = &node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1032,12 +1032,12 @@ void TypeResolver::visit(FuncTypeAST& node) {
     for (const auto& qualName : node.sig.rawQualifiers) {
         uint32_t bit = QualifierRegistry::instance().getBit(qualName);
         if (bit == 0) {
-            _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E2010,
-                      "unknown type qualifier '~" + std::string(_pool.lookup(qualName)) + "'; " +
+            dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E2010,
+                      "unknown type qualifier '~" + std::string(pool_.lookup(qualName)) + "'; " +
                       "known qualifiers: " + QualifierRegistry::instance().allNames());
         } else {
             node.sig.qualifiers |= bit;
-            LUC_LOG_SEMANTIC_EXTREME("\tadded qualifier '~" << std::string(_pool.lookup(qualName)) 
+            LUC_LOG_SEMANTIC_EXTREME("\tadded qualifier '~" << std::string(pool_.lookup(qualName)) 
                                     << "' bit=0x" << std::hex << bit);
         }
     }
@@ -1049,7 +1049,7 @@ void TypeResolver::visit(FuncTypeAST& node) {
     for (auto& group : node.sig.paramGroups) {
         for (auto& param : group) {
             if (param->type) {
-                LUC_LOG_SEMANTIC_EXTREME("\tresolving param: " << std::string(_pool.lookup(param->name)));
+                LUC_LOG_SEMANTIC_EXTREME("\tresolving param: " << std::string(pool_.lookup(param->name)));
                 resolveType(param->type.get());
             }
         }
@@ -1063,7 +1063,7 @@ void TypeResolver::visit(FuncTypeAST& node) {
         }
     }
     
-    _resolved = &node;
+    resolved_ = &node;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1074,7 +1074,7 @@ void TypeResolver::visit(FuncTypeAST& node) {
 // visit(FuncDeclAST)  — Resolves function parameter and return types
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(FuncDeclAST& node) {
-    LUC_LOG_SEMANTIC("visit(FuncDeclAST): name='" << _pool.lookup(node.name) << "'");
+    LUC_LOG_SEMANTIC("visit(FuncDeclAST): name='" << pool_.lookup(node.name) << "'");
     
     pushGenericParams(&node.genericParams);
     
@@ -1083,20 +1083,20 @@ void TypeResolver::visit(FuncDeclAST& node) {
     
     popGenericParams();
     
-    Symbol* sym = _symbols.lookup(node.name);
+    Symbol* sym = symbols_.lookup(node.name);
     if (sym && resolvedType) {
         sym->type = resolvedType;
-        LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << _pool.lookup(node.name) << "' type");
+        LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << pool_.lookup(node.name) << "' type");
     }
     
-    _resolved = resolvedType;
+    resolved_ = resolvedType;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // visit(VarDeclAST)  — Resolves variable type annotations
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(VarDeclAST& node) {
-    LUC_LOG_SEMANTIC("visit(VarDeclAST): name='" << std::string(_pool.lookup(node.name)) << "'");
+    LUC_LOG_SEMANTIC("visit(VarDeclAST): name='" << std::string(pool_.lookup(node.name)) << "'");
     
     TypeAST* resolvedType = nullptr;
     if (node.type) {
@@ -1107,39 +1107,39 @@ void TypeResolver::visit(VarDeclAST& node) {
     }
     
     // Point directly to resolved type
-    Symbol* sym = _symbols.lookup(node.name);
+    Symbol* sym = symbols_.lookup(node.name);
     if (sym && resolvedType) {
         sym->type = resolvedType;
-        LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << std::string(_pool.lookup(node.name)) 
+        LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << std::string(pool_.lookup(node.name)) 
                                << "' type to resolved type");
     }
     
-    _resolved = resolvedType;
+    resolved_ = resolvedType;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // visit(StructDeclAST)  — Resolves struct field types
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(StructDeclAST& node) {
-    LUC_LOG_SEMANTIC("visit(StructDeclAST): name='" << std::string(_pool.lookup(node.name)) 
+    LUC_LOG_SEMANTIC("visit(StructDeclAST): name='" << std::string(pool_.lookup(node.name)) 
                    << "', fields=" << node.fields.size());
     
     resolveStructFields(node);
     
     // Ensure selfType exists – now allocate via arena
     if (!node.selfType) {
-        node.selfType = _arena.make<NamedTypeAST>(node.name);
+        node.selfType = arena_.make<NamedTypeAST>(node.name);
         node.selfType->loc = node.loc;
     }
     
-    Symbol* sym = _symbols.lookup(node.name);
+    Symbol* sym = symbols_.lookup(node.name);
     if (sym) {
         sym->type = node.selfType.get();
-        LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << std::string(_pool.lookup(node.name)) 
+        LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << std::string(pool_.lookup(node.name)) 
                                << "' type to selfType");
     }
     
-    _resolved = node.selfType.get();
+    resolved_ = node.selfType.get();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1149,9 +1149,9 @@ void TypeResolver::visit(ImplDeclAST& node) {
     // 1. Resolve the target type (may be a struct, enum, or type alias)
     TypeAST* target = resolveType(node.targetType.get());
     if (!target) {
-        _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
+        dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
                   "cannot resolve impl target type");
-        _resolved = nullptr;
+        resolved_ = nullptr;
         return;
     }
 
@@ -1159,7 +1159,7 @@ void TypeResolver::visit(ImplDeclAST& node) {
     TypeAST* underlying = target;
     while (underlying->isa<NamedTypeAST>()) {
         auto* named = underlying->as<NamedTypeAST>();
-        Symbol* sym = _symbols.lookup(named->name);
+        Symbol* sym = symbols_.lookup(named->name);
         if (!sym) break;
         if (sym->kind == SymbolKind::TypeAlias) {
             TypeAST* aliased = resolveType(sym->type);
@@ -1171,18 +1171,18 @@ void TypeResolver::visit(ImplDeclAST& node) {
     }
 
     if (!underlying->isa<NamedTypeAST>()) {
-        _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
+        dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
                   "impl target must resolve to a struct or enum (or alias thereof)");
-        _resolved = nullptr;
+        resolved_ = nullptr;
         return;
     }
 
     auto* namedTarget = underlying->as<NamedTypeAST>();
-    Symbol* targetSym = _symbols.lookup(namedTarget->name);
+    Symbol* targetSym = symbols_.lookup(namedTarget->name);
     if (!targetSym) {
-        _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
+        dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
                   "impl target type not found");
-        _resolved = nullptr;
+        resolved_ = nullptr;
         return;
     }
 
@@ -1190,9 +1190,9 @@ void TypeResolver::visit(ImplDeclAST& node) {
     bool isStruct = (targetSym->kind == SymbolKind::Struct);
     bool isEnum   = (targetSym->kind == SymbolKind::Enum);
     if (!isStruct && !isEnum) {
-        _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
+        dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3002,
                   "impl can only be attached to structs, enums, or type aliases thereof");
-        _resolved = nullptr;
+        resolved_ = nullptr;
         return;
     }
 
@@ -1213,7 +1213,7 @@ void TypeResolver::visit(ImplDeclAST& node) {
         if (node.resolvedTargetGenericParams) {
             const auto& targetParams = *node.resolvedTargetGenericParams;
             if (targetParams.size() != concreteArgs.size()) {
-                _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3017,
+                dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3017,
                           "generic argument count mismatch for impl target");
             } else {
                 for (size_t i = 0; i < targetParams.size(); ++i) {
@@ -1224,7 +1224,7 @@ void TypeResolver::visit(ImplDeclAST& node) {
                 }
             }
         } else if (!concreteArgs.empty()) {
-            _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3017,
+            dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3017,
                       "non-generic target cannot have generic arguments");
         }
     }
@@ -1243,19 +1243,19 @@ void TypeResolver::visit(ImplDeclAST& node) {
     popSubstitutionMap();
     popGenericParams();
 
-    _resolved = nullptr;
+    resolved_ = nullptr;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // visit(MethodDeclAST)  — Resolves methods
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(MethodDeclAST& node) {
-    LUC_LOG_SEMANTIC("visit(MethodDeclAST): name='" << std::string(_pool.lookup(node.name)) << "'");
+    LUC_LOG_SEMANTIC("visit(MethodDeclAST): name='" << std::string(pool_.lookup(node.name)) << "'");
     
     FuncTypeAST* funcType = cloneFuncSignature(node.sig, node.loc);
     TypeAST* resolvedType = resolveType(funcType);
     
-    _resolved = resolvedType;
+    resolved_ = resolvedType;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1292,13 +1292,13 @@ void TypeResolver::visit(FromDeclAST& node) {
     if (node.targetType && node.targetType->isa<NamedTypeAST>()) {
         targetTypeName = node.targetType->as<NamedTypeAST>()->name;
     } else {
-        _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
+        dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
                   "from target must be a named type (struct, enum, or type alias)");
-        _resolved = nullptr;
+        resolved_ = nullptr;
         return;
     }
 
-    LUC_LOG_SEMANTIC("visit(FromDeclAST): targetType='" << _pool.lookup(targetTypeName)
+    LUC_LOG_SEMANTIC("visit(FromDeclAST): targetType='" << pool_.lookup(targetTypeName)
                    << "', entries=" << node.entries.size());
 
     // Resolve generic parameter constraints (trait names) if any.
@@ -1340,7 +1340,7 @@ void TypeResolver::visit(FromDeclAST& node) {
         if (resolvedType && resolvedType->isa<FuncTypeAST>()) {
             auto* ft = resolvedType->as<FuncTypeAST>();
             if (ft->sig.qualifiers != 0) {
-                _dc.error(DiagnosticCategory::Semantic, entry->loc, DiagCode::E2010,
+                dc_.error(DiagnosticCategory::Semantic, entry->loc, DiagCode::E2010,
                         "from entries cannot have qualifiers (~async, ~nullable, ~parallel)");
                 hasQualifiers = true;
             }
@@ -1352,8 +1352,8 @@ void TypeResolver::visit(FromDeclAST& node) {
             if (!entry->sig.paramGroups.empty() && !entry->sig.paramGroups[0].empty() && entry->sig.paramGroups[0][0]) {
                 firstParamType = entry->sig.paramGroups[0][0]->type.get();
             }
-            std::string mangledName = NameMangler::mangleFrom(_pool.lookup(targetTypeName), firstParamType, _pool);
-            Symbol* sym = _symbols.lookup(_pool.intern(mangledName));
+            std::string mangledName = NameMangler::mangleFrom(pool_.lookup(targetTypeName), firstParamType, pool_);
+            Symbol* sym = symbols_.lookup(pool_.intern(mangledName));
             if (sym) {
                 sym->type = resolvedType;
                 LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << mangledName << "' type");
@@ -1362,14 +1362,14 @@ void TypeResolver::visit(FromDeclAST& node) {
     }
 
     popGenericParams();
-    _resolved = nullptr;  // From blocks don't produce a type
+    resolved_ = nullptr;  // From blocks don't produce a type
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // visit(TypeAliasDeclAST)  — Properly resolves type alias
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(TypeAliasDeclAST& node) {
-    LUC_LOG_SEMANTIC("visit(TypeAliasDeclAST): name='" << _pool.lookup(node.name) << "'");
+    LUC_LOG_SEMANTIC("visit(TypeAliasDeclAST): name='" << pool_.lookup(node.name) << "'");
     
     pushGenericParams(&node.genericParams);
     
@@ -1381,7 +1381,7 @@ void TypeResolver::visit(TypeAliasDeclAST& node) {
     }
     
     popGenericParams();
-    _resolved = node.resolvedType 
+    resolved_ = node.resolvedType 
             ? static_cast<TypeAST*>(node.resolvedType) 
             : (node.aliasedType ? node.aliasedType.get() : nullptr);
 }
@@ -1390,7 +1390,7 @@ void TypeResolver::visit(TypeAliasDeclAST& node) {
 // visit(TraitDeclAST)  — Resolves trait method signatures
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(TraitDeclAST& node) {
-    LUC_LOG_SEMANTIC("visit(TraitDeclAST): name='" << _pool.lookup(node.name) 
+    LUC_LOG_SEMANTIC("visit(TraitDeclAST): name='" << pool_.lookup(node.name) 
                    << "', methods=" << node.methods.size());
     
     pushGenericParams(&node.genericParams);
@@ -1401,8 +1401,8 @@ void TypeResolver::visit(TraitDeclAST& node) {
         FuncTypeAST* funcType = cloneFuncSignature(method->sig, method->loc);
         TypeAST* resolvedType = resolveType(funcType);
         
-        std::string mangledName = NameMangler::mangleMethod(_pool.lookup(node.name), _pool.lookup(method->name));
-        Symbol* sym = _symbols.lookup(_pool.intern(mangledName));
+        std::string mangledName = NameMangler::mangleMethod(pool_.lookup(node.name), pool_.lookup(method->name));
+        Symbol* sym = symbols_.lookup(pool_.intern(mangledName));
         if (sym && resolvedType) {
             sym->type = resolvedType;
             LUC_LOG_SEMANTIC_VERBOSE("\tupdated symbol '" << mangledName 
@@ -1411,33 +1411,33 @@ void TypeResolver::visit(TraitDeclAST& node) {
     }
     
     popGenericParams();
-    _resolved = nullptr;
+    resolved_ = nullptr;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // visit(TraitMethodAST)  — Resolves trait method signatures
 // ─────────────────────────────────────────────────────────────────────────────
 void TypeResolver::visit(TraitMethodAST& node) {
-    LUC_LOG_SEMANTIC("visit(TraitMethodAST): name='" << std::string(_pool.lookup(node.name)) << "'");
+    LUC_LOG_SEMANTIC("visit(TraitMethodAST): name='" << std::string(pool_.lookup(node.name)) << "'");
     
     FuncTypeAST* funcType = cloneFuncSignature(node.sig, node.loc);
     TypeAST* resolvedType = resolveType(funcType);
 
-    _resolved = resolvedType;
+    resolved_ = resolvedType;
 }
 
 void TypeResolver::visit(TraitRefAST& node) {
     // Resolve the trait name
-    Symbol* sym = _symbols.lookup(node.name);
+    Symbol* sym = symbols_.lookup(node.name);
     if (!sym || sym->kind != SymbolKind::Trait) {
-        _dc.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
-                  "trait '" + std::string(_pool.lookup(node.name)) + "' not found");
-        _resolved = nullptr;
+        dc_.error(DiagnosticCategory::Semantic, node.loc, DiagCode::E3001,
+                  "trait '" + std::string(pool_.lookup(node.name)) + "' not found");
+        resolved_ = nullptr;
         return;
     }
     // Resolve generic arguments
     for (auto& arg : node.genericArgs) {
         resolveType(arg.get());
     }
-    _resolved = nullptr; // TraitRef is not a type; just a reference
+    resolved_ = nullptr; // TraitRef is not a type; just a reference
 }

@@ -50,7 +50,6 @@ add_executable(luc-comp
     # src/semantic/SemanticStmt.cpp
     # src/semantic/TypeChecker.cpp
     # src/semantic/Annotator.cpp
-    # src/semantic/SemanticUtils.cpp
     src/debug/ASTDumper.cpp
     src/registry/BuiltinMethodRegistry.cpp
     src/registry/QualifierRegistry.cpp

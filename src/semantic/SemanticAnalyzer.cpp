@@ -47,10 +47,10 @@ void annotateAll(std::vector<ProgramAST*>& files, SymbolTable& symbols, StringPo
 // Constructor
 // ─────────────────────────────────────────────────────────────────────────────
 SemanticAnalyzer::SemanticAnalyzer(DiagnosticEngine& dc, StringPool& pool, ASTArena& arena)
-    : _dc(dc), _pool(pool), _arena(arena),
-      _symbols(std::make_unique<SymbolTable>()),
-      _typeResolver(std::make_unique<TypeResolver>(*_symbols, dc, pool, arena)),
-      _typeChecker(std::make_unique<TypeChecker>(*_symbols, pool, arena)) {
+    : dc_(dc), pool_(pool), arena_(arena),
+      symbols_(std::make_unique<SymbolTable>()),
+      typeResolver_(std::make_unique<TypeResolver>(*symbols_, dc, pool, arena)),
+      typeChecker_(std::make_unique<TypeChecker>(*symbols_, pool, arena)) {
     LUC_LOG_SEMANTIC("SemanticAnalyzer constructed");
 }
 
@@ -66,14 +66,14 @@ void SemanticAnalyzer::validateNoDuplicateSymbols() {
     std::unordered_map<std::string, SourceLocation> firstDecl;
     
     // Need to iterate global scope - add this method to SymbolTable
-    const auto& globalScope = _symbols->getGlobalScope();
+    const auto& globalScope = symbols_->getGlobalScope();
     
     for (const auto& [id, sym] : globalScope) {
-        std::string_view name = _pool.lookup(InternedString(id));
+        std::string_view name = pool_.lookup(InternedString(id));
         auto it = firstDecl.find(std::string(name));
         if (it != firstDecl.end()) {
             LUC_LOG_SEMANTIC("\tDuplicate symbol: " << name);
-            _dc.error(DiagnosticCategory::Semantic, sym.loc, DiagCode::E3005,
+            dc_.error(DiagnosticCategory::Semantic, sym.loc, DiagCode::E3005,
                       "symbol '" + std::string(name) + "' is already declared");
         } else {
             firstDecl[std::string(name)] = sym.loc;
@@ -93,7 +93,7 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
     // Phase 0: Resolve Imports.
     LUC_LOG_SEMANTIC("\n--- Phase 0: Resolve Imports ---");
     resolveImports(files);
-    if (_dc.hasErrors()) {
+    if (dc_.hasErrors()) {
         LUC_LOG_SEMANTIC("Phase 0 FAILED with errors");
         return false;
     }
@@ -102,7 +102,7 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
     // Phase 1: Collect Symbols.
     LUC_LOG_SEMANTIC("\n--- Phase 1: Collect Symbols ---");
     collectSymbols(files);
-    if (_dc.hasErrors()) {
+    if (dc_.hasErrors()) {
         LUC_LOG_SEMANTIC("Phase 1 FAILED with errors");
         return false;
     }
@@ -119,7 +119,7 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
     // Phase 3: Check Decls.
     LUC_LOG_SEMANTIC("\n--- Phase 3: Check Decls ---");
     checkDecls(files);
-    if (_dc.hasErrors()) {
+    if (dc_.hasErrors()) {
         LUC_LOG_SEMANTIC("Phase 3 FAILED with errors");
         return false;
     }
@@ -129,12 +129,12 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
     // Phase 3.5: Entry point detection
     // Validate that a 'main' function exists and has a valid signature.
     // Required format: export const main () int = { ... }
-    InternedString mainName = _pool.intern("main");
-    Symbol* mainSym = _symbols->lookup(mainName);
+    InternedString mainName = pool_.intern("main");
+    Symbol* mainSym = symbols_->lookup(mainName);
     if (!mainSym) {
         LUC_LOG_SEMANTIC("\tNo 'main' function found");
         SourceLocation loc = files.empty() ? SourceLocation() : files[0]->loc;
-        _dc.error(DiagnosticCategory::Semantic, loc, DiagCode::E3006, 
+        dc_.error(DiagnosticCategory::Semantic, loc, DiagCode::E3006, 
                 "program is missing a 'main' entry point");
     } else {
         LUC_LOG_SEMANTIC("\tFound 'main' function, validating signature...");
@@ -143,23 +143,23 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
                 ? " ('@extern' functions cannot be entry points)"
                 : "";
             LUC_LOG_SEMANTIC("\tERROR: 'main' is not a regular function");
-            _dc.error(DiagnosticCategory::Semantic, mainSym->loc, DiagCode::E3007, 
+            dc_.error(DiagnosticCategory::Semantic, mainSym->loc, DiagCode::E3007, 
                     "'main' must be a regular function" + kindNote);
         } else {
             auto* func = static_cast<FuncDeclAST*>(mainSym->decl);
-            LUC_LOG_SEMANTIC_VERBOSE("\tFunction: " << _pool.lookup(func->name));
+            LUC_LOG_SEMANTIC_VERBOSE("\tFunction: " << pool_.lookup(func->name));
             
             // 1. MUST be exported: export const main ...
             if (func->visibility != Visibility::Export) {
                 LUC_LOG_SEMANTIC("\tERROR: main not exported");
-                _dc.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
                         "'main' function must be exported (use 'export const main')");
             }
             
             // 2. MUST be const: const main ...
             if (func->keyword != DeclKeyword::Const) {
                 LUC_LOG_SEMANTIC("\tERROR: main not const");
-                _dc.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
                         "'main' function must use 'const' keyword");
             }
             
@@ -195,7 +195,7 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
 
             if (hasParams && !isValidArgsParam) {
                 LUC_LOG_SEMANTIC("\tERROR: invalid parameter signature for main");
-                _dc.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
                         "'main' function must have no parameters or take a string slice: (args []string)");
             }
             
@@ -213,14 +213,14 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
             }
             if (!returnsInt) {
                 LUC_LOG_SEMANTIC("\tERROR: main does not return int");
-                _dc.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
                         "'main' function must return 'int'");
             }   
 
             // 5. MUST NOT be async (check via func->sig)
             if (func->sig.isAsync()) {
                 LUC_LOG_SEMANTIC("\tERROR: main is async");
-                _dc.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
+                dc_.error(DiagnosticCategory::Semantic, func->loc, DiagCode::E3007,
                         "'main' function cannot be async (remove '~async' qualifier)");
             }
 
@@ -228,19 +228,19 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
             bool hasAot = false;
             bool hasJit = false;
             for (const auto& attr : func->attributes) {
-                if (_pool.lookup(attr->name) == "aot") hasAot = true;
-                if (_pool.lookup(attr->name) == "jit") hasJit = true;
+                if (pool_.lookup(attr->name) == "aot") hasAot = true;
+                if (pool_.lookup(attr->name) == "jit") hasJit = true;
             }
             
             if (hasAot) {
                 LUC_LOG_SEMANTIC("\tCompilation mode: AOT");
-                _compilationMode = CompilationMode::AOT;
+                compilationMode_ = CompilationMode::AOT;
             } else if (hasJit) {
                 LUC_LOG_SEMANTIC("\tCompilation mode: JIT");
-                _compilationMode = CompilationMode::JIT;
+                compilationMode_ = CompilationMode::JIT;
             } else {
                 LUC_LOG_SEMANTIC_VERBOSE("\tCompilation mode: AOT (default)");
-                _compilationMode = CompilationMode::AOT;
+                compilationMode_ = CompilationMode::AOT;
             }
             
             LUC_LOG_SEMANTIC("\tmain signature validation complete");
@@ -249,8 +249,8 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
 
     // ── Validate that @aot / @jit do not appear on non-main functions ──────────
     LUC_LOG_SEMANTIC_VERBOSE("Checking @aot/@jit on non-main functions...");
-    InternedString aotName = _pool.intern("aot");
-    InternedString jitName = _pool.intern("jit");
+    InternedString aotName = pool_.intern("aot");
+    InternedString jitName = pool_.intern("jit");
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             if (!decl->isa<FuncDeclAST>()) continue;
@@ -259,10 +259,10 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
 
             for (const auto& attr : func->attributes) {
                 if (attr->name == aotName || attr->name == jitName) {
-                    std::string_view attrStr = _pool.lookup(attr->name);
-                    std::string_view funcName = _pool.lookup(func->name);
+                    std::string_view attrStr = pool_.lookup(attr->name);
+                    std::string_view funcName = pool_.lookup(func->name);
                     LUC_LOG_SEMANTIC("\tERROR: '@" << attrStr << "' on non-main function '" << funcName << "'");
-                    _dc.error(DiagnosticCategory::Semantic, attr->loc,
+                    dc_.error(DiagnosticCategory::Semantic, attr->loc,
                               DiagCode::E3016,
                               "'@" + std::string(attrStr) + "' is only valid on the 'main' "
                               "entry point; remove it from '" + std::string(funcName) + "'");
@@ -277,7 +277,7 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
     
     LUC_LOG_SEMANTIC("\t- Semantic Analysis Finished.");
     LUC_LOG_SEMANTIC("=== SemanticAnalyzer::analyze END ===");
-    return !_dc.hasErrors();
+    return !dc_.hasErrors();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -298,11 +298,11 @@ void SemanticAnalyzer::resolveImports(std::vector<ProgramAST*>& files) {
             std::string path;
             for (size_t i = 0; i < use->path.size(); ++i) {
                 if (i) path += '.';
-                path += _pool.lookup(use->path[i]);
+                path += pool_.lookup(use->path[i]);
             }
             if (!seen.insert(path).second) {
                 LUC_LOG_SEMANTIC("\tduplicate import of '" << path << "'");
-                _dc.error(DiagnosticCategory::Semantic, use->loc, DiagCode::E3005,
+                dc_.error(DiagnosticCategory::Semantic, use->loc, DiagCode::E3005,
                           "duplicate import of '" + path + "'");
             } else {
                 totalUses++;
@@ -319,8 +319,8 @@ void SemanticAnalyzer::resolveImports(std::vector<ProgramAST*>& files) {
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::collectSymbols(std::vector<ProgramAST*>& files) {
     LUC_LOG_SEMANTIC_VERBOSE("collectSymbols: building symbol table");
-    _symbols->pushScope(); // global scope
-    SemanticCollector collector(*_symbols, _dc, _pool);
+    symbols_->pushScope(); // global scope
+    SemanticCollector collector(*symbols_, dc_, pool_);
     
     int fileCount = 0;
     for (auto* prog : files) {
@@ -329,7 +329,7 @@ void SemanticAnalyzer::collectSymbols(std::vector<ProgramAST*>& files) {
         collector.collectProgram(*prog);
     }
     // Pass the struct‑traits map to the type resolver.
-    _typeResolver->setStructTraits(&collector.getStructTraits());
+    typeResolver_->setStructTraits(&collector.getStructTraits());
     LUC_LOG_SEMANTIC_VERBOSE("collectSymbols: symbol table built");
 }
 
@@ -349,7 +349,7 @@ void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             if (decl->isa<TypeAliasDeclAST>()) {
-                _typeResolver->visit(*decl->as<TypeAliasDeclAST>());
+                typeResolver_->visit(*decl->as<TypeAliasDeclAST>());
                 resolvedCount++;
                 LUC_LOG_SEMANTIC_EXTREME("\tresolved type alias");
             }
@@ -360,10 +360,10 @@ void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             if (decl->isa<StructDeclAST>()) {
-                _typeResolver->visit(*decl->as<StructDeclAST>());
+                typeResolver_->visit(*decl->as<StructDeclAST>());
                 resolvedCount++;
                 LUC_LOG_SEMANTIC_EXTREME("\tresolved struct: " 
-                                         << _pool.lookup(decl->as<StructDeclAST>()->name));
+                                         << pool_.lookup(decl->as<StructDeclAST>()->name));
             }
         }
     }
@@ -372,10 +372,10 @@ void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             if (decl->isa<FuncDeclAST>()) {
-                _typeResolver->visit(*decl->as<FuncDeclAST>());
+                typeResolver_->visit(*decl->as<FuncDeclAST>());
                 resolvedCount++;
                 LUC_LOG_SEMANTIC_EXTREME("\tresolved function: " 
-                                         << _pool.lookup(decl->as<FuncDeclAST>()->name));
+                                         << pool_.lookup(decl->as<FuncDeclAST>()->name));
             }
         }
     }
@@ -384,7 +384,7 @@ void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             if (decl->isa<ImplDeclAST>()) {
-                _typeResolver->visit(*decl->as<ImplDeclAST>());
+                typeResolver_->visit(*decl->as<ImplDeclAST>());
                 resolvedCount++;
                 // Logging: the struct name is inside targetType (a NamedTypeAST)
                 // For brevity, we just log that an impl block was resolved.
@@ -397,7 +397,7 @@ void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             if (decl->isa<FromDeclAST>()) {
-                _typeResolver->visit(*decl->as<FromDeclAST>());
+                typeResolver_->visit(*decl->as<FromDeclAST>());
                 resolvedCount++;
                 // Logging: target type is inside targetType
                 LUC_LOG_SEMANTIC_EXTREME("\tresolved from block");
@@ -409,10 +409,10 @@ void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
     for (auto* prog : files) {
         for (auto& decl : prog->decls) {
             if (decl->isa<VarDeclAST>()) {
-                _typeResolver->visit(*decl->as<VarDeclAST>());
+                typeResolver_->visit(*decl->as<VarDeclAST>());
                 resolvedCount++;
                 LUC_LOG_SEMANTIC_EXTREME("\tresolved variable: " 
-                                         << _pool.lookup(decl->as<VarDeclAST>()->name));
+                                         << pool_.lookup(decl->as<VarDeclAST>()->name));
             }
         }
     }
@@ -428,7 +428,7 @@ void SemanticAnalyzer::checkDecls(std::vector<ProgramAST*>& files) {
     LUC_LOG_SEMANTIC_VERBOSE("checkDecls: checking all declarations");
 
     // Create a SemanticContext that references the analyzer's depth counters.
-    SemanticContext ctx(*_symbols, *_typeResolver, *_typeChecker, _dc, _pool, _arena);
+    SemanticContext ctx(*symbols_, *typeResolver_, *typeChecker_, dc_, pool_, arena_);
 
     int declCount = 0;
     for (auto* prog : files) {
@@ -455,10 +455,10 @@ void SemanticAnalyzer::checkDecls(std::vector<ProgramAST*>& files) {
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::annotate(std::vector<ProgramAST*>& files) {
     LUC_LOG_SEMANTIC_VERBOSE("annotate: running annotation pass");
-    annotateAll(files, *_symbols, _pool);
+    annotateAll(files, *symbols_, pool_);
     LUC_LOG_SEMANTIC_VERBOSE("annotate: annotation complete");
 }
 
 void SemanticAnalyzer::dumpSymbols() const {
-    _symbols->dump(_pool);
+    symbols_->dump(pool_);
 }
