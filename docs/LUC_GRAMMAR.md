@@ -2058,20 +2058,27 @@ switch code {
 ### For Loop
 
 ```
-for_stmt        := 'for' IDENTIFIER [ type ] 'in' ( range_iter | expression ) block
+for_stmt    := 'for' IDENTIFIER type_ann 'in' ( range_iter | expr ) [ '..' expr ] block
 
-range_iter      := expression range_op expression [ '..' expression ]
-                   -- start range_op end [ .. step ]
-                   -- default step is 1 if omitted
-                   -- type defaults to 'int' for integer boundaries if omitted
+range_iter := expr range_op expr
+            -- start range_op end
+            -- type_ann must be numeric (int, float, etc.) for range iteration
 ```
 
+Examples:
 ```luc
-for i in 0..10 { io.printl(string(i)) }       -- 0 through 10 inclusive
-for i in 0..<10 { io.printl(string(i)) }      -- 0 through 9
-for item in items { process(item) }
-for i int in 0..10..2 { io.printl(string(i)) } -- step of 2
+for i int in 0..10 { io.printl(string(i)) }          -- 0 through 10 inclusive
+for i int in 0..<10 { io.printl(string(i)) }         -- 0 through 9
+for i int in 0..10..2 { io.printl(string(i)) }       -- step of 2
+for item string in items { process(item) }           -- collection iteration
 ```
+
+> [!NOTE]
+> - The iteration variable must have an explicit type annotation (no type inference)
+> - For range iteration, the type must be numeric (int, float, double, etc.)
+> - For collection iteration, the type must match the element type of the iterable
+> - The optional step expression (after second ..) is only valid for range iteration
+> - The step expression must be of the same numeric type as the iteration variable
 
 ### While / Do-While
 

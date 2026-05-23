@@ -1,9 +1,44 @@
 /**
  * @file ParserPattern.cpp
+ * @brief Pattern parsing for match expressions.
  * 
- * Pattern parsing for match expressions.
- * Handles literal patterns, bind patterns, wildcard patterns,
- * type patterns, struct patterns, and match arms.
+ * ============================================================================
+ * FILE OVERVIEW
+ * ============================================================================
+ * 
+ * This file implements pattern matching parsers used exclusively in `match`
+ * expressions. Patterns destructure values and bind variables.
+ * 
+ * ## Pattern Types
+ * 
+ *   - Literal pattern      : `42`, `"hello"`, `true`
+ *   - Range pattern        : `1..10`, `1..<10`
+ *   - Bind pattern         : `x` (binds matched value to variable)
+ *   - Wildcard pattern     : `_` (matches anything, discards)
+ *   - Type pattern         : `s is Circle` (type check + bind)
+ *   - Struct pattern       : `Vec2 { x, y }` or `Vec2 { x: 0.0, y: 0.0 }`
+ *   - Qualified constant   : `Direction.North` (enum variant)
+ * 
+ * ## Match Expression Structure
+ * 
+ *   match expr {
+ *       pattern [if guard] => expr [, expr]
+ *       default => expr [, expr]
+ *   }
+ * 
+ * ## Secondary Value Rules
+ * 
+ *   - If no arm supplies a secondary value → match produces one value
+ *   - If every arm supplies a secondary value → second value is non‑nullable
+ *   - If only some arms supply a secondary value → second value must be nullable
+ * 
+ * ## Loop Safety
+ * 
+ * All functions that parse sequences of patterns or fields use the saved
+ * position pattern to detect infinite loops on malformed input.
+ * 
+ * @see ParserExpr.cpp for the match expression wrapper
+ * @see LUC_GRAMMAR.md for pattern grammar rules
  */
 
 #include "Parser.hpp"
@@ -11,9 +46,50 @@
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
 
-// -----------------------------------------------------------------------------
-// parseMatchArm
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Match Arm
+// ============================================================================
+// 
+// parseMatchArm() parses a single non‑default arm in a match expression.
+// 
+// Grammar: pattern { ',' pattern } [ 'if' guard_expr ] '=>' expr [ ',' expr ]
+// 
+// Examples:
+//   200 => "ok"
+//   200, 201, 202 => "success"
+//   1..10 => "light"
+//   n if n < 0 => "negative"
+//   Vec2 { x, y } => "at " + string(x) + ", " + string(y)
+//   200 => "ok", "request succeeded"
+// 
+// ─── Pattern List ───────────────────────────────────────────────────────────
+//   - One or more patterns, comma‑separated
+//   - All patterns in the list must bind the same set of names (semantic pass)
+//   - The arm fires if ANY pattern matches
+// 
+// ─── Guard Expression ───────────────────────────────────────────────────────
+//   - Optional 'if' followed by an expression
+//   - Only valid after a bind or wildcard pattern
+//   - May reference names introduced by bind patterns
+// 
+// ─── Arm Body (Result Expressions) ─────────────────────────────────────────
+//   - One required expression, optionally followed by a comma and a second
+//   - At most two expressions per arm
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at the first pattern token
+// On exit:  positioned after the last result expression
+// 
+// ─── Loop Safety ──────────────────────────────────────────────────────────
+//   - Uses saved position pattern when parsing additional patterns after commas
+//   - Checks peekNextType() to ensure a valid pattern follows before consuming comma
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+//   - Missing pattern after comma: breaks loop
+//   - Missing guard expression: reports error, continues
+//   - Missing result expression: reports error, creates empty exprs
+//   - More than two expressions: reports error, skips rest of arm
+// ============================================================================
 
 MatchArmPtr Parser::parseMatchArm() {
     SourceLocation loc = ts_.currentLoc();
@@ -120,9 +196,35 @@ MatchArmPtr Parser::parseMatchArm() {
     return arm;
 }
 
-// -----------------------------------------------------------------------------
-// parseDefaultArm
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Default Arm
+// ============================================================================
+// 
+// parseDefaultArm() parses the required fallback arm in a match expression.
+// 
+// Grammar: 'default' '=>' expr [ ',' expr ]
+// 
+// Example: default => "unknown"
+// 
+// ─── Position Requirement ──────────────────────────────────────────────────
+//   - The default arm must be the last arm in the match expression
+//   - Only one default arm is allowed
+//   - These rules are enforced by the caller (parseMatchExpr)
+// 
+// ─── Arm Body (Result Expressions) ─────────────────────────────────────────
+//   - One required expression, optionally followed by a comma and a second
+//   - At most two expressions
+//   - Secondary value presence must be consistent with other arms
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at 'default' keyword
+// On exit:  positioned after the last result expression
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+//   - Missing '=>' after 'default': consume() reports error
+//   - Missing expression after '=>': reports error, returns arm with empty exprs
+//   - More than two expressions: reports error, skips rest
+// ============================================================================
 
 ASTPtr<DefaultArmAST> Parser::parseDefaultArm() {
     SourceLocation loc = ts_.currentLoc();
@@ -173,9 +275,30 @@ ASTPtr<DefaultArmAST> Parser::parseDefaultArm() {
     return arm;
 }
 
-// -----------------------------------------------------------------------------
-// parsePattern
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Pattern Dispatcher
+// ============================================================================
+// 
+// parsePattern() is the root dispatcher for parsing a single pattern.
+// 
+// Dispatch Priority:
+//   1. '_' → parseWildcardPattern()
+//   2. Literal tokens (INT, FLOAT, STRING, etc.) → parseLiteralOrRangePattern()
+//   3. IDENTIFIER:
+//        a. IDENTIFIER 'is' type → parseTypePattern()
+//        b. IDENTIFIER '{' → parseStructPattern()
+//        c. IDENTIFIER '.' → Qualified constant → parseExpr() + PatternExprAST
+//        d. Otherwise → parseBindPattern()
+//   4. No match → error
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at the first token of a pattern
+// On exit:  positioned after the pattern
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+//   - No pattern recognised: reports error, returns nullptr
+//   - Bind pattern followed by '..': error, recovers by consuming range
+// ============================================================================
 
 ASTPtr<PatternAST> Parser::parsePattern() {
     // Wildcard
@@ -241,9 +364,39 @@ ASTPtr<PatternAST> Parser::parsePattern() {
     return nullptr;
 }
 
-// -----------------------------------------------------------------------------
-// parseLiteralOrRangePattern
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Literal or Range Pattern
+// ============================================================================
+// 
+// parseLiteralOrRangePattern() parses a literal pattern or a range pattern.
+// 
+// Grammar:
+//   literal_pattern := literal
+//   range_pattern   := literal '..' [ '<' ] literal
+// 
+// Examples:
+//   42                 → literal pattern
+//   "ok"               → literal pattern
+//   1..10              → inclusive range pattern
+//   1..<10             → exclusive range pattern
+//   -5..5              → negative literal as lower bound
+// 
+// ─── Supported Literal Types ──────────────────────────────────────────────
+//   INT_LITERAL, FLOAT_LITERAL, STRING_LITERAL, RAW_STRING_LITERAL,
+//   CHAR_LITERAL, HEX_LITERAL, BINARY_LITERAL, TRUE, FALSE, NIL
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at literal token (or '-' for negative)
+// On exit:  positioned after the literal (or after hi literal for range)
+// 
+// ─── Negative Literal Handling ────────────────────────────────────────────
+//   - Unary minus is consumed and applied to the literal value
+//   - The raw value is stored as "-42" in the LiteralExprAST
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+//   - Invalid literal: returns nullptr
+//   - Missing hi after '..': reports error, returns nullptr
+// ============================================================================
 
 ASTPtr<PatternAST> Parser::parseLiteralOrRangePattern() {
     SourceLocation loc = ts_.currentLoc();
@@ -322,9 +475,28 @@ ASTPtr<PatternAST> Parser::parseLiteralOrRangePattern() {
     return arena_.make<PatternExprAST>(std::move(lit));
 }
 
-// -----------------------------------------------------------------------------
-// parseBindPattern
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Bind Pattern
+// ============================================================================
+// 
+// parseBindPattern() parses an identifier pattern that binds the matched value.
+// 
+// Grammar: IDENTIFIER
+// 
+// Example: `n` → binds matched value to variable 'n'
+// 
+// ─── Scope Introduction ────────────────────────────────────────────────────
+//   - Introduces a new variable in the arm's scope
+//   - Variable type is the type of the matched value (narrowed by pattern)
+//   - Accessible in guard expression and arm body
+// 
+// ─── Preconditions ────────────────────────────────────────────────────────
+//   - Called after the IDENTIFIER token has been consumed
+//   - The name is passed as a parameter (already interned)
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+//   - Consumes no additional tokens (identifier already consumed by caller)
+// ============================================================================
 
 ASTPtr<BindPatternAST> Parser::parseBindPattern(InternedString name) {
     SourceLocation loc = ts_.currentLoc();
@@ -333,9 +505,34 @@ ASTPtr<BindPatternAST> Parser::parseBindPattern(InternedString name) {
     return pat;
 }
 
-// -----------------------------------------------------------------------------
-// parseTypePattern
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Type Pattern
+// ============================================================================
+// 
+// parseTypePattern() parses a pattern that combines type check with binding.
+// 
+// Grammar: IDENTIFIER 'is' type
+// 
+// Example: `s is Circle` → matches if subject is Circle, binds as 's' typed Circle
+// 
+// ─── Semantics ────────────────────────────────────────────────────────────
+//   - Runtime type check: subject must match `checkType`
+//   - If match succeeds, value is bound to `bindName` with narrowed type
+//   - The bound variable's type is `checkType` in the arm body
+// 
+// ─── Preconditions ────────────────────────────────────────────────────────
+//   - Called after the IDENTIFIER has been consumed
+//   - The bindName is passed as a parameter (already interned)
+//   - Current token is 'is'
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+//   - Consumes 'is' keyword
+//   - Parses the type annotation via parseType()
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+//   - Missing 'is': consume() reports error, returns nullptr
+//   - Missing or invalid type: reports error, returns nullptr
+// ============================================================================
 
 ASTPtr<TypePatternAST> Parser::parseTypePattern(InternedString bindName) {
     SourceLocation loc = ts_.currentLoc();
@@ -354,9 +551,28 @@ ASTPtr<TypePatternAST> Parser::parseTypePattern(InternedString bindName) {
     return pat;
 }
 
-// -----------------------------------------------------------------------------
-// parseWildcardPattern
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Wildcard Pattern
+// ============================================================================
+// 
+// parseWildcardPattern() parses the '_' pattern that matches any value.
+// 
+// Grammar: '_'
+// 
+// Example: `_ => "anything"`
+// 
+// ─── Semantics ────────────────────────────────────────────────────────────
+//   - Matches any value (like a bind pattern)
+//   - Does NOT introduce a variable name into the arm's scope
+//   - The matched value is discarded and cannot be referenced
+// 
+// ─── Distinction from 'default' ───────────────────────────────────────────
+//   - '_' is a pattern that may appear in any arm position
+//   - 'default' is a keyword for the required fallback arm (not a pattern)
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+//   - Consumes the '_' token
+// ============================================================================
 
 ASTPtr<WildcardPatternAST> Parser::parseWildcardPattern() {
     SourceLocation loc = ts_.currentLoc();
@@ -366,9 +582,40 @@ ASTPtr<WildcardPatternAST> Parser::parseWildcardPattern() {
     return pat;
 }
 
-// -----------------------------------------------------------------------------
-// parseStructPattern
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Struct Pattern
+// ============================================================================
+// 
+// parseStructPattern() parses a struct destructuring pattern.
+// 
+// Grammar: IDENTIFIER '{' { field_pattern } '}'
+// 
+// Examples:
+//   Vec2 { x, y }                     → shorthand: binds x and y from subject
+//   Vec2 { x: 0.0, y: 0.0 }          → exact match on field values
+//   Player { health: 0, name }       → mixed: exact match on health, bind name
+//   Vec2 { x: 0.0, y: v }            → nested: bind y's value to variable v
+// 
+// ─── Semantics ────────────────────────────────────────────────────────────
+//   - Matches when subject is a struct of the named type
+//   - Fields not listed are ignored (match succeeds regardless)
+//   - For each field pattern:
+//        * Shorthand (no ':'): binds field's value to variable with same name
+//        * Full form (':' pattern): field value must match the sub‑pattern
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned after the type name (at '{')
+// On exit:  positioned after the closing '}'
+// 
+// ─── Loop Safety ──────────────────────────────────────────────────────────
+//   - Uses saved position pattern with parseFieldPattern()
+//   - If parseFieldPattern() makes no progress, consumes one token and continues
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+//   - Missing '{': consume() reports error, returns nullptr
+//   - Invalid field pattern: skips field, continues parsing remaining fields
+//   - Missing '}': consume() reports error
+// ============================================================================
 
 ASTPtr<StructPatternAST> Parser::parseStructPattern(InternedString typeName) {
     SourceLocation loc = ts_.currentLoc();
@@ -404,9 +651,32 @@ ASTPtr<StructPatternAST> Parser::parseStructPattern(InternedString typeName) {
     return pat;
 }
 
-// -----------------------------------------------------------------------------
-// parseFieldPattern
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Field Pattern
+// ============================================================================
+// 
+// parseFieldPattern() parses a single field entry inside a struct pattern.
+// 
+// Grammar: IDENTIFIER [ ':' pattern ]
+// 
+// Examples:
+//   x               → shorthand: bind field 'x' to variable 'x'
+//   x: 0.0          → full form: match field 'x' against literal 0.0
+//   pos: Vec2 { ... } → nested: match field 'pos' against a struct pattern
+// 
+// ─── Semantics ────────────────────────────────────────────────────────────
+//   - Shorthand form: equivalent to field_name: bind_pattern(field_name)
+//   - Full form: field's value must match the given sub‑pattern
+//   - Sub‑pattern can be any valid pattern (literal, range, bind, type, struct)
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at field name
+// On exit:  positioned after sub‑pattern (or after field name if no sub‑pattern)
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+//   - Missing field name: returns nullptr
+//   - Missing sub‑pattern after ':': reports error (field node still created)
+// ============================================================================
 
 FieldPatternPtr Parser::parseFieldPattern() {
     SourceLocation loc = ts_.currentLoc();

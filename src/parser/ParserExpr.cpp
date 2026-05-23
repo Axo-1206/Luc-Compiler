@@ -1,9 +1,58 @@
 /**
  * @file ParserExpr.cpp
+ * @brief Pratt parser for Luc expressions – operators, literals, calls, pipelines.
  * 
- * Expression parsing using Pratt parser.
- * Handles literals, operators, calls, indexing, pipelines, composition,
- * and all expression-specific grammar rules.
+ * ============================================================================
+ * FILE OVERVIEW
+ * ============================================================================
+ * 
+ * This file implements the expression parsing subsystem using a Pratt parser
+ * (top‑down operator precedence). It handles:
+ *   - Literals (integers, floats, strings, booleans, nil)
+ *   - Unary operators (-, not, ~~, &)
+ *   - Binary operators (arithmetic, comparison, logical, bitwise)
+ *   - Function calls and indexing
+ *   - Field access (.) and method calls (:)
+ *   - Nullable chaining (?.) and coalescing (??)
+ *   - Pipeline operator (|>) and composition operator (+>)
+ *   - Match expressions (patterns are in ParserPattern.cpp)
+ * 
+ * ## Pratt Parser Overview
+ * 
+ * The Pratt parser uses a precedence climbing algorithm:
+ * 
+ *   parseExpr() → parsePrattExpr(minPrec)
+ *                      │
+ *         ┌────────────┼────────────┐
+ *         │            │            │
+ *    parsePrefix   parseInfix   parsePostfix
+ *    (unary ops)   (binary ops)  (calls, index, .)
+ * 
+ * Precedence levels are defined in the anonymous namespace at the top.
+ * Higher number = tighter binding.
+ * 
+ * ## Precedence Table
+ * 
+ *   Level 12 : ^ (exponentiation, right‑associative)
+ *   Level 11 : *, /, %
+ *   Level 10 : +, -
+ *   Level 8  : &&, ||, ~^, <<, >> (bitwise)
+ *   Level 7  : ==, !=, <, >, <=, >=, is, ===
+ *   Level 6  : and
+ *   Level 5  : or
+ *   Level 4  : ?? (null coalesce)
+ *   Level 3  : |> (pipeline)
+ *   Level 2  : +> (composition)
+ *   Level 1  : =, +=, -=, etc. (assignment)
+ * 
+ * ## Loop Safety
+ * 
+ * The Pratt main loop (parsePrattExpr) checks precedence before each iteration.
+ * List‑parsing functions (parseArgList) use a consecutive error counter and
+ * saved position pattern to prevent infinite loops.
+ * 
+ * @see ParserPattern.cpp for match expression patterns
+ * @see LUC_GRAMMAR.md for expression grammar
  */
 
 #include "Parser.hpp"
@@ -30,9 +79,20 @@ namespace {
     constexpr int PREC_POW = 12;
 }
 
-// -----------------------------------------------------------------------------
-// Precedence helpers
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Precedence Helpers
+// ============================================================================
+// 
+// These functions map token types to precedence levels and operator enums.
+// 
+//   infixPrec()       : returns precedence for an infix operator
+//   tokenToBinaryOp() : converts TokenType → BinaryOp (arithmetic, comparison, etc.)
+//   tokenToAssignOp() : converts TokenType → AssignOp (assignment operators)
+//   isAssignOp()      : true for assignment operators (lowest precedence)
+// 
+// The precedence values are used by parsePrattExpr to decide whether to
+// consume an operator or stop.
+// ============================================================================
 
 int Parser::infixPrec(TokenType t) const {
     switch (t) {
@@ -147,9 +207,30 @@ bool Parser::isAssignOp(TokenType t) const {
     }
 }
 
-// -----------------------------------------------------------------------------
-// Pratt parser core
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Pratt Parser Core
+// ============================================================================
+// 
+// The Pratt parser is a recursive‑descent operator precedence parser.
+// 
+//   parseExpr()          : entry point, starts at lowest precedence
+//   parsePrattExpr()     : main climbing algorithm
+//   parsePrefixExpr()    : handles unary operators and primary expressions
+//   parsePostfixExpr()   : handles calls, indexing, field access after the prefix
+// 
+// Algorithm (in parsePrattExpr):
+//   1. Parse a prefix expression (unary op or primary)
+//   2. Apply all postfix operators (calls, indexing, ., :, ?.)
+//   3. While next token is infix operator with precedence > minPrec:
+//        a. If assignment operator → parseInfixAssign, break
+//        b. If 'is' → parseInfixIs, continue
+//        c. If '|>' → parsePipelineExpr, continue
+//        d. If '+>' → parseComposeExpr, continue
+//        e. If '??' → parseInfixNullCoalesce, break
+//        f. Otherwise → parseInfixBinary, then re‑apply postfix
+// 
+// Right‑associative operators (^, ??, assignment) use `prec - 1` when recursing.
+// ============================================================================
 
 ExprPtr Parser::parseExpr(bool allowStructLiteral) {
     return parsePrattExpr(PREC_NONE, allowStructLiteral);
@@ -201,9 +282,22 @@ ExprPtr Parser::parsePrattExpr(int minPrec, bool allowStructLiteral) {
     return lhs;
 }
 
-// -----------------------------------------------------------------------------
-// Infix operator handlers
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Infix Operator Handlers
+// ============================================================================
+// 
+// These functions are called from parsePrattExpr when an infix operator is
+// encountered. Each consumes the operator token, parses the right operand,
+// and builds the corresponding AST node.
+// 
+//   parseInfixAssign()      : =, +=, -=, *=, /=, ^=, %=, &&=, ||=, ~^=, <<=, >>=
+//   parseInfixIs()          : is (type check)
+//   parseInfixNullCoalesce(): ?? (null coalescing)
+//   parseInfixBinary()      : all other binary operators
+// 
+// Chained comparison detection: parseInfixBinary reports an error when it
+// sees patterns like `a < b < c` (not allowed in Luc).
+// ============================================================================
 
 ExprPtr Parser::parseInfixAssign(ExprPtr lhs, bool allowStructLiteral) {
     TokenType opTok = ts_.advance().type;
@@ -293,9 +387,33 @@ ExprPtr Parser::parseInfixBinary(ExprPtr lhs, TokenType opTok, int prec, bool al
     return node;
 }
 
-// -----------------------------------------------------------------------------
-// Prefix & primary parsers
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Prefix & Primary Parsers
+// ============================================================================
+// 
+//   parsePrefixExpr() : handles unary operators (-, not, ~~, &) then calls
+//                       parsePrimaryExpr() for the operand.
+//   parsePrimaryExpr(): dispatches to expression atom parsers based on the
+//                       current token. Dispatch order is critical:
+// 
+// Dispatch Priority (highest to lowest):
+//   1. match expression    : 'match'
+//   2. if expression       : 'if' (expression form, requires '??' and 'else')
+//   3. #intrinsic call     : '#'
+//   4. await               : 'await'
+//   5. array literal       : '['
+//   6. bare '{' error      : suggests missing struct name or match
+//   7. anonymous function  : looksLikeAnonFunc()
+//   8. grouped expression  : '(' expr ')'
+//   9. '*' unsafe cast     : '*T(expr)'
+//   10. identifier         : IDENTIFIER (struct literal, behavior, or plain)
+//   11. primitive type cast: 'float(x)'
+//   12. literal            : numbers, strings, true, false, nil
+// 
+// The allowStructLiteral flag controls whether IDENTIFIER '{' is parsed as a
+// struct literal. It is disabled in contexts where '{' belongs to something
+// else (e.g., after 'if' or 'match').
+// ============================================================================
 
 ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
     SourceLocation loc = ts_.currentLoc();
@@ -487,6 +605,27 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
     return parseLiteralExpr();
 }
 
+// ============================================================================
+// Postfix Parser
+// ============================================================================
+// 
+// parsePostfixExpr applies postfix operators to an already‑parsed left‑hand
+// side expression. It handles:
+// 
+//   - Function call      : lhs(args)
+//   - Generic call       : lhs<T>(args)
+//   - Indexing           : lhs[expr] or lhs[start..end]
+//   - Field access       : lhs.field
+//   - Nullable chain     : lhs?.field (collects multiple steps)
+// 
+// Important: This does NOT handle '|>', '+>', or ':' (method access) – those
+// are handled at higher precedence levels in parsePrattExpr.
+// 
+// Nullable chains are collected in one go: each '?.' appends a field name to
+// a single NullableChainExprAST. The grammar requires every '?.' chain to be
+// terminated by '??' – this is enforced by parseInfixNullCoalesce.
+// ============================================================================
+
 ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
     while (true) {
         if (ts_.check(TokenType::RPAREN)) break;
@@ -577,9 +716,24 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
     return lhs;
 }
 
-// -----------------------------------------------------------------------------
-// Literal and value parsers
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Literal and Value Parsers (Primary Expression Factories)
+// ============================================================================
+// 
+// These functions parse atomic expression values:
+// 
+//   parseLiteralExpr()       : scalar literals (int, float, string, char, bool, nil)
+//   parseArrayLiteralExpr()  : [1, 2, 3] (returns temporary vector → SpanBuilder)
+//   parseStructLiteralExpr() : Point { x = 0, y = 0 }
+//   parseAnonFuncExpr()      : (x int) -> int { return x * 2 }
+//   parseAwaitExpr()         : await expr
+//   parseIfExpr()            : if cond ?? then else else
+//   parseTypeConvExpr()      : type(expr) or *type(expr)
+//   parseRangeExpr()         : lo..hi or lo..<hi
+// 
+// Struct literals use '=' for field initialisation, not ':'.
+// Anonymous functions cannot have qualifiers (~async, etc.) – they are plain values.
+// ============================================================================
 
 ExprPtr Parser::parseLiteralExpr() {
     SourceLocation loc = ts_.currentLoc();
@@ -741,6 +895,32 @@ ExprPtr Parser::parseAnonFuncExpr() {
     return node;
 }
 
+// ============================================================================
+// Await Expression
+// ============================================================================
+// 
+// parseAwaitExpr() parses the 'await' keyword used to suspend an async function.
+// 
+// Grammar: 'await' expr
+// 
+// Example: await httpGet(url)
+// 
+// ─── Semantic Restrictions (Parser Checks) ─────────────────────────────────
+//   - 'await' is only valid inside a ~async function body
+//   - 'await' is not allowed inside a ~parallel body (parallelDepth_ > 0)
+//   - The awaited expression must be a call to a ~async function
+// 
+// The second restriction is checked here (parallelDepth_). The others are
+// enforced by the semantic pass.
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at 'await' keyword
+// On exit:  positioned after the awaited expression
+// 
+// ─── Loop Safety ──────────────────────────────────────────────────────────
+// None – single expression, no loops.
+// ============================================================================
+
 ExprPtr Parser::parseAwaitExpr(bool allowStructLiteral) {
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::AWAIT, "expected 'await'");
@@ -759,6 +939,39 @@ ExprPtr Parser::parseAwaitExpr(bool allowStructLiteral) {
     node->loc = loc;
     return node;
 }
+
+// ============================================================================
+// If Expression (Expression Form)
+// ============================================================================
+// 
+// parseIfExpr() parses the expression form of 'if', which produces a value.
+// 
+// Grammar: 'if' expr '??' expr 'else' expr
+// 
+// Example: let grade = if score >= 60 ?? "pass" else "fail"
+// 
+// ─── Comparison with IfStmtAST ────────────────────────────────────────────
+//   IfExprAST (this)              | IfStmtAST (in ParserStmt.cpp)
+//   ------------------------------|------------------------------------------
+//   Expression context            | Statement context
+//   'else' required               | 'else' optional
+//   Produces a value              | No value produced
+//   Uses '??' separator           | No '??' separator
+// 
+// ─── Operator Precedence ──────────────────────────────────────────────────
+// The '??' here is a syntactic separator (not the null‑coalescing operator).
+// The condition is parsed with PREC_NULLCOAL to stop at the first '??'.
+// The expression is right‑associative: a ?? b else c ?? d else e.
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at 'if' keyword
+// On exit:  positioned after the else branch expression
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+// - Missing condition after 'if' → returns UnknownExprAST
+// - Missing '??' after condition → reports error, returns UnknownExprAST
+// - Missing 'else' keyword → reports error, returns UnknownExprAST
+// ============================================================================
 
 ExprPtr Parser::parseIfExpr(bool allowStructLiteral) {
     SourceLocation loc = ts_.currentLoc();
@@ -798,6 +1011,40 @@ ExprPtr Parser::parseIfExpr(bool allowStructLiteral) {
     return node;
 }
 
+// ============================================================================
+// Type Conversion Expression (Cast)
+// ============================================================================
+// 
+// parseTypeConvExpr() parses explicit type casts.
+// 
+// Grammar:
+//   Safe cast:   type_name '(' expr ')'
+//   Unsafe cast: '*' type_name '(' expr ')'
+// 
+// Examples:
+//   float(x)      – safe cast (widening, enum→int, int→string)
+//   *uint32(bits) – unsafe bit reinterpret (only in @extern)
+// 
+// ─── Safe vs Unsafe ────────────────────────────────────────────────────────
+//   Safe (isUnsafe = false): type_name '(' expr ')'
+//     - Supported casts: primitive widening, enum→int, int→string
+//     - Validated by semantic pass
+// 
+//   Unsafe (isUnsafe = true): '*' type_name '(' expr ')'
+//     - Bit reinterpretation
+//     - Only allowed inside @extern functions or with --unsafe flag
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: 
+//   - For unsafe cast: positioned after '*' and type name (at '(')
+//   - For safe cast: positioned after type name (at '(')
+// On exit: positioned after the closing ')'
+// 
+// ─── Preconditions ─────────────────────────────────────────────────────────
+// - The caller (parsePrimaryExpr) has already consumed the type name
+// - The current token is '('
+// ============================================================================
+
 ExprPtr Parser::parseTypeConvExpr(bool isUnsafe, TypePtr targetType) {
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LPAREN, "expected '(' for explicit type cast");
@@ -814,6 +1061,36 @@ ExprPtr Parser::parseTypeConvExpr(bool isUnsafe, TypePtr targetType) {
     node->loc = loc;
     return node;
 }
+
+// ============================================================================
+// Range Expression
+// ============================================================================
+// 
+// parseRangeExpr() parses an inclusive or exclusive range.
+// 
+// Grammar: expr ( '..' | '..<' ) expr
+// 
+// Examples:
+//   0..10    – inclusive range (0 through 10)
+//   1..<5    – exclusive range (1 through 4)
+// 
+// ─── Usage Contexts ────────────────────────────────────────────────────────
+// Ranges appear in:
+//   - For loops          : for i in 0..10 { ... }
+//   - Match patterns     : case 1..10 => "light"
+//   - Slice indices      : nums[1..3]
+// 
+// ─── Preconditions ─────────────────────────────────────────────────────────
+// - Called when '..' or '..<' is found after the lo expression
+// - The lo expression is already parsed and passed as a parameter
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at '..' or '..<' (lo already consumed)
+// On exit:  positioned after the hi expression
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+// - Missing hi expression after '..' → returns UnknownExprAST
+// ============================================================================
 
 ExprPtr Parser::parseRangeExpr(ExprPtr lo, bool allowStructLiteral) {
     SourceLocation loc = lo->loc;
@@ -834,9 +1111,19 @@ ExprPtr Parser::parseRangeExpr(ExprPtr lo, bool allowStructLiteral) {
     return node;
 }
 
-// -----------------------------------------------------------------------------
-// Intrinsic call
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Intrinsic Call
+// ============================================================================
+// 
+// Intrinsic calls use the '#' prefix: #sizeof(T), #sqrt(x), #memcpy(dst, src, n)
+// 
+// Two categories:
+//   - Type intrinsics : #sizeof, #alignof – take a type argument
+//   - Value intrinsics: all others – take expression arguments
+// 
+// Detection is based on the intrinsic name after '#'.
+// Arguments are parsed as expressions (or a single type for type intrinsics).
+// ============================================================================
 
 ExprPtr Parser::parseIntrinsicCallExpr() {
     SourceLocation loc = ts_.currentLoc();
@@ -895,9 +1182,19 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
     return node;
 }
 
-// -----------------------------------------------------------------------------
-// Call and index parsers
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Call and Index Parsers
+// ============================================================================
+// 
+//   parseCallExpr()   : callee(args) with optional generic arguments
+//   parseIndexExpr()  : target[idx] or target[start..end] (slice)
+//   parseArgList()    : comma‑separated argument list until ')'
+// 
+// Generic call detection uses lookahead to distinguish from comparison '<'.
+// 
+// parseArgList includes a consecutive error counter (max 5) to prevent
+// infinite loops on malformed argument lists (e.g., missing expression after comma).
+// ============================================================================
 
 ExprPtr Parser::parseCallExpr(ExprPtr callee, ArenaSpan<TypePtr> genericArgs) {
     SourceLocation loc = callee->loc;
@@ -995,9 +1292,25 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
     return builder.build();
 }
 
-// -----------------------------------------------------------------------------
-// Pipeline and composition
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Pipeline and Composition
+// ============================================================================
+// 
+//   parsePipelineExpr() : seed |> step |> step (runtime, left‑associative)
+//   parseComposeExpr()  : f +> g +> h (compile‑time, left‑associative)
+// 
+// Pipeline steps can be:
+//   - Function name          : fn
+//   - Method reference       : Type:method
+//   - Field reference        : obj.field (must be function type)
+//   - Index reference        : arr[idx]
+//   - Argument pack          : fn(args)! (upstream injected as first arg)
+//   - Anonymous function     : (x int) -> int { ... }
+// 
+// The '!' suffix marks an intentionally incomplete argument list.
+// 
+// Composition operands are more restricted: no '!', no anonymous functions.
+// ============================================================================
 
 ExprPtr Parser::parsePipelineExpr(ExprPtr seed) {
     if (!seed) {
@@ -1302,9 +1615,21 @@ ComposeOperandPtr Parser::parseComposeOperand() {
     return op;
 }
 
-// -----------------------------------------------------------------------------
-// Match expression (stubs - patterns in ParserPattern.cpp)
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Match Expression (Stub)
+// ============================================================================
+// 
+// parseMatchExpr() parses the pattern‑matching expression.
+// 
+// Grammar: match expr { pattern [if guard] => expr [, expr], default => expr }
+// 
+// The actual pattern parsing (bind, wildcard, type, struct, literal, range)
+// is implemented in ParserPattern.cpp. This function only:
+//   1. Parses the subject expression
+//   2. Collects match arms (calls parseMatchArm)
+//   3. Enforces that a 'default' arm is present and last
+//   4. Builds ArenaSpan for arms
+// ============================================================================
 
 ExprPtr Parser::parseMatchExpr() {
     SourceLocation loc = ts_.currentLoc();
@@ -1369,9 +1694,19 @@ ExprPtr Parser::parseMatchExpr() {
     return node;
 }
 
-// -----------------------------------------------------------------------------
-// Lvalue parsing (for assignments)
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Lvalue Parsing (for Assignments)
+// ============================================================================
+// 
+// parseLvalue() parses an assignable left‑hand side expression for multi‑assignment.
+// 
+// Grammar: IDENTIFIER { ( '.' IDENTIFIER ) | ( '[' expr ']' ) }
+// 
+// Examples: x, point.x, arr[i], matrix[row][col]
+// 
+// This is distinct from parseExpr() because it stops before operators like '='
+// and does not allow behavior access (':') or function calls.
+// ============================================================================
 
 ExprPtr Parser::parseLvalue() {
     if (!ts_.check(TokenType::IDENTIFIER)) {

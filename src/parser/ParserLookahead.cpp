@@ -1,16 +1,76 @@
 /**
  * @file ParserLookahead.cpp
+ * @brief Non‑consuming lookahead helpers for syntax disambiguation.
  * 
- * Lookahead helpers for disambiguating syntax during parsing.
- * These functions inspect the token stream without consuming tokens.
+ * ============================================================================
+ * FILE OVERVIEW
+ * ============================================================================
+ * 
+ * This file implements pure lookahead functions that inspect the token stream
+ * WITHOUT consuming any tokens. They are used to disambiguate syntax when
+ * multiple grammar rules share the same prefix.
+ * 
+ * ## Why Lookahead is Needed
+ * 
+ * Luc has several ambiguous syntax patterns that require lookahead:
+ * 
+ *   - `let` can start a variable OR function declaration
+ *   - `(` can start a grouped expression OR an anonymous function
+ *   - `IDENTIFIER` can be a type name, variable name, or struct literal
+ *   - `IDENTIFIER` `{` can be a struct literal OR a block (invalid)
+ *   - `IDENTIFIER` `:` can be a method reference (behavior access)
+ * 
+ * These functions resolve the ambiguity without committing to a parse path.
+ * 
+ * ## Design Principles
+ * 
+ *   1. **Pure inspection** – Never modify `ts_.pos_`
+ *   2. **Conservative** – Return `false` when uncertain (caller may try another path)
+ *   3. **Comment‑aware** – Skip LINE_COMMENT and DOC_COMMENT tokens
+ *   4. **Bounded** – Each function has a defined maximum lookahead distance
+ * 
+ * ## Implementation Pattern
+ * 
+ * All functions follow this pattern:
+ * 
+ *   const auto& tokens = ts_.getTokens();
+ *   size_t tokenCount = ts_.getTokenCount();
+ *   size_t i = ts_.getPos();
+ *   
+ *   auto skipComments = [&](size_t& idx) { ... };
+ *   
+ *   // Inspect tokens from position i forward
+ *   // Return true if pattern matches, false otherwise
+ *   // NEVER call ts_.advance() or modify parser state
+ * 
+ * @note TokenStream provides getTokens() for read‑only access to the token vector.
+ * @see Parser.hpp for the declaration of these helpers
  */
 
 #include "Parser.hpp"
 #include "debug/DebugUtils.hpp"
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // looksLikeType
-// -----------------------------------------------------------------------------
+// ============================================================================
+// 
+// Checks whether the current token stream begins with a valid type annotation.
+// 
+// Returns true if the current token is:
+//   - A primitive type keyword (int, float, string, etc.)
+//   - An identifier (named type)
+//   - '[' (array type)
+//   - '&' (reference type)
+//   - '*' (pointer type)
+//   - '~' (qualifier start, part of function type)
+//   - '(' (function type)
+// 
+// Used in contexts where a type is expected, such as variable declarations,
+// function parameters, and return type annotations.
+// 
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(1) – only inspects the current token.
+// ============================================================================
 
 bool Parser::looksLikeType() const {
     TokenType tt = ts_.peekType();
@@ -26,9 +86,35 @@ bool Parser::looksLikeType() const {
     return false;
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // looksLikeFuncDecl
-// -----------------------------------------------------------------------------
+// ============================================================================
+// 
+// Checks whether the current position looks like a function declaration
+// (as opposed to a variable declaration) after 'let' or 'const'.
+// 
+// Detection pattern:
+//   1. IDENTIFIER (function name)
+//   2. Optional generic parameters: '<' ... '>' (balanced, may be empty)
+//   3. Optional qualifiers: ~async, ~nullable, ~parallel
+//   4. '(' (start of first parameter group)
+// 
+// Returns true if the pattern matches, false otherwise.
+// 
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(n) where n = number of tokens in generic parameters + qualifiers.
+// Each token is inspected once, but no tokens are consumed.
+// 
+// ─── Example Matches ───────────────────────────────────────────────────────
+//   - "add("
+//   - "process<T>("
+//   - "fetch ~async ("
+//   - "map<T, U> ~parallel ("
+// 
+// ─── Example Non‑Matches ───────────────────────────────────────────────────
+//   - "x int =" (variable declaration)
+//   - "myStruct {" (struct literal)
+// ============================================================================
 
 bool Parser::looksLikeFuncDecl() const {
     const auto& tokens = ts_.getTokens();
@@ -91,9 +177,37 @@ bool Parser::looksLikeFuncDecl() const {
     return true;
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // looksLikeAnonFunc
-// -----------------------------------------------------------------------------
+// ============================================================================
+// 
+// Checks whether the current position looks like an anonymous function
+// expression (as opposed to a parenthesised grouped expression).
+// 
+// Detection pattern:
+//   1. Optional qualifiers (~async, etc.) – though anonymous functions
+//      should not have them, we still handle them.
+//   2. '(' (first parameter group)
+//   3. Parse the parameter group (balanced parentheses)
+//   4. Optional additional curried parameter groups
+//   5. After groups, must have either:
+//        - '{' (void anonymous function)
+//        - '->' followed by a type start
+// 
+// Returns true if the pattern matches, false otherwise.
+// 
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(n) where n = number of tokens in parameter groups + optional return type.
+// 
+// ─── Distinguishing from Grouped Expression ───────────────────────────────
+//   - "(x + y)"           → grouped expression (no '->' or '{' after ')')
+//   - "(x int) -> int { }" → anonymous function
+//   - "() { }"            → zero‑parameter anonymous function
+// 
+// ─── Note ──────────────────────────────────────────────────────────────────
+// Anonymous functions with qualifiers are illegal (E2015), but this function
+// still matches them to provide better error recovery.
+// ============================================================================
 
 bool Parser::looksLikeAnonFunc() const {
     const auto& tokens = ts_.getTokens();
@@ -202,9 +316,35 @@ bool Parser::looksLikeAnonFunc() const {
     }
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // looksLikeStructLiteral
-// -----------------------------------------------------------------------------
+// ============================================================================
+// 
+// Checks whether the current position looks like a struct literal expression.
+// 
+// Detection pattern:
+//   1. IDENTIFIER (struct type name)
+//   2. Optional generic arguments: '<' ... '>'
+//   3. '{' (opening brace of struct literal)
+// 
+// Returns true if the pattern matches, false otherwise.
+// 
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(n) where n = number of tokens in generic arguments (if present).
+// 
+// ─── Usage Context ─────────────────────────────────────────────────────────
+// Called from parsePrimaryExpr when allowStructLiteral is true. When false
+// (e.g., in 'if' conditions), this pattern is disabled to avoid ambiguity
+// with the following block.
+// 
+// ─── Example Matches ───────────────────────────────────────────────────────
+//   - "Point {"
+//   - "Vec2<int> {"
+// 
+// ─── Example Non‑Matches ───────────────────────────────────────────────────
+//   - "Point(" (function call)
+//   - "Vec2 :" (behavior access)
+// ============================================================================
 
 bool Parser::looksLikeStructLiteral() const {
     const auto& tokens = ts_.getTokens();
@@ -249,9 +389,24 @@ bool Parser::looksLikeStructLiteral() const {
     return (i < tokenCount && tokens[i].type == TokenType::LBRACE);
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // looksLikeStmtStart
-// -----------------------------------------------------------------------------
+// ============================================================================
+// 
+// Checks whether the current token can begin a statement.
+// 
+// Returns true for:
+//   - Declaration keywords (let, const, type, struct, enum, trait, impl, from)
+//   - Control flow keywords (if, for, while, do, return, break, continue, match, switch)
+//   - Compiler directives (@, #)
+//   - Expression starters (identifier, literal, unary operators, await, '(')
+// 
+// Used in parseStmt() to decide whether to parse a statement or treat the
+// input as an expression statement (fallback).
+// 
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(1) – only inspects the current token (plus calls looksLikeType).
+// ============================================================================
 
 bool Parser::looksLikeStmtStart() const {
     TokenType tt = ts_.peekType();
@@ -290,9 +445,25 @@ bool Parser::looksLikeStmtStart() const {
     }
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // looksLikeDeclStart
-// -----------------------------------------------------------------------------
+// ============================================================================
+// 
+// Checks whether the current token can begin a top‑level or local declaration.
+// 
+// Returns true for:
+//   - '@' (attribute, may precede any declaration)
+//   - 'package', 'use'
+//   - Visibility modifiers: 'pub', 'export'
+//   - Declaration keywords: 'struct', 'enum', 'trait', 'impl', 'type', 'from'
+//   - 'let', 'const'
+// 
+// Used in synchronize() to stop skipping tokens when a declaration boundary
+// is reached during error recovery.
+// 
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(1) – only inspects the current token.
+// ============================================================================
 
 bool Parser::looksLikeDeclStart() const {
     TokenType tt = ts_.peekType();
@@ -317,9 +488,35 @@ bool Parser::looksLikeDeclStart() const {
     }
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // looksLikeMultiAssignStart
-// -----------------------------------------------------------------------------
+// ============================================================================
+// 
+// Checks whether the current position looks like a multi‑assignment statement
+// (reassignment to multiple existing variables).
+// 
+// Detection pattern:
+//   1. IDENTIFIER (start of first lvalue)
+//   2. Optional suffixes: .field or [index]
+//   3. ',' (comma separating lvalues)
+//   4. Eventually '=' (assignment operator)
+// 
+// Returns true if the pattern matches, false otherwise.
+// 
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(n) where n = distance to the next '=' or statement boundary.
+// 
+// ─── Example Matches ───────────────────────────────────────────────────────
+//   - "a, b = f()"
+//   - "arr[i], obj.field = g()"
+// 
+// ─── Example Non‑Matches ───────────────────────────────────────────────────
+//   - "a = b" (single assignment)
+//   - "let a, b = f()" (declaration, not reassignment)
+// 
+// Used in parseStmt() to distinguish multi‑assignment from single assignment
+// and from multi‑variable declaration.
+// ============================================================================
 
 bool Parser::looksLikeMultiAssignStart() const {
     const auto& tokens = ts_.getTokens();
@@ -396,9 +593,35 @@ bool Parser::looksLikeMultiAssignStart() const {
     return false;
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // looksLikeBehaviorAccess
-// -----------------------------------------------------------------------------
+// ============================================================================
+// 
+// Checks whether the current position looks like a behavior access expression
+// (method reference) as opposed to a plain identifier or struct literal.
+// 
+// Detection pattern:
+//   1. IDENTIFIER (type name)
+//   2. Optional generic arguments: '<' ... '>'
+//   3. ':' (colon separator)
+//   4. IDENTIFIER (method name)
+// 
+// Returns true if the pattern matches, false otherwise.
+// 
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(n) where n = number of tokens in generic arguments (if present).
+// 
+// ─── Example Matches ───────────────────────────────────────────────────────
+//   - "Vec2:normalize"
+//   - "Buffer<int>:create"
+// 
+// ─── Example Non‑Matches ───────────────────────────────────────────────────
+//   - "Point { x = 0 }" (struct literal)
+//   - "Matrix::identity" (static access, not supported – note '::' is not in grammar)
+// 
+// Used in parsePrimaryExpr() to distinguish method references from plain
+// identifiers and struct literals.
+// ============================================================================
 
 bool Parser::looksLikeBehaviorAccess() const {
     const auto& tokens = ts_.getTokens();
@@ -450,9 +673,28 @@ bool Parser::looksLikeBehaviorAccess() const {
     return true;
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // isPrimitiveTypeToken
-// -----------------------------------------------------------------------------
+// ============================================================================
+// 
+// Static helper that returns true if a TokenType is a primitive type keyword.
+// 
+// Primitive types include:
+//   - Boolean:   bool
+//   - Signed:    byte, short, int, long, int8, int16, int32, int64
+//   - Unsigned:  ubyte, ushort, uint, ulong, uint8, uint16, uint32, uint64
+//   - Floating:  float, double, decimal
+//   - Text:      string, char
+//   - Dynamic:   any
+// 
+// Used by looksLikeType() and various type parsers.
+// 
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(1) – switch statement on the enum value.
+// 
+// ─── Note ──────────────────────────────────────────────────────────────────
+// This is static because it only depends on the TokenType, not on parser state.
+// ============================================================================
 
 bool Parser::isPrimitiveTypeToken(TokenType type) {
     switch (type) {

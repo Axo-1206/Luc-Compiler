@@ -1,9 +1,61 @@
 /**
  * @file Parser.cpp
+ * @brief Core parsing infrastructure and top-level dispatch.
  * 
- * Core parsing infrastructure and top-level dispatch.
- * Implements TokenStream, error recovery, list helpers,
- * attribute parsing, and top-level declaration dispatch.
+ * ============================================================================
+ * FILE OVERVIEW
+ * ============================================================================
+ * 
+ * This file implements the foundational components of the Luc parser:
+ *   - TokenStream: Safe token consumption with comment skipping
+ *   - Error handling: Panic-mode recovery and per-function error reporting
+ *   - List helpers: Temporary vector builders for expression/type/stmt/param lists
+ *   - Attribute parsing: @inline, @deprecated, @extern, etc.
+ *   - Top-level dispatch: parse() and parseDeclaration()
+ * 
+ * ## TokenStream Purpose
+ * 
+ * TokenStream wraps the raw token vector and provides:
+ *   - Automatic comment skipping (LINE_COMMENT, DOC_COMMENT are invisible to grammar)
+ *   - Position manipulation (getPos/setPos) for lookahead and error recovery
+ *   - Safe token consumption with consume() that reports errors on mismatch
+ * 
+ * ## Error Recovery Strategy
+ * 
+ *   - **Panic mode**: synchronize() skips tokens until a statement or declaration
+ *     boundary (IF, FOR, WHILE, LET, CONST, RBRACE, etc.)
+ *   - **Custom recovery**: synchronizeTo() stops at caller-specified token types
+ *   - **Per-function recovery**: On parse failure, functions may return nullptr
+ *     and the caller calls synchronize()
+ * 
+ * ## List Helpers
+ * 
+ * These functions return std::vector (temporary) for collecting sequences:
+ *   - parseExprList()   : comma-separated expressions until end token
+ *   - parseTypeList()   : comma-separated types until end token
+ *   - parseStmtList()   : statements until end token
+ *   - parseParamList()  : function parameters until ')'
+ * 
+ * The caller is responsible for converting to ArenaSpan using SpanBuilder.
+ * 
+ * ## Attribute Parsing
+ * 
+ * Attributes use the syntax @name or @name(args). They are collected as
+ * temporary vectors and attached to declarations via attachMetadata().
+ * 
+ * ## Top-Level Parsing Flow
+ * 
+ *   parse()
+ *     ├── parsePackageDecl()     (mandatory, first non‑comment)
+ *     └── while (!ts_.isAtEnd())
+ *           └── parseTopLevelDecl()
+ *                 └── parseDeclaration()
+ *                       └── dispatches to specific parser (use, struct, etc.)
+ * 
+ * @see ParserDecl.cpp for declaration parsers
+ * @see ParserExpr.cpp for expression parsers
+ * @see ParserStmt.cpp for statement parsers
+ * @see ParserType.cpp for type parsers
  */
 
 #include "Parser.hpp"
@@ -15,9 +67,23 @@
 #include <cassert>
 #include <sstream>
 
-// -----------------------------------------------------------------------------
-// TokenStream implementation
-// -----------------------------------------------------------------------------
+// ============================================================================
+// TokenStream Implementation
+// ============================================================================
+// 
+// The TokenStream methods provide safe token consumption with automatic
+// comment skipping. LINE_COMMENT and DOC_COMMENT tokens are invisible to
+// the grammar - they are only accessible via getTokens() for doc comment
+// harvesting.
+// 
+// Key methods:
+//   - peek() / advance() / match() - consume tokens
+//   - check() - test current token type without consuming
+//   - consume() - require a token type, report error if missing
+//   - getPos() / setPos() - for lookahead and error recovery
+// 
+// All peek*() and advance() methods skip comments automatically.
+// ============================================================================
 
 bool TokenStream::checkAny(std::initializer_list<TokenType> types) const {
     for (TokenType t : types)
@@ -60,18 +126,18 @@ SourceLocation TokenStream::locOf(const Token& tok) const {
                           static_cast<uint32_t>(tok.column));
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Parser construction
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 Parser::Parser(std::vector<Token> tokens, DiagnosticEngine& dc,
                InternedString filePath, StringPool& pool, ASTArena& arena)
     : ts_(std::move(tokens)), filePath_(std::move(filePath)),
       pool_(pool), arena_(arena), dc_(dc) {}
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Error handling
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 void Parser::error(const SourceLocation& loc, DiagCode code, const std::string& msg) {
     dc_.error(DiagnosticCategory::Syntax, filePath_, loc, code, {msg});
@@ -102,9 +168,9 @@ void Parser::synchronizeTo(std::initializer_list<TokenType> stopTokens) {
     }
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Visibility
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 Visibility Parser::parseVisibility() {
     if (ts_.match(TokenType::PUB)) return Visibility::Package;
@@ -112,9 +178,9 @@ Visibility Parser::parseVisibility() {
     return Visibility::Private;
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Qualifiers
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 QualifierSet Parser::parseQualifiers() {
     QualifierSet qs;
@@ -144,9 +210,9 @@ QualifierSet Parser::parseQualifiers() {
     return qs;
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // Module path parsing
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 std::vector<InternedString> Parser::parseModulePath() {
     std::vector<InternedString> path;
@@ -162,9 +228,9 @@ std::vector<InternedString> Parser::parseModulePath() {
     return path;
 }
 
-// -----------------------------------------------------------------------------
+// ============================================================================
 // List helpers (temporary vector builders)
-// -----------------------------------------------------------------------------
+// ============================================================================
 
 std::vector<ExprPtr> Parser::parseExprList(TokenType endType) {
     std::vector<ExprPtr> list;
@@ -218,20 +284,232 @@ std::vector<ParamPtr> Parser::parseParamList() {
     return list;
 }
 
-// -----------------------------------------------------------------------------
-// Delimited list helper template instantiations
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Parameter Group Parsing
+// ============================================================================
+// 
+// parseParamGroup() is called for each `( param_list )` in function types and
+// function declarations.
+// 
+// Grammar: '(' [ param_list ] ')'
+// 
+// The function is implemented in Parser.cpp but documented here for context.
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at '('
+// On exit:  positioned after the closing ')'
+//
+// ─── Return Value ─────────────────────────────────────────────────────────
+//   Returns ParamGroup (std::vector<ParamPtr>) – temporary collection
+//   Caller is responsible for converting to ArenaSpan using SpanBuilder
+//
+// ─── Loop Safety ──────────────────────────────────────────────────────────
+// Uses parseParamList() which has its own loop safety.
+//
+// ─── Error Recovery ───────────────────────────────────────────────────────
+// - Missing '(': consume() reports error
+// - Missing ')': consume() reports error
+//
+// ============================================================================
 
-template std::vector<ExprPtr> Parser::parseDelimitedList<ExprPtr>(
-    TokenType start, TokenType end, ExprPtr (Parser::*parseItem)());
-template std::vector<TypePtr> Parser::parseDelimitedList<TypePtr>(
-    TokenType start, TokenType end, TypePtr (Parser::*parseItem)());
-template std::vector<ParamPtr> Parser::parseDelimitedList<ParamPtr>(
-    TokenType start, TokenType end, ParamPtr (Parser::*parseItem)());
+ParamGroup Parser::parseParamGroup() {
+    SourceLocation loc = ts_.currentLoc();
+    ts_.consume(TokenType::LPAREN, "expected '(' to start parameter group");
+    
+    std::vector<ParamPtr> params = parseParamList();
+    
+    ts_.consume(TokenType::RPAREN, "expected ')' to close parameter group");
+    
+    return params;
+}
 
-// -----------------------------------------------------------------------------
-// Doc comment harvesting
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Return List Parsing
+// ============================================================================
+// 
+// parseReturnList() is called after '->' in function types and declarations.
+// 
+// Grammar:
+//   return_list := '(' [ return_type { ',' return_type } ] ')'   (multiple)
+//                | return_type                                    (single)
+// 
+// Examples:
+//   -> int
+//   -> (int, string)
+//   -> (x int) -> int                    (function type)
+//   -> ~async (url string) -> string     (async function type)
+//   -> ()
+// 
+// ─── Detection Strategy ────────────────────────────────────────────────────
+//   1. If no '(' → single return type → parseType()
+//   2. If '(' followed by ')' → empty parentheses → function type with zero params
+//   3. If '(' followed by IDENTIFIER and then a type start → function type
+//   4. If '(' followed by '~' → function type with qualifier
+//   5. Otherwise → multi-return list: parse comma‑separated types inside '(' ')'
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at the token after '->' (may be '(' or type start)
+// On exit:  positioned after the return list
+// 
+// ─── Return Value ─────────────────────────────────────────────────────────
+// Returns ArenaSpan<TypePtr> – empty span indicates void function.
+// 
+// ─── Loop Safety ──────────────────────────────────────────────────────────
+// Uses parseType() which guarantees progress.
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+// - Missing return type: reports error, returns empty span
+// - Missing ')': consume() reports error
+// ============================================================================
+
+ArenaSpan<TypePtr> Parser::parseReturnList() {
+    // Helper to check if a token type can start a type
+    auto isTypeStart = [](TokenType tt) -> bool {
+        return isPrimitiveTypeToken(tt) ||
+               tt == TokenType::IDENTIFIER ||
+               tt == TokenType::LBRACKET ||
+               tt == TokenType::AMPERSAND ||
+               tt == TokenType::MUL ||
+               tt == TokenType::LPAREN;
+    };
+
+    // Case 1: No parentheses → single return type
+    if (!ts_.check(TokenType::LPAREN)) {
+        TypePtr t = parseType();
+        if (!t || t->isa<UnknownTypeAST>()) {
+            errorAt(DiagCode::E2005, "expected return type after '->'");
+            return ArenaSpan<TypePtr>();
+        }
+        auto builder = arena_.makeBuilder<TypePtr>();
+        builder.push_back(std::move(t));
+        return builder.build();
+    }
+
+    // Peek inside the parentheses without consuming them
+    size_t lookahead = ts_.getPos() + 1;
+    const auto& tokens = ts_.getTokens();
+    size_t tokenCount = ts_.getTokenCount();
+    
+    // Skip comments
+    while (lookahead < tokenCount && 
+           (tokens[lookahead].type == TokenType::LINE_COMMENT ||
+            tokens[lookahead].type == TokenType::DOC_COMMENT)) {
+        ++lookahead;
+    }
+    
+    if (lookahead >= tokenCount) {
+        errorAt(DiagCode::E2002, "unexpected end of file after '('");
+        return ArenaSpan<TypePtr>();
+    }
+
+    TokenType afterParen = tokens[lookahead].type;
+
+    // Case 2: Empty parentheses "()" → zero‑parameter function type
+    if (afterParen == TokenType::RPAREN) {
+        TypePtr funcType = parseFuncType();
+        if (!funcType || funcType->isa<UnknownTypeAST>()) {
+            errorAt(DiagCode::E2005, "expected function type");
+            return ArenaSpan<TypePtr>();
+        }
+        auto builder = arena_.makeBuilder<TypePtr>();
+        builder.push_back(std::move(funcType));
+        return builder.build();
+    }
+
+    // Case 3: Identifier followed by a type start → function type
+    if (afterParen == TokenType::IDENTIFIER) {
+        size_t afterIdent = lookahead + 1;
+        while (afterIdent < tokenCount && 
+               (tokens[afterIdent].type == TokenType::LINE_COMMENT ||
+                tokens[afterIdent].type == TokenType::DOC_COMMENT)) {
+            ++afterIdent;
+        }
+        if (afterIdent < tokenCount && isTypeStart(tokens[afterIdent].type)) {
+            TypePtr funcType = parseFuncType();
+            if (!funcType || funcType->isa<UnknownTypeAST>()) {
+                errorAt(DiagCode::E2005, "expected function type");
+                return ArenaSpan<TypePtr>();
+            }
+            auto builder = arena_.makeBuilder<TypePtr>();
+            builder.push_back(std::move(funcType));
+            return builder.build();
+        }
+    }
+
+    // Case 4: Qualifier starts a function type
+    if (afterParen == TokenType::TILDE) {
+        TypePtr funcType = parseFuncType();
+        if (!funcType || funcType->isa<UnknownTypeAST>()) {
+            errorAt(DiagCode::E2005, "expected function type");
+            return ArenaSpan<TypePtr>();
+        }
+        auto builder = arena_.makeBuilder<TypePtr>();
+        builder.push_back(std::move(funcType));
+        return builder.build();
+    }
+
+    // Case 5: Multi‑return list: '(' type { ',' type } ')'
+    ts_.advance(); // consume '('
+    
+    std::vector<TypePtr> types;
+    while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
+        if (!types.empty() && !ts_.match(TokenType::COMMA)) {
+            // Missing comma - try to continue
+            if (ts_.check(TokenType::RPAREN)) break;
+            errorAt(DiagCode::E2001, "expected ',' between return types");
+            // Skip to next comma or closing parenthesis
+            while (!ts_.isAtEnd() && !ts_.check(TokenType::COMMA) && !ts_.check(TokenType::RPAREN)) {
+                ts_.advance();
+            }
+            continue;
+        }
+        
+        if (ts_.check(TokenType::RPAREN)) break;
+        
+        size_t savedPos = ts_.getPos();
+        TypePtr t = parseType();
+        if (ts_.getPos() == savedPos) {
+            errorAt(DiagCode::E2005, "expected return type");
+            // Skip to closing parenthesis
+            while (!ts_.isAtEnd() && !ts_.check(TokenType::RPAREN)) {
+                ts_.advance();
+            }
+            break;
+        }
+        if (t && !t->isa<UnknownTypeAST>()) {
+            types.push_back(std::move(t));
+        }
+    }
+    
+    ts_.consume(TokenType::RPAREN, "expected ')' to close return type list");
+    
+    auto builder = arena_.makeBuilder<TypePtr>();
+    for (auto& t : types) builder.push_back(std::move(t));
+    return builder.build();
+}
+
+// ============================================================================
+// Doc Comment Harvesting
+// ============================================================================
+// 
+// harvestDocComment() scans backward from the current position to collect
+// documentation comments attached to the next declaration.
+// 
+// Attachment priority (from LUC_GRAMMAR.md):
+//   1. Block doc comment   : /-- ... --/ immediately above declaration
+//   2. Stacked line comments: consecutive -- lines above declaration
+//   3. Trailing comment    : -- comment on the same line as declaration
+// 
+// ─── Scanning Logic ────────────────────────────────────────────────────────
+//   - Starts from pos-1 and moves backward
+//   - Stops at first non-comment token
+//   - Collects LINE_COMMENT tokens that are contiguous and end on declLine-1
+//   - DOC_COMMENT token immediately above (line difference ≤ 1) becomes block
+//   - LINE_COMMENT on the same line becomes trailing
+// 
+// ─── Priority Resolution ────────────────────────────────────────────────────
+//   Block doc > Stacked lines > Trailing comment
+// ============================================================================
 
 std::optional<DocComment> Parser::harvestDocComment() {
     const auto& tokens = ts_.getTokens();
@@ -305,9 +583,27 @@ std::optional<DocComment> Parser::harvestDocComment() {
     return std::nullopt;
 }
 
-// -----------------------------------------------------------------------------
-// Attribute parsing
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Attribute Parsing
+// ============================================================================
+// 
+// Attributes use the syntax: @name or @name(arg1, arg2, ...)
+// 
+// Supported arguments (from LUC_GRAMMAR.md):
+//   - String literals     : "hello"
+//   - Integer literals    : 42, 0xFF, 0b1010
+//   - Boolean literals    : true, false
+//   - Type identifiers    : TypeName (e.g., in @extern("malloc", C))
+// 
+// Attributes are collected as temporary vectors and attached to declarations
+// via attachMetadata() in parseDeclaration(). The semantic pass validates
+// attribute names and arguments.
+// 
+// Example:
+//   @inline
+//   @deprecated("Use newAPI")
+//   @extern("malloc") const malloc (size uint64) -> *uint8?
+// ============================================================================s
 
 std::vector<AttributePtr> Parser::parseAttributes() {
     std::vector<AttributePtr> attrs;
@@ -371,9 +667,25 @@ AttributeArgPtr Parser::parseAttributeArgLiteral() {
     return nullptr;
 }
 
-// -----------------------------------------------------------------------------
-// Top-level parsing
-// -----------------------------------------------------------------------------
+// ============================================================================
+// Top-Level Parsing
+// ============================================================================
+// 
+// parse() is the entry point for the entire parser. It:
+//   1. Creates the ProgramAST root node
+//   2. Parses the mandatory package declaration
+//   3. Parses top-level declarations until EOF
+//   4. Builds ArenaSpan<DeclPtr> for program->decls
+// 
+// ─── Error Recovery ────────────────────────────────────────────────────────
+//   - Missing package declaration: inserts dummy node, calls synchronize()
+//   - Failed top-level declaration: inserts UnknownDeclAST, calls synchronize()
+//   - Never returns nullptr; errors are reported via DiagnosticEngine
+// 
+// ─── Declaration Dispatch ──────────────────────────────────────────────────
+//   parseDeclaration() handles both top-level and local declarations.
+//   It parses attributes, visibility, then dispatches to specific parsers.
+// ============================================================================
 
 ASTPtr<ProgramAST> Parser::parse() {
     auto program = arena_.make<ProgramAST>();
@@ -426,6 +738,29 @@ ASTPtr<ProgramAST> Parser::parse() {
 DeclPtr Parser::parseTopLevelDecl() {
     return parseDeclaration(DeclContext::TopLevel);
 }
+
+// ============================================================================
+// Declaration Dispatch
+// ============================================================================
+// 
+// parseDeclaration() is the unified entry point for parsing declarations.
+// It handles:
+//   1. Attribute collection (zero or more @... tokens)
+//   2. Visibility parsing (pub/export) – top-level only
+//   3. Dispatch based on the next token
+// 
+// ─── Dispatch Order ────────────────────────────────────────────────────────
+//   USE → STRUCT → ENUM → TRAIT → IMPL → FROM → TYPE → LET/CONST
+// 
+// ─── Distinguishing Variable vs Function ───────────────────────────────────
+//   For LET/CONST, looksLikeFuncDecl() determines whether to parse as
+//   function or variable declaration. This lookahead inspects the token
+//   stream without consuming tokens.
+// 
+// ─── Attribute Attachment ──────────────────────────────────────────────────
+//   Attributes are collected as std::vector<AttributePtr> and converted
+//   to ArenaSpan<AttributePtr> after the declaration is successfully parsed.
+// ============================================================================
 
 DeclPtr Parser::parseDeclaration(DeclContext ctx) {
     // Parse attributes (temporary vector)
