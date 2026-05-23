@@ -94,6 +94,7 @@ enum class DiagCode : uint32_t {
     E3041,         ///< 'is' expression outside conditional.
     E3042,         ///< Pattern bind name conflicts.
     E3043,         ///< Unconditional bind after specific patterns.
+    E3044,         ///< Missing usage of generic params on RHS of type alias.
 
     // ========== 4000–4999: Backend / Codegen ==========
     E4001 = 4000,  ///< Target machine init failed.

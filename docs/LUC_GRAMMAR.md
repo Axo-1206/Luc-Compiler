@@ -1,7 +1,9 @@
 # Luc — Grammar Reference
 
-> [!TIP] Scope of this file:
+> [!TIP] Scope of this file
 > Formal grammar rules for the Luc parser. Code examples are in `LUC_EXAMPLES.md`. Project identity is in `LUC_PROJECT_OVERVIEW.md`.
+
+---
 
 ## Notation
 
@@ -16,11 +18,26 @@ A+                          -- one or more
 'token'                     -- literal terminal
 ```
 
+---
+
 ## Separators
 
-Commas `,` and semicolons `;` are **optional** throughout — Luc uses newlines and
-block structure to delimit constructs (Go / scripting style). The parser must
-accept them but never require them.
+Commas `,` and semicolons `;` are **optional** throughout — Luc uses newlines and block structure to delimit constructs (Go / scripting style). The parser must accept them but never require them.
+
+---
+
+## Keywords (Reserved)
+
+```
+pub export package use as impl trait type from
+let const struct enum await
+bool byte short int long ubyte ushort uint ulong
+int8 int16 int32 int64 uint8 uint16 uint32 uint64
+float double decimal string char any nil
+if else match switch case default is
+while for in do return break continue
+and or not true false
+```
 
 ---
 
@@ -46,7 +63,7 @@ actual_decl     := use_decl
                  | func_decl
 ```
 
-### Entry Point (main)
+### Entry Point (`main`)
 
 ```luc
 export const main () -> int = {
@@ -79,10 +96,9 @@ export const main () -> int = {
 
 ## Module System
 
-Every `.luc` file is a module. The module's identity is its file path relative
-to the package root. Modules are flat; nesting is not supported.
+Every `.luc` file is a module. The module's identity is its file path relative to the package root. Modules are flat; nesting is not supported.
 
-### Visibility — three tiers
+### Visibility — Three Tiers
 
 | Keyword  | Scope       | Access                                                     |
 | -------- | ----------- | ---------------------------------------------------------- |
@@ -90,22 +106,11 @@ to the package root. Modules are flat; nesting is not supported.
 | `pub`    | **Package** | Visible to all files sharing the same `package` identifier |
 | `export` | **World**   | Visible to external consumers of the package               |
 
-- `pub` and `export` are top-level modifiers only — **illegal** inside blocks or
-  function bodies. Declarations inside blocks are implicitly private to that block.
+- `pub` and `export` are top-level modifiers only — **illegal** inside blocks or function bodies. Declarations inside blocks are implicitly private to that block.
 - `pub impl` / `export impl` controls method accessibility at the block level when used at top-level.
 - `pub from` / `export from` controls converter accessibility at the block level when used at top-level.
 - If a package has zero `export` declarations it is a private package.
-- Most declarations (struct, enum, type, trait, impl, from, let, const, func) are allowed in local scopes.
-
-### Re-Exports
-
-```luc
--- math/api.luc
-package math
-
-export use math.vec2           -- re-export all pub items from vec2
-export use math.matrix.Mat2    -- granular re-export of a single type
-```
+- Most declarations (`struct`, `enum`, `type`, `trait`, `impl`, `from`, `let`, `const`, `func`) are allowed in local scopes.
 
 ### Import
 
@@ -122,14 +127,21 @@ use math as m         -- local alias: m.Vec2
 ```
 
 > [!NOTE]
-> **Local usage:** `use` can be declared inside any block. When local, `visibility_mod` must be omitted.
+> `use` cannot be declared inside any block.
+
+### Re-Exports
+
+```luc
+-- math/api.luc
+package math
+
+export use math.vec2           -- re-export all pub items from vec2
+export use math.matrix.Mat2    -- granular re-export of a single type
+```
 
 ---
 
 ## Types
-
-> [!WARNING] No union type, use the 'any' type instead
-> Luc does **not** have union types (`T | U`). Use the `any` type together with `is` checks or pattern matching to handle multiple types at runtime.
 
 ```
 type            := base_type [ generic_args ] [ '?' ]
@@ -184,6 +196,44 @@ return_type     := type
                  | param_group { param_group } '->' return_list
 ```
 
+[!WARNING] No union types
+Luc does not have union types (T | U). The idiomatic replacement depends on what you actually need:
+For dynamic dispatch — use any with is checks or match for type narrowing:
+
+```luc
+let x any = 5
+if x is int    { ... }
+if x is string { ... }
+
+let label string = match x {
+    n is int    => "int: "    + string(n)
+    s is string => "string: " + s
+    default     => "unknown"
+}
+```
+
+For static safety — model it explicitly with a tagged struct:
+
+```luc
+enum PayloadKind { Int  Str }
+
+struct Payload {
+    kind  PayloadKind
+    asInt int?
+    asStr string?
+}
+```
+The phantom alias trick does not work. It may be tempting to use @phantom to simulate a union:
+
+```luc
+@phantom
+type Union<T> = any
+
+let x Union<int> = 5    -- looks constrained, but T is erased at runtime
+```
+
+This is not a real union — T carries no runtime information and the compiler cannot enforce that the value inside actually conforms to it. Union<int> and Union<string> are distinct types at the type-checking level but both resolve to plain any at runtime. You get the appearance of a constraint with none of the safety, and you mislead anyone reading the code into thinking the type is enforced. Use any directly and be honest about it.
+
 ### Nullable Rules
 
 Two distinct mechanisms — they never overlap:
@@ -208,12 +258,14 @@ let f  ~async ~nullable (a int) -> int = nil
 let f  (a int) -> int?  = { ... }
 let f  (a int) -> Vec2? = { ... }
 
--- function returning nullable function — alias required
+-- function returning nullable function — alias or ~nullable qualifier required
 type Transform = (v Vec2) -> Vec2
 let f  (a int) -> Transform? = { ... }
+let g  (a int) -> ~nullable (v Vec2) -> Vec2? = { ... }
 
--- ? is NEVER valid directly after an inline function type as a whole (i.e., nullable function type). Use a type alias for that: type NullableFunc = (int) -> int?. However, (int) -> int? (nullable return type) is allowed. 
--- let f (a int) -> ((b int) -> int)?   -- ERROR: use an alias
+-- '?' is NEVER valid directly after an inline function type as a whole.
+-- Use a type alias or ~nullable qualifier instead.
+-- let f (a int) -> (b int) -> int? ?   -- ERROR: use an alias
 ```
 
 ---
@@ -222,7 +274,7 @@ let f  (a int) -> Transform? = { ... }
 
 Every type is either **owned** or **borrowed**. Bare `T` = owned, `&T` = borrowed.
 
-### Owned types — copied on assignment
+### Owned Types — Copied on Assignment
 
 | Type           | Syntax                           | Storage                         | On assignment                      |
 | -------------- | -------------------------------- | ------------------------------- | ---------------------------------- |
@@ -233,13 +285,12 @@ Every type is either **owned** or **borrowed**. Bare `T` = owned, `&T` = borrowe
 | Dynamic array  | `[*]T`                           | heap-owned buffer               | full deep copy                     |
 | String         | `string`                         | heap-owned sequence             | full deep copy                     |
 | Struct         | `Vec2` `Player` …                | inline / stack                  | full deep copy                     |
-| Named function | `add` `Vec2:normalize`           | function pointer                | pointer copy                       |
+| Named function | `add` `myVector:normalize`       | function pointer                | pointer copy                       |
 | Closure        | `add(10)` `(x int) -> int { … }` | heap-allocated env              | copies reference to env            |
 
-### Struct deep copy
+### Struct Deep Copy
 
-Struct assignment always produces a fully independent value. Owned fields are
-cloned, borrowed (`&T`) fields copy their reference only.
+Struct assignment always produces a fully independent value. Owned fields are cloned, borrowed (`&T`) fields copy their reference only.
 
 ```luc
 struct Player {
@@ -253,7 +304,7 @@ let b Player = a
 -- b.score and b.items are independent; b.world shares the same World as a.world
 ```
 
-### Borrowed types — share without copying
+### Borrowed Types — Share Without Copying
 
 ```luc
 let a Player = Player { … }
@@ -268,7 +319,7 @@ const rc &Player = a    -- read-only shared reference
 | `let ref &Player = a`   | ❌ shared    | ✅ visible through `a` | `a`   |
 | `const ref &Player = a` | ❌ shared    | ❌ read-only           | `a`   |
 
-### Circular references
+### Circular References
 
 ```luc
 struct Node {
@@ -277,27 +328,21 @@ struct Node {
 }
 ```
 
-### Function values and closures
+### Function Values and Closures
 
-Named functions and impl methods are plain function pointers — no captured state.
-Closures (partial applications, anonymous functions capturing variables) hold a
-heap-allocated environment. Assigning a closure copies the reference to that
-environment.
+Named functions and impl methods are plain function pointers — no captured state. Closures (partial applications, anonymous functions capturing variables) hold a heap-allocated environment. Assigning a closure copies the reference to that environment.
 
-### `any` and boxing
+### `any` and Boxing
 
-A value stored in `any` is boxed with a runtime type tag. Owned types placed
-into `any` are deep-copied into the box. Borrowed references (`&T`) store the
-reference — the box does not own the referenced value.
+A value stored in `any` is boxed with a runtime type tag. Owned types placed into `any` are deep-copied into the box. Borrowed references (`&T`) store the reference — the box does not own the referenced value.
 
 ---
 
 ## The Sealed Conduit Model (Raw Pointers)
 
-Raw pointers (`*T`) are sealed conduits — carry them, pass them to extern
-functions, check for nil, but never dereference directly.
+Raw pointers (`*T`) are sealed conduits — carry them, pass them to extern functions, check for nil, but never dereference directly.
 
-### Allowed operations
+### Allowed Operations
 
 1. Store in a variable, struct field, or parameter
 2. Pass to an `@extern` function
@@ -305,7 +350,7 @@ functions, check for nil, but never dereference directly.
 4. Pass to pointer intrinsics (`#ptrToRef`, `#ptrOffset`, etc.)
 5. Print the address for debugging
 
-### Forbidden operations (compiler error)
+### Forbidden Operations (Compiler Error)
 
 - Dereferencing: `*ptr`
 - Field access: `ptr.field`
@@ -313,10 +358,10 @@ functions, check for nil, but never dereference directly.
 - Arithmetic: `ptr + 4` — use `#ptrOffset` instead
 - Assignment: `*ptr = value`
 
-### Boundary crossing (intrinsics)
+### Boundary Crossing (Intrinsics)
 
 ```luc
-#ptrToRef(ptr)   -- *T → &T  (assert validity, cross to safe reference)
+#ptrToRef(ptr)      -- *T → &T  (assert validity, cross to safe reference)
 #refToPtr(ref)      -- &T → *T  (convert back to raw pointer)
 #ptrOffset(ptr, n)  -- pointer arithmetic, returns new *T
 #ptrDiff(p1, p2)    -- distance between two pointers as int64
@@ -329,15 +374,17 @@ const malloc (size uint64) -> *uint8?
 let buf *uint8? = malloc(1024)
 if buf == nil { return 1 }
 
-let ref &uint8 = #ptrToRef(buf)    -- cross the boundary
-ref = 0xFF                                  -- work with it safely
+let ref &uint8 = #ptrToRef(buf)        -- cross the boundary
+ref = 0xFF                             -- work with it safely
 
-let next *uint8? = #ptrOffset(buf, 1)      -- pointer arithmetic
+let next *uint8? = #ptrOffset(buf, 1)  -- pointer arithmetic
 ```
 
 ---
 
 ## Variable Declaration
+
+Variables can be declared inside a block. Multiple declaration is forbidden at top level. Local declarations **must not** have `pub` or `export`.
 
 ```
 var_decl        := [ visibility_mod ] decl_keyword IDENTIFIER type_ann [ '=' expr ]
@@ -347,8 +394,9 @@ decl_keyword    := 'let' | 'const'
 type_ann        := type
 ```
 
-> [!WARNING] No type inference.  
-> Luc does not infer types. Every declaration **must** include an explicit type annotation. The compiler rejects any declaration without one. 
+> [!WARNING] No type inference
+> Luc does not infer types. Every declaration **must** include an explicit type annotation. The compiler rejects any declaration without one.
+>
 > ```luc
 > let x     = 5     -- ERROR: type annotation required
 > let x int = 5     -- OK
@@ -361,32 +409,24 @@ type_ann        := type
 | `let`   | ✅            | ✅                | runtime        | ✅ (if type is nullable) |
 | `const` | ❌            | ❌                | compile time   | ❌                       |
 
-`const` requires a compile-time constant initialiser: a literal, another `const`
-name, an enum variant, or arithmetic over those. Function calls, struct literals,
-and runtime values are rejected by the semantic pass.
+`const` requires a compile-time constant initialiser: a literal, another `const` name, an enum variant, or arithmetic over those. Function calls, struct literals, and runtime values are rejected by the semantic pass.
 
 ```luc
-const MAX  int   = 65536
-const PI   float = 3.14159
-const HALF float = PI / 2.0
-const STAGE int  = ShaderStage.Vertex
+const MAX   int   = 65536
+const PI    float = 3.14159
+const HALF  float = PI / 2.0
+const STAGE int   = ShaderStage.Vertex
 
-const x int = readInput()        -- ERROR: function call is not compile-time
-const v Vec2 = Vec2 { x = 0.0 } -- ERROR: struct literal is not compile-time
+const x int  = readInput()        -- ERROR: function call is not compile-time
+const v Vec2 = Vec2 { x = 0.0 }  -- ERROR: struct literal is not compile-time
 ```
 
 ### Non-Nullable Variables and Memory
 
-A non-nullable variable (e.g. `int`, `Vec2`, `string`) **can never be set to
-nil**. This is intentional — it eliminates null pointer exceptions for these
-types. The compiler guarantees that if a non-nullable variable exists it holds
-a valid value.
+A non-nullable variable (e.g. `int`, `Vec2`, `string`) **can never be set to nil**. This eliminates null pointer exceptions for these types. The compiler guarantees that if a non-nullable variable exists it holds a valid value.
 
-- **Primitive types** (`int`, `float`, `bool`, `char`) live on the stack. When
-  the scope ends they are gone automatically — no manual release needed.
-- **Heap-allocated types** (`string`, `[*]T`) are cleaned up when the variable
-  goes out of scope. To free the buffer **early** while the scope is still live,
-  call `.clear()` — the variable remains valid as an empty collection, never nil.
+- **Primitive types** (`int`, `float`, `bool`, `char`) live on the stack. When the scope ends they are gone automatically — no manual release needed.
+- **Heap-allocated types** (`string`, `[*]T`) are cleaned up when the variable goes out of scope. To free the buffer **early** while the scope is still live, call `.clear()` — the variable remains valid as an empty collection, never nil.
 
 ```luc
 let bigData [*]byte = loadFile("huge.bin")
@@ -394,35 +434,38 @@ let bigData [*]byte = loadFile("huge.bin")
 bigData.clear()    -- free heap buffer early; bigData is now empty but valid
 ```
 
-Use nullable types (`int?`, `Vec2?`) when a value genuinely may be absent.
-Non-nullable types express the guarantee that a value is always present.
+Use nullable types (`int?`, `Vec2?`) when a value genuinely may be absent. Non-nullable types express the guarantee that a value is always present.
 
 ### Multiple Assignment
 
-A function returning multiple values can be assigned to multiple variables in a
-single statement. Each variable requires its own explicit type annotation.
+A function returning multiple values can be assigned to multiple variables in a single statement. Each variable requires its own explicit type annotation.
 
 ```
-multi_assign    := decl_keyword var_spec { ',' var_spec } '=' expr   -- declaration
-var_spec        := IDENTIFIER type_ann
-decl_keyword    := 'let' | 'const'
+multi_assign      := decl_keyword var_spec { ',' var_spec } '=' expr
+
+var_spec          := IDENTIFIER type_ann
+
+decl_keyword      := 'let' | 'const'
 
 -- Reassignment to existing variables (no let/const)
 multi_assign_stmt := expr_lhs { ',' expr_lhs } '=' expr
 
-expr_lhs        := IDENTIFIER
-                 | expr '.' IDENTIFIER
-                 | expr '[' expr ']'
-                 -- any expression that can be an lvalue (assignable)
+expr_lhs          := IDENTIFIER
+                   | expr '.' IDENTIFIER
+                   | expr '[' expr ']'
+                   -- any expression that can be an lvalue (assignable)
 ```
 
-> [!NOTE] 
-> **For Reassignment to existing variables (no let/const)**
-> - Each expr_lhs must be a valid lvalue (assignable location): a variable name, a field access, or an array/slice index. Function calls, literals, and other rvalue expressions are not allowed.
-> - The right‑hand side expr must evaluate to exactly as many return values as there are left‑hand side expressions.
+> [!NOTE] Reassignment rules
+> - Each `expr_lhs` must be a valid lvalue: a variable name, a field access, or an array/slice index. Function calls, literals, and other rvalue expressions are not allowed.
+> - The right-hand side must evaluate to exactly as many return values as there are left-hand side expressions.
 > - The values are assigned from left to right.
-> - This statement is only allowed in block scopes – not at top level.
-> - Assigning to a const variable is a semantic error.
+> - This statement is only allowed in block scopes — not at top level.
+> - Assigning to a `const` variable is a semantic error.
+
+#### Declaration Form
+
+Every variable has its own explicit type annotation, and the keyword (`let` or `const`) applies to all:
 
 ```luc
 -- two return values
@@ -432,45 +475,39 @@ let value int, msg string = doSomething()
 let value, msg int = ...          -- ERROR: each variable needs its own type
 let value int, msg string = ...   -- OK: implicit let on second variable
 
-/--
- - multiple reassignment, A function that returns multiple values can be assigned 
- - to multiple variables in a single statement, either at declaration time or later 
- - as a reassignment.
---/
-let a int, b string = f()     -- declaration
-a, b = g()                     -- reassignment (multi_assign_stmt)
-x, y = z, w                    -- ERROR: RHS must be single expression
-```
-
-> [!WARNING]
-> No type inference in multi-assignment, every variable must have an explicit type annotation.
-
-### Declaration form
-Every variable has its own explicit type annotation, and the keyword (`let` or `const`) applies to all:
-
-```luc
 let q int, r int = divmod(10, 3)
 const w int, h int = getScreenSize()
 ```
 
-### Reassignment form (to already declared variables)
-After variables are declared, you can reassign them using a multi‑assignment statement:
+#### Reassignment Form
+
+After variables are declared, reassign them using a multi-assignment statement:
 
 ```luc
-let q int, r int -- first declare
-q, r = divmod(20, 6) -- reassign
+let q int, r int    -- first declare
+q, r = divmod(20, 6)  -- reassign
 
 let x float, y float
-x, y = 3.14, 2.718 -- ERROR: RHS must be a single expression
+x, y = 3.14, 2.718  -- ERROR: RHS must be a single expression
+
+/--
+ - A function that returns multiple values can be assigned
+ - to multiple variables either at declaration time or later
+ - as a reassignment.
+--/
+let a int, b string = f()   -- declaration
+a, b = g()                  -- reassignment (multi_assign_stmt)
+x, y = z, w                 -- ERROR: RHS must be single expression (a function call)
 ```
-> [!NOTE]
-> The right‑hand side must be a single expression that returns as many values as there are left‑hand side targets. Comma‑separated literal expressions are not allowed.
+
+> [!WARNING]
+> No type inference in multi-assignment — every variable must have an explicit type annotation. The right-hand side must be a single expression (i.e. a function call) that returns as many values as there are left-hand side targets. Comma-separated literal expressions are not allowed.
 
 ---
 
 ## Qualifiers
 
-Qualifiers are part of the function type for `~async` and `~nullable`. Two functions with identical parameter and return types but different `~async` or `~nullable` qualifiers are different types. The `~parallel` qualifier does not affect type identity – it is an implementation attribute.
+Qualifiers are part of the function type for `~async` and `~nullable`. Two functions with identical parameter and return types but different `~async` or `~nullable` qualifiers are **different types**. The `~parallel` qualifier does not affect type identity — it is an implementation attribute.
 
 ```
 qualifier       := '~' IDENTIFIER
@@ -485,30 +522,29 @@ known qualifiers:
 
 ### Qualifier Rules
 
-**Not part of type identity** — qualifiers are ignored for type equality:
+**Some qualifiers are part of type identity:**
 
 ```luc
 -- Different types due to qualifiers
-let f ~async    (a int) -> int = { ... }
-let g ~nullable (a int) -> int = nil
-let h           (a int) -> int = { ... }
+let f ~async    (a int) -> int = { ... }  -- different type
+let g ~nullable (a int) -> int = nil      -- different type
+let h ~parallel (a int) -> int = { ... }  -- same type as (a int) -> int
 
 type Op = (a int) -> int
 
 let op Op = f    -- ERROR: ~async vs no qualifier
 let op Op = g    -- ERROR: ~nullable vs no qualifier
-let op Op = h    -- OK
+let op Op = h    -- OK: ~parallel doesn't affect type identity
 ```
 
 ```luc
 let f ~async (a int) -> int = { ... }
-
 let g (a int) -> int = { return a * 2 }
-f = g    -- valid: same signature. f still carries ~async after reassignment.
+
+f = g    -- valid: same signature; f still carries ~async after reassignment
 ```
 
-**Qualifier order is ignored for type equality.** Canonical display order is
-alphabetical:
+**Qualifier order is ignored for type equality.** Canonical display order is alphabetical:
 
 ```luc
 -- identical
@@ -533,13 +569,8 @@ inline return after ->     (a int) -> ~nullable (b int) -> int
 ```
 
 > [!WARNING]
->  - **Qualifiers are NOT valid on anonymous function values.** An anonymous
-> function is a plain value. Its qualifier context is determined by the
-> declaration or parameter type it is assigned to, not by the value itself.
-> See the Anonymous Functions section for details.
-> - **Qualifiers on parameters are hints to the caller, not type gates.** The
-qualifier documents intent — it does not prevent a non-qualified function from
-being passed:
+> - **Qualifiers are NOT valid on anonymous function values.** An anonymous function is a plain value. Its qualifier context is determined by the declaration or parameter type it is assigned to, not by the value itself. See the Anonymous Functions section for details.
+> - **Qualifiers on parameters are hints to the caller, not type gates.** The qualifier documents intent — it does not prevent a non-qualified function from being passed:
 
 ```luc
 -- ~async on the parameter hints that task will be awaited inside run
@@ -548,17 +579,13 @@ let run (task ~async () -> int) -> int = {
 }
 
 -- both are valid — same underlying signature
-run((url string) -> int { return 42 })             -- no qualifier on value
-run((url string) -> int { return await fetch() })  -- ~async would be on declaration
+run((url string) -> int { return 42 })                -- no qualifier on value
+run((url string) -> int { return await fetch(url) })  -- ~async on declaration
 ```
 
 ### Call-Site Behavior
 
 **`~async` — requires `await`:**
-
-When the compiler sees a call to a `~async`-qualified binding, it requires
-`await` at the call site. The `await` keyword tells the compiler to check the
-callee's declaration for the `~async` qualifier:
 
 ```luc
 let fetch ~async (url string) -> string = { ... }
@@ -582,21 +609,20 @@ let process ~async (url string) -> string = {
 
 **`~nullable` — requires nil guard:**
 
-A variable of type ~nullable (A) -> B cannot be assigned to a variable of type (A) -> B without a nil check. The call site must guard against nil
+A variable of type `~nullable (A) -> B` cannot be assigned to a variable of type `(A) -> B` without a nil check. The call site must guard against nil.
 
 ```luc
 let handler ~nullable (e Event) = nil
 
 let plain (e Event) = handler   -- ERROR: cannot assign nullable to non-nullable
 if handler != nil {
-    let plain = handler         -- OK: inside guard, type is narrowed
+    let plain = handler          -- OK: inside guard, type is narrowed
 }
 ```
 
 **`~parallel` — body restrictions:**
 
-When a function is called through a `~parallel`-qualified binding, the compiler
-enforces these restrictions inside the body function argument:
+When a function is called through a `~parallel`-qualified binding, the compiler enforces these restrictions inside the body function argument:
 
 - No `return` statements
 - No `break` or `continue`
@@ -614,47 +640,23 @@ parallelFor(mesh.vertices, (vertex Vertex) {
 })
 ```
 
-## Attributes vs. Qualifiers
+### Attributes vs. Qualifiers
 
 Both use a prefix symbol (`@` and `~`) and appear before a declaration or type, but they serve different purposes.
 
 | Feature                  | Attribute (`@name`)                            | Qualifier (`~name`)                              |
 | ------------------------ | ---------------------------------------------- | ------------------------------------------------ |
 | **Attached to**          | Declaration (function, variable, struct, etc.) | Function **type** (or function binding)          |
-| **Affects type?**        | No – metadata only                             | Yes for `~async`/`~nullable`; No for `~parallel` |
-| **When evaluated**       | Compile time (by the compiler)                 | Type checking & call‑site rules                  |
+| **Affects type?**        | No — metadata only                             | Yes for `~async`/`~nullable`; No for `~parallel` |
+| **When evaluated**       | Compile time (by the compiler)                 | Type checking & call-site rules                  |
 | **Examples**             | `@extern`, `@inline`, `@deprecated`            | `~async`, `~nullable`, `~parallel`               |
-| **Can be user‑defined?** | No (fixed set)                                 | No (fixed set)                                   |
+| **Can be user-defined?** | No (fixed set)                                 | No (fixed set)                                   |
 
-### Why not make `~nullable` an attribute?
+**Why not make `~nullable` an attribute?**
+An attribute would only mark the declaration. But then every call to a nullable function would need a nil check — that's a type-level contract, not mere metadata. A qualifier becomes part of the function's **type**, so the type system can enforce nil-guards and prevent assignment of a nullable function to a non-nullable variable.
 
-- An attribute would only mark the **declaration** (e.g., `@nullable let f = ...`).  
-  But then every call to `f` would need a nil check – that’s a **type‑level contract**, not mere metadata.  
-- A qualifier becomes part of the function’s **type**, so the type system can enforce nil‑guards and prevent assignment of a nullable function to a non‑nullable variable.  
-- Attributes are “passive” (they influence compilation but not type checking); qualifiers are “active” (they change how the function can be used).
-
-### Why not make `@extern` a qualifier?
-
-- `@extern` specifies **linkage and ABI** (calling convention, symbol name) – it does not affect the function’s signature or how it is called in Luc code.  
-- A qualifier would incorrectly imply that an `@extern` function has a different type from a normal Luc function, which is not true (both have the same parameter/return types).  
-- Attributes are the right tool for compiler‑directed metadata that does not participate in type checking.
-
-### Composition `+>` and Qualifiers
-
-`+>` composes two functions only if neither operand has `~async` or `~nullable` qualifiers (i.e., both are plain functions). The resulting function is plain (no qualifiers). If you need to compose async or nullable functions, you must explicitly handle them before composition (e.g., guard against nil or await the result separately).
-
-```luc
--- result is plain regardless of component qualifiers
-let pipeline (url string) -> string= fetchData +> processData
-
--- assign qualifier to the result binding if needed
-let pipeline ~async (url string) -> string = fetchData +> processData
-
--- nullable components must be guarded before composing
-if transform != nil {
-    let h = transform +> render
-}
-```
+**Why not make `@extern` a qualifier?**
+`@extern` specifies linkage and ABI (calling convention, symbol name) — it does not affect the function's signature or how it is called in Luc code. A qualifier would incorrectly imply that an `@extern` function has a different type from a normal Luc function, which is not true.
 
 ### Type Aliases with Qualifiers
 
@@ -667,24 +669,37 @@ type ParallelBody = ~parallel (item int)
 type AsyncMaybeOp = ~async ~nullable (a int) -> int
 ```
 
+### Composition `+>` and Qualifiers
+
+`+>` composes two functions only if neither operand has `~async` or `~nullable` qualifiers (i.e., both are plain functions). The resulting function is plain (no qualifiers). If you need to compose async or nullable functions, explicitly handle them before composition.
+
+```luc
+-- result is plain regardless of component qualifiers
+let pipeline (url string) -> string = fetchData +> processData
+
+-- assign qualifier to the result binding if needed
+let pipeline ~async (url string) -> string = fetchData +> processData
+
+-- nullable components must be guarded before composing
+if transform != nil {
+    let h = transform +> render
+}
+```
+
 ---
 
 ## Function Signatures
 
-A function signature has three parts: qualifiers, parameter groups, and the
-return boundary `->`.
+A function signature has three parts: qualifiers, parameter groups, and the return boundary `->`.
 
 > [!NOTE]
-> Type identity: The qualifiers ~async and ~nullable are part of the function's type. Two function types that differ only in these qualifiers are different types. The ~parallel qualifier does not affect type identity.
+> **Type identity:** The qualifiers `~async` and `~nullable` are part of the function's type. Two function types that differ only in these qualifiers are different types. The `~parallel` qualifier does not affect type identity.
 
 ```
 func_decl       := [ visibility_mod ] decl_keyword IDENTIFIER [ generic_params ]
                    [ qualifier_list ] param_group { param_group }
                    [ '->' return_list ]
                    '=' func_body
-
-> [!NOTE]
-> **Local usage:** Functions can be declared inside any block. When local, `visibility_mod` must be omitted.
 
 qualifier_list  := { '~' IDENTIFIER }
 
@@ -709,8 +724,7 @@ func_body       := block
 
 ### The Return Boundary `->`
 
-`->` separates the parameter groups from the return types. Everything before
-`->` is input, everything after `->` is output.
+`->` separates the parameter groups from the return types. Everything before `->` is input, everything after `->` is output.
 
 **Void function** — omit `->` entirely:
 
@@ -726,7 +740,7 @@ let add  (a int, b int) -> int
 let name (id int)       -> string
 ```
 
-**Multiple return** — comma separated after `->`:
+**Multiple return** — comma separated and wrapped in `(...)` after `->`:
 
 ```luc
 let f (a int) -> (int, string)
@@ -734,17 +748,17 @@ let g (src string) -> (int, bool, string)
 ```
 
 > [!TIP]
-> **Good practice — write each return type on its own line if one of the return types is a function:**
+> Write each return type on its own line when one of the return types is itself a function:
 >
 > ```luc
 > -- Bad: return type too complex
 > let parse (src string) -> (int, string, (a float) -> int)
-> 
+>
 > -- Good: each return type on its own line
 > let parse (src string) -> (
->           int,
->           string,
->           (a float) -> int
+>     int,
+>     string,
+>     (a float) -> int
 > ) = {
 >     ...
 > }
@@ -752,8 +766,7 @@ let g (src string) -> (int, bool, string)
 
 ### Currying
 
-Multiple parameter groups express curry. Each `()` group is one call step.
-The compiler desugars this into a function that returns another function.
+Multiple parameter groups express curry. Each `()` group is one call step. The compiler desugars this into a function that returns another function.
 
 ```luc
 -- give add an int, get back (b int) -> int
@@ -770,20 +783,18 @@ let clamp (min int)(max int)(value int) -> int = {
 }
 
 let clamp0to100 = clamp(0)(100)    -- (value int) -> int
-clamp0to100(42)                     -- 42
-clamp0to100(150)                    -- 100
+clamp0to100(42)                    -- 42
+clamp0to100(150)                   -- 100
 
 -- chains naturally with |> and +>
 let addTen = add(10)
-42 |> addTen |> string              -- "52"
+42 |> addTen |> string             -- "52"
 
-let process = add(10) +> string     -- (b int) -> string
-process(5)                           -- "15"
+let process = add(10) +> string    -- (b int) -> string
+process(5)                         -- "15"
 ```
 
-The compiler desugars multiple parameter groups into a function that explicitly
-returns an anonymous function. The captured arguments become closure state.
-You always write the sugar form:
+The compiler desugars multiple parameter groups into a function that explicitly returns an anonymous function. You always write the sugar form:
 
 ```luc
 -- what you write
@@ -793,8 +804,7 @@ let add (a int)(b int) -> int = { return a + b }
 let add (a int) -> (b int) -> int = { return (b int) -> int { return a + b } }
 ```
 
-To close over a local variable (not a parameter), write the anonymous function
-explicitly:
+To close over a local variable (not a parameter), write the anonymous function explicitly:
 
 ```luc
 let multiplier int = 3
@@ -803,8 +813,7 @@ let scale = (x int) -> int { return x * multiplier }
 
 ### Returned Curry Functions
 
-A return type can itself be a curry function type. The `,` separates top-level
-return items. Each `->` belongs to its nearest preceding parameter group chain.
+A return type can itself be a curry function type. The `,` separates top-level return items. Each `->` belongs to its nearest preceding parameter group chain.
 
 ```luc
 let f (a int) -> (
@@ -835,12 +844,11 @@ f(int) -> (
 ```
 
 > [!TIP]
-> **Good practice — use type aliases for complex return types:**
+> Use type aliases for complex return types:
 >
 > ```luc
 > type FloatParser = (s string)(n float) -> int
 >
-> -- we don't need to write the function type in a new line if we use type alias
 > let f (a int) -> (int, FloatParser) = {
 >     ...
 > }
@@ -848,12 +856,10 @@ f(int) -> (
 
 ### Anonymous Functions
 
-An anonymous function is a **plain value** — it has no qualifiers. The
-qualifier context comes from the declaration or parameter type the anonymous
-function is assigned to, not from the function value itself.
+An anonymous function is a **plain value** — it has no qualifiers. The qualifier context comes from the declaration or parameter type the anonymous function is assigned to, not from the function value itself.
 
 > [!NOTE]
-> type of an anonymous function is inferred from context, and that type may include `~async` or `~nullable` if the context demands it (e.g., assigned to a ~async variable or passed to a `~async` parameter)
+> The type of an anonymous function is inferred from context, and that type may include `~async` or `~nullable` if the context demands it (e.g., assigned to a `~async` variable or passed to a `~async` parameter).
 
 ```
 anon_func   := param_group { param_group } [ '->' return_list ] block
@@ -863,7 +869,7 @@ anon_func   := param_group { param_group } [ '->' return_list ] block
 
 ```luc
 -- simple anonymous function
-let double = (x int) -> int { return x * 2 }
+let Double (x int) -> int = (x int) -> int { return x * 2 }
 
 -- anonymous function stored in an ~async binding
 -- the qualifier is on the binding, not on the value
@@ -877,19 +883,17 @@ let fetch ~async (url string) -> string = {
 }
 
 -- anonymous function as argument — type is checked against parameter type
--- the parameter type carries the qualifier, not the passed value
 let run (task ~async () -> int) -> int = {
     return await task()
 }
 
-run(() -> int { return 42 })           -- valid: signature matches
+run(() -> int { return 42 })            -- valid: signature matches
 run(() -> int { return await fetch() }) -- also valid: body uses await correctly
-                                        -- because fetch is ~async
 ```
 
 > [!IMPORTANT]
 > **Why no qualifiers on anonymous functions?**
-> A qualifier describes how the compiler treats a **call site**. When a function is called, the compiler looks up the **binding's declaration** (or the **parameter type**) to find qualifiers — it never inspects the value itself. Therefore a qualifier on an anonymous function value is unreachable and meaningless. Qualifiers on values are removed from the language to avoid confusion.
+> A qualifier describes how the compiler treats a call site. When a function is called, the compiler looks up the **binding's declaration** (or the **parameter type**) to find qualifiers — it never inspects the value itself. Therefore a qualifier on an anonymous function value is unreachable and meaningless.
 
 ### Generic Functions
 
@@ -905,8 +909,6 @@ generic_param   := IDENTIFIER
 constraint_list := IDENTIFIER { '+' IDENTIFIER }
 ```
 
-#### Syntax
-
 Generic parameters come immediately after the function name, before any parameter groups or qualifiers.
 
 ```luc
@@ -915,29 +917,22 @@ let identity<T> (v T) -> T = { return v }
 let map<T, U> (items [*]T, f (item T) -> U) -> [*]U = { ... }
 ```
 
-#### Type Constraints
-
-Type parameters can be constrained to traits using the `:` syntax. Multiple traits are joined with `+`.
+**Type constraints** — constrain type parameters to traits using `:`. Multiple traits are joined with `+`:
 
 ```luc
 let printSorted<T : Comparable + Printable> (items []T) = { ... }
 ```
 
-#### Instantiation
-
-Generic functions can be called with explicit type arguments.
+**Instantiation** — generic functions can be called with explicit type arguments:
 
 ```luc
--- Explicit instantiation
-let x int = identity<int>(42)   -- [1]
+let x int = identity<int>(42)
 ```
 
 > [!NOTE]
 > No type inference for generic functions — type must always be specified.
 
-#### Generic Qualifiers
-
-Qualifiers follow the generic parameter list:
+**Qualifiers** follow the generic parameter list:
 
 ```luc
 let fetch<T> ~async (url string) -> T = { ... }
@@ -947,37 +942,35 @@ let fetch<T> ~async (url string) -> T = { ... }
 
 ```luc
 -- void
-let log (msg string)
+let log (msg string) = { ... }
 
 -- single return
-let add (a int, b int) -> int
+let add (a int, b int) -> int = { ... }
 
 -- multiple return
-let f (a int) -> (int, string)
+let f (a int) -> (int, string) = { ... }
 
 -- multiple return, formatted
-let parse (src string)
-    -> (
-        int,
-        (a float) -> int
-    )
-= { ... }
+let parse (src string) -> (
+    int,
+    (a float) -> int
+) = { ... }
 
 -- curry
-let add (a int)(b int) -> int
+let add (a int)(b int) -> int = { ... }
 
 -- deep curry
-let clamp (min int)(max int)(value int) -> int
+let clamp (min int)(max int)(value int) -> int = { ... }
 
 -- curry with multiple return
-let f (a int)(b string) -> (int, string)
+let f (a int)(b string) -> (int, string) = { ... }
 
 -- qualifiers
-let fetch ~async    (url string) -> string
-let find  ~nullable (items [*]int, pred (item int) -> bool) -> int
+let fetch ~async    (url string) -> string = { ... }
+let find  ~nullable (items [*]int, pred (item int) -> bool) -> int = { ... }
 
 -- generic (generic before qualifiers, always)
-let map<T, U> (items [*]T, f (item T) -> U) -> [*]U
+let map<T, U> (items [*]T, f (item T) -> U) -> [*]U = { ... }
 
 -- returned curry function, formatted
 let f (a int) -> (
@@ -986,26 +979,24 @@ let f (a int) -> (
 ) = { ... }
 
 -- nullable return value
-let f (a int) -> int?
+let f (a int) -> int? = { ... }
 
 -- nullable function binding
 let f ~nullable (a int) -> int = nil
 
 -- nullable returned function via alias
-type Transform  = (v Vec2) -> Vec2
+type Transform = (v Vec2) -> Vec2
 let f (a int) -> Transform? = { ... }
 
 -- curry returning nullable function inline
-let f (a int) -> ~nullable (b int) -> int
+let f (a int) -> ~nullable (b int) -> int = { ... }
 ```
-
-> [!NOTE]
-> The left‑hand side of `:` can be **any expression** – a literal, variable, function call,
-> parenthesized expression, etc. The method is looked up on the static type of that expression.
 
 ---
 
 ## Struct Declaration
+
+Structs can be declared at top level or inside a block. Local declarations **must not** have `pub` or `export`.
 
 ```
 struct_decl     := [ visibility_mod ] 'struct' IDENTIFIER [ generic_params ]
@@ -1063,14 +1054,14 @@ struct Cache<K : Hashable + Comparable, V> {
     values []V
 }
 
--- struct literal
+-- struct literals
 let origin Vec2  = Vec2  { x = 0.0  y = 0.0 }
 let white  Color = Color {}                     -- all fields take defaults
 let p Vec2<int>  = Vec2<int> { x = 1  y = 2 }
 
 -- field access
-let x float = origin.x       -- read
-origin.x = 5.0               -- write (only valid if origin is 'let')
+let x float = origin.x    -- read
+origin.x = 5.0            -- write (only valid if origin is 'let')
 ```
 
 ---
@@ -1083,7 +1074,7 @@ member_access   := expr '.' IDENTIFIER        -- data field
 ```
 
 - `.` — data field access. Reassignable if the containing variable is `let`.
-- `:` — impl method access. Never reassignable. Behavior members are plain function references and can be passed as values, stored in typed variables, or used as pipeline steps.
+- `:` — impl method access. Never reassignable. Methods are plain function references and can be passed as values, stored in typed variables, or used as pipeline steps.
 
 ```luc
 v.x                 -- read field
@@ -1097,12 +1088,11 @@ v:length = ..       -- ERROR: impl methods cannot be reassigned
 
 ## Enum Declaration
 
+Enums can be declared at top level or inside a block. Local declarations **must not** have `pub` or `export`.
+
 ```
 enum_decl       := [ visibility_mod ] 'enum' IDENTIFIER
                    '{' enum_variant { [','] enum_variant } '}'
-
-> [!NOTE]
-> **Local usage:** Enums can be declared inside any block. When local, `visibility_mod` must be omitted.
 
 enum_variant    := IDENTIFIER
                  | IDENTIFIER '=' INT_LITERAL
@@ -1122,7 +1112,9 @@ pub enum ShaderStage {
 
 ---
 
-## `type` Keyword
+## Type Aliases
+
+Type aliases can be declared at top level or inside a block. Local declarations **must not** have `pub` or `export`.
 
 ```
 type_decl       := [ visibility_mod ] 'type' IDENTIFIER [ generic_params ]
@@ -1130,33 +1122,73 @@ type_decl       := [ visibility_mod ] 'type' IDENTIFIER [ generic_params ]
 
 type_alias_rhs  := type    -- any valid type expression
 
+generic_params  := '<' generic_param { [','] generic_param } '>'
+
+generic_param   := IDENTIFIER
+                 | IDENTIFIER ':' IDENTIFIER
+                 | IDENTIFIER ':' constraint_list
+
+constraint_list := IDENTIFIER { '+' IDENTIFIER }
 ```
 
-A `type` alias introduces a new name for an existing shape — it does not
-create a new distinct type. For a distinct nominal type use `struct`.
+A `type` alias introduces a new name for an existing shape — it does not create a new distinct type. For a distinct nominal type, use `struct`.
 
-Since qualifiers are part of the function type grammar, type aliases can carry
-them:
+### Generic Parameters
+
+Every generic parameter declared on a type alias **must appear at least once in the right-hand side**. An unused type parameter is a compile error.
 
 ```luc
-type ID           = int
+type Pair<T>  = struct { first T, second T }   -- OK: T is used
+type Wrap<T>  = []T                             -- OK: T is used
+type Gen<T>   = int                             -- ERROR: T is unused
+type Odd<T>   = string                          -- ERROR: T is unused
+```
+
+If you intentionally want a type parameter that does not appear in the body (a phantom type), annotate with `@phantom`:
+
+```luc
+@phantom
+type Tagged<T> = int   -- explicit opt-in: int tagged with T for type safety
+```
+
+This allows type-safe wrappers backed by the same primitive without accidental unused parameters slipping through silently.
+
+### Qualifiers
+
+Since qualifiers are part of the function type grammar, type aliases can carry them:
+
+```luc
 type AsyncOp      = ~async    (a int) -> int
 type NullableOp   = ~nullable (a int) -> int
-type Parser       = (src string) -> int, string
-type Step         = (a int)(b string) -> int
 type ParallelBody = ~parallel (item int)
+type AsyncMaybeOp = ~async ~nullable (a int) -> int
+```
 
--- Generic type alias
-type Transform<T> = (v T) -> T                -- T can be any type
+### Examples
+
+```luc
+-- primitive alias
+type ID = int
 
 -- nullable alias
-type Transform    = (v Vec2) -> Vec2
+type IntOrNil = int?
+
+-- generic alias
+type Transform<T> = (v T) -> T
+
+-- nullable function alias
+type MaybeTransform = ~nullable (v Vec2) -> Vec2
+
+-- generic struct alias
+type Pair<K, V> = struct { first K, second V }
+
+-- constrained generic alias
+type SortedPair<T : Comparable> = struct { first T, second T }
 ```
 
 ### Consistency Rule
-Consistent rule: Any named type can have `impl` and `from` blocks.
-- This includes structs, enums, and type aliases.
-- Type aliases can name any type – primitives, function types, arrays, etc.
+
+Any type can have `impl` and `from` blocks — including primitives, structs, enums, and type aliases.
 
 ---
 
@@ -1171,13 +1203,14 @@ trait_method    := IDENTIFIER [ qualifier_list ] param_group { param_group }
                    -- signature only — no '=' and no body
 ```
 
-Rules:
+**Rules:**
+
 - Traits can be top-level or local. When local, `visibility_mod` must be omitted.
-- No field declarations — method signatures only
-- No default implementations
-- A struct satisfies a trait by declaring `impl StructName : TraitName { ... }`
-- The impl declaration must provide every method in the trait
-- No function overloading — each method name must be unique
+- No field declarations — method signatures only.
+- No default implementations.
+- A struct satisfies a trait by declaring `impl StructName : TraitName { ... }`.
+- The impl declaration must provide every method in the trait.
+- No function overloading — each method name must be unique.
 
 ```luc
 pub trait Drawable {
@@ -1203,19 +1236,21 @@ pub trait AsyncFetcher {
 
 ## Impl Declaration
 
+`impl` can be declared at top level or inside a block. Local declarations **must not** have `pub` or `export`.
+
 ```
 impl_decl       := [ visibility_mod ] 'impl' impl_target
-                    [ impl_generic_params ]
-                    [ 'as' IDENTIFIER ]
-                    [ ':' trait_ref ]
-                    '{' { method_decl } '}'
+                   [ impl_generic_params ]
+                   [ 'as' IDENTIFIER ]
+                   [ ':' trait_ref ]
+                   '{' { method_decl } '}'
 
 impl_target     := type_name
                  | primitive_type
 
-impl_generic_params ::= '<' impl_generic_param { ',' impl_generic_param } '>'
+impl_generic_params := '<' impl_generic_param { ',' impl_generic_param } '>'
 
-impl_generic_param ::= IDENTIFIER [ ':' constraint_list ]
+impl_generic_param  := IDENTIFIER [ ':' constraint_list ]
 
 trait_ref       := IDENTIFIER [ generic_args ]
 
@@ -1223,8 +1258,7 @@ method_decl     := IDENTIFIER [ qualifier_list ] param_group { param_group }
                    [ '->' return_list ] '=' func_body
 ```
 
-
-## Impl Target Rules
+### Impl Target Rules
 
 | Target type                                              | Allowed directly? | Example                                         |
 | -------------------------------------------------------- | ----------------- | ----------------------------------------------- |
@@ -1238,54 +1272,37 @@ method_decl     := IDENTIFIER [ qualifier_list ] param_group { param_group }
 
 ### Generic Parameters on Impl Declarations
 
-An `impl` block may declare generic parameters **only when the target type is generic** (a generic struct or a generic type alias). The number of generic parameters **must match** the arity of the target type. The parameter names are independent; they bind to the target’s type parameters positionally.
+An `impl` block may declare generic parameters **only when the target type is generic** (a generic struct or a generic type alias). The number of generic parameters **must match** the arity of the target type. The parameter names are independent; they bind to the target's type parameters positionally.
 
 | Type                     | Can we impl directly? | Generic impl allowed?   | Notes                                         |
 | ------------------------ | --------------------- | ----------------------- | --------------------------------------------- |
 | Primitive (`int`, …)     | ✅ Yes                 | ❌ No                    | No generics on primitives                     |
 | Enum                     | ✅ Yes                 | ❌ No                    | Enums are not generic in Luc                  |
-| Struct (non‑generic)     | ✅ Yes                 | ❌ No                    |                                               |
+| Struct (non-generic)     | ✅ Yes                 | ❌ No                    |                                               |
 | Struct (generic)         | ✅ Yes                 | ✅ Yes, arity must match | `struct Box<T>` → `impl Box<T>`               |
-| Type alias (non‑generic) | ✅ Yes                 | ❌ No                    |                                               |
+| Type alias (non-generic) | ✅ Yes                 | ❌ No                    |                                               |
 | Type alias (generic)     | ✅ Yes                 | ✅ Yes, arity must match | `type Pair<K,V>` → `impl Pair<K,V>`           |
 | Array type               | ❌ No (needs alias)    | N/A                     | Use `type IntArray = []int` then impl         |
 | Function type            | ❌ No (needs alias)    | N/A                     | Use `type Callback = (int) -> bool` then impl |
 | Trait                    | ❌ No                  | N/A                     | Traits are contracts, not implementations     |
 
-#### Examples
+When the target type is generic but the impl declaration omits generic parameters, the compiler requires them in method signatures — you must declare the type parameters to use them.
 
 ```luc
--- Valid: generic struct with matching generic impl
-struct Box<T> { value T }
+-- Invalid: T is unknown without generic parameters
+impl Box {
+    get () -> T = { return self.value }   -- ERROR: T unknown
+}
 
+-- Valid: declare generic parameters to use them in method signatures
 impl Box<T> {
-    get () -> T = { return self.value }
+    get () -> T = { return self.value }   -- OK
 }
+```
 
--- Valid: generic type alias with matching generic impl
-type Result<T, E> = struct { ok T?, err E? }
+### Examples
 
-impl Result<T, E> {
-    isOk () -> bool = { return self.ok != nil }
-}
-
--- Invalid: primitive cannot have generics
-impl int<T> { ... }   -- ERROR
-
--- Invalid: enum cannot have generics
-impl Enum<T> { ... }   -- ERROR
-
--- Invalid: non‑generic struct cannot have generics
-struct Vec2 { x float, y float }
-impl Vec2<T> { ... }  -- ERROR
-
--- Invalid: arity mismatch
-struct Pair<A, B> { first A, second B }
-impl Pair<X> { ... }  -- ERROR: needs 2 parameters, got 1
-
-
--- example with custom name alias
-
+```luc
 -- No alias, no generics, no trait
 impl Vec2 {
     length () -> float = { return #sqrt(self.x*self.x + self.y*self.y) }
@@ -1310,42 +1327,45 @@ impl Circle as c : Drawable {
 impl int as i {
     isEven () -> bool = { return i % 2 == 0 }
 }
-```
 
-When the target type is generic but the impl declaration omits generic parameters, the impl declaration applies to all instantiations of that generic type (monomorphization will generate code per instantiation).
+-- Generic struct
+struct Box<T> { value T }
 
-```luc
--- Impl applies to Box<T> for any T
-impl Box {
-    get () -> T = { return self.value }   -- ERROR: T unknown
-}-- Invalid: primitive cannot have generics
-impl int<T> { ... }   -- ERROR
-
--- Must declare generic parameters to use them in method signatures
 impl Box<T> {
-    get () -> T = { return self.value }   -- OK
+    get () -> T = { return self.value }
 }
+
+-- Generic type alias
+type Result<T, E> = struct { ok T?, err E? }
+
+impl Result<T, E> {
+    isOk () -> bool = { return self.ok != nil }
+}
+
+-- ERROR cases
+impl int<T> { ... }      -- ERROR: primitive cannot have generics
+impl Enum<T> { ... }     -- ERROR: enum cannot have generics
+impl Vec2<T> { ... }     -- ERROR: non-generic struct cannot have generics
+impl Pair<X> { ... }     -- ERROR: arity mismatch (needs 2 parameters, got 1)
 ```
+
+---
 
 ## From Declaration
 
+`from` can be declared at top level or inside a block. Local declarations **must not** have `pub` or `export`.
+
 ```
-from_decl       := [ visibility_mod ] 'from' type [ generic_params ] '{' { from_entry } '}'
+from_decl   := [ visibility_mod ] 'from' type [ generic_params ] '{' { from_entry } '}'
 
-from_entry := param_group { param_group } '->' type '=' func_body
--- source param(s), target type name, body
--- target type name must match the enclosing from target
+from_entry  := param_group { param_group } '->' type '=' func_body
+               -- source param(s), target type name, body
+               -- target type name must match the enclosing from target
 ```
 
-> [!NOTE]
-> Local usage: from declarations can be declared inside any block. When local, visibility_mod must be omitted.
-
-
-A `from` block defines implicit conversions from a source type (described by the parameter groups) to a target type. The target type can be **any type** (primitive, struct, enum, or named type alias), not just structs.
+A `from` block defines implicit and explicit conversions from a source type (described by the parameter groups) to a target type. The target type can be **any type** (primitive, struct, enum, or named type alias), not just structs.
 
 ### Target Types
-
-The target type in a `from` block can be:
 
 | Target Type    | Example                                                   | Notes                        |
 | -------------- | --------------------------------------------------------- | ---------------------------- |
@@ -1356,36 +1376,28 @@ The target type in a `from` block can be:
 
 ### Rules
 
-A from declaration defines implicit conversions from a source type (described by the parameter groups) to a target type. Each entry contains:
-- One or more parameter groups (currying allowed) – the source value(s).
-- The arrow `->` (mandatory).
-- A single return type – must be the type named in the enclosing from declaration.
-- `=` followed by the conversion body (a block or expression).
-- Qualifiers: from entries cannot have qualifiers (`~async`, `~nullable`, `~parallel`), they are plain functions. This is enforced by the parser.
-- A `from` block defines implicit conversions **to** a named target type.
-- The target type can be **any named type**:
-  - Primitive (via type alias)
-  - Struct (direct or via alias)
-  - Enum (direct or via alias)
-  - Function type (via alias)
-  - Array type (via alias)
-- For structural types (functions, arrays, slices), a type alias **must** be used.
-- The conversion body must return a value of the target type.
-- From declarations can appear in any scope (standard lexical scoping)
+Each `from` entry contains:
 
-The body must return a value of the target type, typically via a literal, struct literal, or a call to another conversion.
+- One or more parameter groups (currying allowed) — the source value(s).
+- The arrow `->` (mandatory).
+- A single return type — must be the type named in the enclosing `from` declaration.
+- `=` followed by the conversion body (a block or expression).
+- No qualifiers (`~async`, `~nullable`, `~parallel`) — `from` entries are plain functions.
+
+For structural types (functions, arrays, slices), a type alias **must** be used. The compiler does not chain conversions (e.g., A → B → C) — only a single direct conversion is applied.
 
 ### Scope and Visibility
 
-From declarations can appear in **any scope** (top-level or local) and are visible following standard lexical scoping rules:
-- A from declaration is visible in the scope where it is declared and all nested scopes.
-- Multiple from declarations for the same target type are allowed in different scopes.
+`from` declarations can appear in any scope (top-level or local) and are visible following standard lexical scoping rules:
+
+- A `from` declaration is visible in the scope where it is declared and all nested scopes.
+- Multiple `from` declarations for the same target type are allowed in different scopes.
 - When looking for a conversion, the compiler searches from the innermost scope outward, using the first matching conversion found.
+- If multiple visible `from` declarations provide a conversion from the same source to the same target with the same signature, the nearest (innermost scope) wins; ambiguous conversions produce a compile error.
 
-### Implicit casting contexts
+### Implicit Casting Contexts
 
-When a `from` declaration exists for target `T` accepting source `S`, the
-compiler automatically desugars in these contexts:
+When a `from` declaration exists for target `T` accepting source `S`, the compiler automatically desugars in these contexts:
 
 1. **Variable declaration** — `let m Minutes = rawSecs`
 2. **Function arguments** — `doubleKm(d)` where `d` is `Meters`
@@ -1402,7 +1414,7 @@ from int {
     }
 }
 
--- Convert from Celsius to Fahrenheit (struct target)
+-- Convert from Celsius and Kelvin to Fahrenheit (struct target)
 export from Fahrenheit {
     (c Celsius) -> Fahrenheit = {
         return Fahrenheit { value = c.value * 9.0 / 5.0 + 32.0 }
@@ -1432,7 +1444,7 @@ from Direction {
     }
 }
 
--- Generic from declaration (target is a generic struct)
+-- Generic from declaration
 struct Wrapper<T> { value T }
 
 from Wrapper<T> {
@@ -1448,27 +1460,9 @@ let process () -> int = {
             return #parseInt(s)
         }
     }
-    
-    let x int = "42"  -- Uses the local from declaration
+
+    let x int = "42"  -- uses the local from declaration
     return x
-}
-
--- Call site examples
-let boiling Celsius    = Celsius { value = 100.0 }
-let hot     Fahrenheit = Fahrenheit(boiling)      -- Uses from declaration
-let temp    int        = int("123")               -- Uses from int block
-let dir     Direction  = Direction("north")       -- Uses from Direction block
-let wrapped Wrapper<int> = Wrapper<int>(42)       -- Uses generic from declaration
-
--- Direct from on struct
-export from Fahrenheit {
-    (c Celsius) -> Fahrenheit = { ... }
-}
-
--- From on primitive via alias
-type IntOps = int
-from IntOps {
-    (s string) -> int = { return #parseInt(s) }
 }
 
 -- From on function type via alias
@@ -1483,13 +1477,13 @@ from IntSlice {
     (arr [3]int) -> []int = { return arr[:] }
 }
 
+-- Call site examples
+let boiling Celsius      = Celsius { value = 100.0 }
+let hot     Fahrenheit   = Fahrenheit(boiling)       -- uses from declaration
+let temp    int          = int("123")                -- uses from int block
+let dir     Direction    = Direction("north")        -- uses from Direction block
+let wrapped Wrapper<int> = Wrapper<int>(42)          -- uses generic from declaration
 ```
-
-> [!NOTE]
-> - From declarations are scope‑based – they are only considered for conversions if they are visible in the current scope.
-> - The compiler does not chain conversions (e.g., A → B → C). Only a single direct conversion is applied.
-> - Explicit casts using `T(value)` syntax will also use the same from declaration lookup.
-> - If multiple visible from declarations provide a conversion from the same source to the same target with the same signature, the nearest (innermost scope) wins; ambiguous conversions produce a compile error.
 
 ---
 
@@ -1504,7 +1498,7 @@ pipeline_seed   := expr
 
 pipeline_step   := IDENTIFIER
                  | expr ':' IDENTIFIER                 -- method call on value
-                 | IDENTIFIER '.' IDENTIFIER           -- non‑nullable data field
+                 | IDENTIFIER '.' IDENTIFIER           -- non-nullable data field
                  | IDENTIFIER '(' arg_list ')' '!'     -- argument pack
                  | anon_func
 ```
@@ -1517,13 +1511,12 @@ pipeline_step   := IDENTIFIER
 | `fn(args)!`    | calls `fn(upstream, args...)`   | must be non-nullable       |
 | `anon_func`    | calls with upstream as argument | always safe                |
 
-### The `!` argument pack annotation
+### The `!` Argument Pack Annotation
 
 > [!NOTE]
 > The `!` is **forbidden** for anonymous functions.
 
-`fn(args)!` is not a function call — the `!` marks an intentionally incomplete
-argument list. The upstream value is injected as the first argument when `|>` fires.
+`fn(args)!` is not a function call — the `!` marks an intentionally incomplete argument list. The upstream value is injected as the first argument when `|>` fires.
 
 ```luc
 let scale (v Vec2, factor float) -> Vec2 = { ... }
@@ -1534,18 +1527,15 @@ v |> scale(2.0)      -- ERROR: looks like a complete call, no place for upstream
 
 ### Rules
 
-Qualifiers in pipeline steps:
-- Steps with `~async` are allowed. The pipeline expression becomes `~async` (its type includes `~async`). The caller must await the entire pipeline result.
+**Qualifier behavior in pipeline steps:**
 
-- Steps with `~nullable` are forbidden
+- Steps with `~async` are allowed. The pipeline expression becomes `~async` (its type includes `~async`). The caller must `await` the entire pipeline result.
+- Steps with `~nullable` are forbidden.
+- Steps with `~parallel` are forbidden — pipeline execution is synchronous.
 
-- Steps with `~parallel` are forbidden – pipeline execution is synchronous.
+**Data fields as pipeline steps:**
 
-
-### Data fields as pipeline steps
-
-A struct data field of function type can be a pipeline step only if its type
-is non-nullable:
+A struct data field of function type can be a pipeline step only if its type is non-nullable:
 
 ```luc
 struct Processor {
@@ -1553,7 +1543,7 @@ struct Processor {
     onComplete ~nullable ()              -- nullable: must guard first
 }
 
-let p Processor = Processor { transform = Vec2:normalize }
+let p Processor = Processor { transform = vec.normalize }
 
 v |> p.transform               -- OK
 v |> p.onComplete              -- ERROR: onComplete is ~nullable
@@ -1563,9 +1553,9 @@ if p.onComplete != nil {
 }
 ```
 
-### `|>` vs `+>` — key difference
+### `|>` vs `+>` — Key Difference
 
-|                 | `\| >` pipeline                  | `+>` composition          |
+|                 | `\|>` pipeline                   | `+>` composition          |
 | --------------- | -------------------------------- | ------------------------- |
 | When            | runtime                          | compile time              |
 | Seed            | required                         | none                      |
@@ -1577,15 +1567,14 @@ if p.onComplete != nil {
 
 ## Composition Operator `+>`
 
-`+>` wires functions together at compile time without executing them. The output
-type of the left must exactly match the input type of the right.
+`+>` wires functions together at compile time without executing them. The output type of the left must exactly match the input type of the right.
 
 ```
 compose_expr    := pipeline_expr { '+>' compose_operand }
 
 compose_operand := IDENTIFIER
                  | expr ':' IDENTIFIER          -- method reference on a value
-                 | expr '.' IDENTIFIER          -- non‑nullable data field only
+                 | expr '.' IDENTIFIER          -- non-nullable data field only
 ```
 
 ```luc
@@ -1607,8 +1596,7 @@ if transform != nil {
 }
 ```
 
-Generic functions must be explicitly instantiated before composing — type
-inference across `+>` is not supported:
+Generic functions must be explicitly instantiated before composing — type inference across `+>` is not supported:
 
 ```luc
 let doubleInt   (x int) -> int    = { ... }
@@ -1616,6 +1604,33 @@ let intToString (x int) -> string = { ... }
 
 let process = doubleInt +> intToString    -- valid: both concrete
 ```
+
+---
+
+## Async / Await
+
+`~async` marks a function binding as asynchronous. `await` suspends the current function until the awaited call resolves.
+
+```luc
+let fetch ~async (url string) -> string = {
+    return await httpGet(url)    -- httpGet must also be ~async
+}
+
+-- calling an ~async function requires await
+let result string = await fetch("https://api.example.com")
+
+-- await is only valid inside a ~async body
+let bad (url string) -> string = {
+    return await fetch(url)    -- ERROR: not inside ~async body
+}
+```
+
+**Rules:**
+
+- `await` is only valid inside a function body whose binding carries `~async`.
+- `await expr` — `expr` must resolve to a call to a `~async`-qualified function.
+- An `~async` function may freely call non-async functions.
+- `await` is not valid inside a `~parallel` body function.
 
 ---
 
@@ -1696,34 +1711,6 @@ arg_list        := expr { [','] expr }
 
 ---
 
-## Async / Await
-
-`~async` marks a function binding as asynchronous. `await` suspends the current
-function until the awaited call resolves.
-
-```luc
-let fetch ~async (url string) -> string = {
-    return await httpGet(url)    -- httpGet must also be ~async
-}
-
--- calling an ~async function requires await
-let result string = await fetch("https://api.example.com")
-
--- await is only valid inside a ~async body
-let bad (url string) -> string = {
-    return await fetch(url)    -- ERROR: not inside ~async body
-}
-```
-
-**Rules:**
-
-- `await` is only valid inside a function body whose binding carries `~async`
-- `await expr` — `expr` must resolve to a call to a `~async`-qualified function
-- An `~async` function may freely call non-async functions
-- `await` is not valid inside a `~parallel` body function
-
----
-
 ## Arrays
 
 Three distinct kinds:
@@ -1735,24 +1722,24 @@ Three distinct kinds:
 | Dynamic | `[*]T` | heap-owned       | ✅        |
 
 ```luc
-let rgba [4]float  = [1.0, 0.5, 0.0, 1.0]
-let nums [*]int    = [10, 20, 30, 40, 50]
-let view []int     = nums[1..3]     -- elements at index 1, 2, 3 (inclusive)
-let excl []int     = nums[1..<3]    -- elements at index 1, 2 (exclusive end)
+let rgba [4]float = [1.0, 0.5, 0.0, 1.0]
+let nums [*]int   = [10, 20, 30, 40, 50]
+let view []int    = nums[1..3]     -- elements at index 1, 2, 3 (inclusive)
+let excl []int    = nums[1..<3]    -- elements at index 1, 2 (exclusive end)
 ```
 
 > [!NOTE]
-> - **Array elements are not nullable by default.** To allow nil elements use `T?`:` let nums [*]int? = [1, nil, 3]`
+> - **Array elements are not nullable by default.** To allow nil elements use `T?`: `let nums [*]int? = [1, nil, 3]`
 > - **Out of bounds:** Fixed and slice arrays panic at runtime. Dynamic arrays return nil for out-of-bounds index access.
 
-### Slice range rules
+### Slice Range Rules
 
 | Operator | End bound | Example on `[10,20,30,40,50]`              |
 | -------- | --------- | ------------------------------------------ |
 | `..`     | inclusive | `nums[1..3]` → `[20, 30, 40]` (3 elements) |
 | `..<`    | exclusive | `nums[1..<3]` → `[20, 30]` (2 elements)    |
 
-### Built-in methods
+### Built-in Methods
 
 **All kinds (`[N]T`, `[]T`, `[*]T`):**
 
@@ -1783,14 +1770,12 @@ let excl []int     = nums[1..<3]    -- elements at index 1, 2 (exclusive end)
 | `.clear()`            | —       | remove all elements, free heap buffer |
 | `.reserve(n int)`     | —       | pre-allocate capacity                 |
 
-`+` is defined on `[]T` and `[*]T` — produces a new array containing all
-elements of both operands.
-
----
+`+` is defined on `[]T` and `[*]T` — produces a new array containing all elements of both operands.
 
 ### Arrays of Function Types
 
 Arrays of any type, including function types, are fully supported.
+
 ```luc
 -- slice of functions that take an int and return a bool
 let predicates [] (int) -> bool = [isEven, isPositive, isPrime]
@@ -1802,53 +1787,52 @@ let asyncTasks [*] ~async (url string) -> string = [fetchUser, fetchPosts]
 let curries [2] (int)(int) -> int = [add, mul]
 ```
 
-#### Allowed Operations
+**Allowed operations:**
 
 | Operation            | Example                         | Notes                                                                      |
 | -------------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| Store function       | `handlers[0] = validate`        | The function type must match the array’s element type exactly.             |
-| Call through index   | `let result = handlers[i](arg)` | The index expression must be an integer; the call follows normal rules.    |
-| Pass as argument     | `applyAll(handlers, data)`      | The array itself is passed by value (owned) or by reference (`&[]T`).      |
+| Store function       | `handlers[0] = validate`        | The function type must match the array's element type exactly.             |
+| Call through index   | `let result = handlers[i](arg)` | The index must be an integer; the call follows normal rules.               |
+| Pass as argument     | `applyAll(handlers, data)`      | The array is passed by value (owned) or by reference (`&[]T`).             |
 | Return from function | `return getCallbacks()`         | Ownership follows array semantics (deep copy for dynamic, view for slice). |
 
-> [!WARNING] Restrictions
->These are limitation about array of function
+> [!WARNING] Restrictions on arrays of function types
+>
+> 1. **No equality** — Function types are not comparable (`==`, `!=`). Consequently, arrays of functions are also not comparable.
+>
+> ```luc
+> let a [] (int) -> int = [f]
+> let b [] (int) -> int = [f]
+> if a == b { ... }   -- ERROR: cannot compare arrays of function type
+> ```
+>
+> 2. **Qualifiers affect element type** — An array of `~async (int) -> int` is distinct from an array of `(int) -> int`. Storing an async function in an array of plain functions is a type error.
+>
+> ```luc
+> let asyncFn ~async (x int) -> int = { ... }
+> let arr [] (int) -> int = [asyncFn]   -- OK: qualifier ignored for storage
+>
+> let result = await arr[0](5)   -- OK: caller uses await
+> let result = arr[0](5)         -- ERROR: ~async called without await
+> ```
+>
+> 3. **Closure capture** — If a stored function captures variables (a closure), the array holds a reference to the closure's environment. Use `.clear()` on dynamic arrays to release closures early.
+>
+> 4. **No generic specialisation** — The element type is a concrete function signature. Generic functions cannot be stored directly unless instantiated.
+>
+> ```luc
+> let idInt   = identity<int>
+> let arr [] (int) -> int = [idInt]   -- OK
+> let arr [] (T) -> T = [identity]    -- ERROR: generic function without type arguments
+> ```
 
-1. **No equality** – Function types are not comparable (`==`, `!=`). Consequently, arrays of functions are also not comparable. This is enforced at the type level.
+> [!TIP] Arrays of function types enable
+> - **Dispatch tables** — Replace switch/match with indexed function lookup.
+> - **Callback lists** — Event handlers, middleware chains, plugin systems.
+> - **Higher-order collections** — Store partially applied functions, curried functions, or stateful closures.
+> - **Interpreters & DSLs** — Represent operations as functions in a data structure.
 
-```luc
-let a [] (int) -> int = [f]
-let b [] (int) -> int = [f]
-if a == b { ... }   -- ERROR: cannot compare arrays of function type
-```
-
-2. Qualifiers (`~async` and `~nullable`) are part of the function type, so an array of `~async (int) -> int` is distinct from an array of `(int) -> int`. Storing an async function in an array of plain functions is a type error."
-
-```luc
-let asyncFn ~async (x int) -> int = { ... }
-let arr [] (int) -> int = [asyncFn]   -- OK: qualifier ignored for storage
-
--- Call site must still obey qualifier rules
-let result = await arr[0](5)   -- OK: caller uses await because the stored function is ~async
-let result = arr[0](5)         -- ERROR: ~async called without await
-```
-
-3. Closure capture – If a stored function captures variables (a closure), the array holds a reference to the closure’s environment. This may prevent memory from being freed until the array is cleared or goes out of scope. Use .clear() on dynamic arrays to release closures early if needed.
-
-4. No generic specialisation – The element type of an array is a concrete function signature. Generic functions cannot be stored directly unless instantiated:
-
-```luc
-let idInt   = identity<int>   -- instantiate to (int) -> int
-let arr [] (int) -> int = [idInt]   -- OK
-let arr [] (T) -> T = [identity]    -- ERROR: generic function without type arguments
-```
-
-> [!TIP] Arrays of function types enable:  
-> - Dispatch tables – Replace switch/match with indexed function lookup.    
-> - Callback lists – Event handlers, middleware chains, plugin systems.  
-> - Higher‑order collections – Store partially applied functions, curried functions, or stateful closures.
-> - Interpreters & DSLs – Represent operations as functions in a data structure.
-
+---
 
 ## Statements
 
@@ -1872,14 +1856,13 @@ block           := '{' { stmt } '}'
 expr_stmt       := expr
 assign_stmt     := expr assign_op expr
 ```
+
 > [!WARNING]
-> **Visibility inside blocks:**  
-> `pub` and `export` are **not allowed** on any local declaration – they are top‑level only. The parser emits an error if they appear inside a block.
+> **Visibility inside blocks:** `pub` and `export` are **not allowed** on any local declaration — they are top-level only. The parser emits an error if they appear inside a block.
+>
+> **Attributes on local declarations:** Attributes (`@inline`, `@deprecated`, `@unroll`, etc.) **are allowed** on local declarations (`type`, `struct`, `enum`, `impl`, `from`, `var`, `func`). They are attached to the declaration node and may be used by the semantic pass.
 
-> **Attributes on local declarations:**  
-> Attributes (`@inline`, `@deprecated`, `@unroll`, etc.) **are allowed** on local declarations (type, struct, enum, impl, from, var, func). They are attached to the declaration node and may be used by the semantic pass.
-
-### Examples of valid local declarations
+### Examples of Valid Local Declarations
 
 ```luc
 let compute () -> int = {
@@ -1904,7 +1887,7 @@ let compute () -> int = {
     let p Point = Point(5.0)
     p:length()
 }
-
+```
 
 ### If / Else — Statement Form
 
@@ -1912,8 +1895,7 @@ let compute () -> int = {
 if_stmt         := 'if' expr block [ 'else' ( if_stmt | block ) ]
 ```
 
-`else` is optional. Type narrowing applies inside `thenBranch` when condition
-is an `is` expression.
+`else` is optional. Type narrowing applies inside the then-branch when the condition is an `is` expression.
 
 ```luc
 if score >= 90 {
@@ -1931,9 +1913,7 @@ if score >= 90 {
 if_expr         := 'if' expr '??' expr 'else' expr
 ```
 
-`else` is **required** in expression form. Both branches must produce
-compatible types. `??` is the separator between condition and then-branch —
-it is not the null-coalescing operator in this context.
+`else` is **required** in expression form. Both branches must produce compatible types. `??` is the separator between condition and then-branch — it is not the null-coalescing operator in this context.
 
 ```luc
 let grade string = if score >= 60 ?? "pass" else "fail"
@@ -1944,8 +1924,7 @@ let label string = if n < 0 ?? "negative" else if n == 0 ?? "zero" else "positiv
 
 ### Match
 
-`match` is expression-oriented — it produces a value. `default` is required
-and must be last. Arm bodies are expressions only — no blocks, no `return`.
+`match` is expression-oriented — it produces a value. `default` is required and must be last. Arm bodies are expressions only — no blocks, no `return`.
 
 ```
 match_expr      := 'match' expr '{' { match_arm } default_arm '}'
@@ -1984,9 +1963,9 @@ field_pattern   := IDENTIFIER [ ':' pattern ]
 ```luc
 -- single value
 let label string = match status {
-    200      => "ok"
-    404      => "not found"
-    default  => "unknown"
+    200     => "ok"
+    404     => "not found"
+    default => "unknown"
 }
 
 -- multiple values per arm
@@ -2023,7 +2002,7 @@ let desc string = match point {
 let label string
 let detail string?
 label, detail = match status {
-    200     => "ok",        "request succeeded"
+    200     => "ok",      "request succeeded"
     404     => "not found"   -- detail is implicitly nil
     default => "unknown"
 }
@@ -2031,8 +2010,7 @@ label, detail = match status {
 
 ### Switch
 
-`switch` is statement-oriented — dispatches on a value, runs blocks, produces
-no value.
+`switch` is statement-oriented — dispatches on a value, runs blocks, produces no value.
 
 ```
 switch_stmt     := 'switch' expr '{' { case_clause } [ default_clause ] '}'
@@ -2060,25 +2038,24 @@ switch code {
 ```
 for_stmt    := 'for' IDENTIFIER type_ann 'in' ( range_iter | expr ) [ '..' expr ] block
 
-range_iter := expr range_op expr
-            -- start range_op end
-            -- type_ann must be numeric (int, float, etc.) for range iteration
+range_iter  := expr range_op expr
+               -- start range_op end
+               -- type_ann must be numeric (int, float, etc.) for range iteration
 ```
 
-Examples:
 ```luc
-for i int in 0..10 { io.printl(string(i)) }          -- 0 through 10 inclusive
-for i int in 0..<10 { io.printl(string(i)) }         -- 0 through 9
-for i int in 0..10..2 { io.printl(string(i)) }       -- step of 2
-for item string in items { process(item) }           -- collection iteration
+for i int in 0..10  { io.printl(string(i)) }          -- 0 through 10 inclusive
+for i int in 0..<10 { io.printl(string(i)) }          -- 0 through 9
+for i int in 0..10..2 { io.printl(string(i)) }        -- step of 2
+for item string in items { process(item) }             -- collection iteration
 ```
 
 > [!NOTE]
-> - The iteration variable must have an explicit type annotation (no type inference)
-> - For range iteration, the type must be numeric (int, float, double, etc.)
-> - For collection iteration, the type must match the element type of the iterable
-> - The optional step expression (after second ..) is only valid for range iteration
-> - The step expression must be of the same numeric type as the iteration variable
+> - The iteration variable must have an explicit type annotation (no type inference).
+> - For range iteration, the type must be numeric (`int`, `float`, `double`, etc.).
+> - For collection iteration, the type must match the element type of the iterable.
+> - The optional step expression (after the second `..`) is only valid for range iteration.
+> - The step expression must be of the same numeric type as the iteration variable.
 
 ### While / Do-While
 
@@ -2105,9 +2082,10 @@ continue_stmt   := 'continue'
 Valid for: primitives, enums, nullable types.
 
 Not valid for:
-- Struct types — implement `Equatable<T>` and use `:equals()` instead
-- Function types are never comparable, regardless of qualifiers. Even if two functions have identical types (including qualifiers), == is not allowed.
-- Array types — use collection library comparison
+
+- Struct types — implement `Equatable<T>` and use `:equals()` instead.
+- Function types — never comparable regardless of qualifiers. Even if two functions have identical types (including qualifiers), `==` is not allowed.
+- Array types — use collection library comparison.
 
 ### `===` — Reference Equality
 
@@ -2115,8 +2093,7 @@ Checks same memory address. Valid for `&T`, structs, nullable reference types.
 
 ### `is` — Type Identity
 
-Checks the type of a value. Narrows the type inside the enclosing block
-(statement form only). Nullable and non-nullable are distinct types.
+Checks the type of a value. Narrows the type inside the enclosing block (statement form only). Nullable and non-nullable are distinct types.
 
 ```luc
 let x int? = 5
@@ -2139,8 +2116,8 @@ if 0 < x < 10 { ... }          -- ERROR: chained comparison
 `and` and `or` short-circuit. Both operands must be `bool` or nullable:
 
 ```luc
-if getUser() != nil and validate(getUser()) { ... }   -- short-circuit: right only if left non-nil
-if cache:has(key) or expensiveLoad(key) { ... }        -- short-circuit: right only if left false
+if getUser() != nil and validate(getUser()) { ... }    -- short-circuit
+if cache:has(key) or expensiveLoad(key) { ... }        -- short-circuit
 ```
 
 `not` operates on `bool` and nullable types:
@@ -2154,8 +2131,7 @@ if not x { ... }    -- x is nullable: nil treated as false, not flips to true
 
 ## Bitwise Operators
 
-Integer types only. `&&` and `||` are bitwise AND/OR (not logical — those use
-`and`/`or` keywords). This avoids ambiguity with `&` (reference operator).
+Integer types only. `&&` and `||` are bitwise AND/OR (not logical — those use `and`/`or` keywords). This avoids ambiguity with `&` (reference operator).
 
 | Operator | Name                |
 | -------- | ------------------- |
@@ -2167,12 +2143,26 @@ Integer types only. `&&` and `||` are bitwise AND/OR (not logical — those use
 | `>>`     | right shift         |
 
 ```luc
-let flags  uint32 = 0xFF00
-let mask   uint32 = 0x0F0F
-let result uint32 = flags && mask     -- 0x0F00
-let merged uint32 = flags || mask     -- 0xFF0F
-let inv    uint32 = ~~flags           -- bitwise NOT
+let flags   uint32 = 0xFF00
+let mask    uint32 = 0x0F0F
+let result  uint32 = flags && mask     -- 0x0F00
+let merged  uint32 = flags || mask     -- 0xFF0F
+let inv     uint32 = ~~flags           -- bitwise NOT
 let shifted uint32 = 1 << 4           -- 16
+```
+
+---
+
+## Choice and Fallback Operators
+
+```
+fallback_expr   := expr '??' expr
+                   -- LHS is T (non-nil): result is T
+                   -- LHS is nil or Error: result is RHS
+
+catch_step      := expr '|>' 'catch' '(' identifier ')' block
+                   -- upstream is T: block skipped, T passed along
+                   -- upstream is Error: identifier bound to Error, block executes
 ```
 
 ---
@@ -2192,224 +2182,13 @@ let shifted uint32 = 1 << 4           -- 16
 | 9           | `and`                                                             | left          |
 | 10          | `or`                                                              | left          |
 | 11          | `??`                                                              | right         |
-| 12          | `                                                                 | >` (pipeline) | left |
+| 12          | `\|>` (pipeline)                                                  | left          |
 | 13          | `+>` (composition)                                                | left          |
 | 14          | `=` `+=` `-=` `*=` `/=` `^=` `%=` `&&=` `\|\|=` `~^=` `<<=` `>>=` | right         |
 | 15 (lowest) | `if ?? else`                                                      | right         |
 
 > [!NOTE]
 > **`if_expr` precedence:** `if cond ?? thenExpr else elseExpr` begins with the `if` keyword. The `??` here is a fixed syntactic separator in the if-expression production, not the null-coalescing infix operator (level 11). The `else` clause is right-associative at the lowest precedence — chained `if ?? ... else if ?? ... else ...` forms bind correctly.
-
----
-
-## `@` and `#` — Compiler Directives
-
-Two distinct prefixes, distinguished by position and symbol:
-
-| Prefix                  | Position               | Purpose                           |
-| ----------------------- | ---------------------- | --------------------------------- |
-| `@name` / `@name(args)` | Before a declaration   | Attach metadata (attribute)       |
-| `#name(args)`           | In expression position | Compiler-builtin call (intrinsic) |
-
-### Attributes (`@`)
-
-```
-attribute       := '@' IDENTIFIER [ '(' attr_arg_list ')' ]
-
-attr_arg_list   := attr_arg { ',' attr_arg }
-
-attr_arg        := STRING_LITERAL | INT_LITERAL | HEX_LITERAL | 'true' | 'false' | IDENTIFIER
-```
-
-Attribute arguments are intentionally limited to compile-time literals and
-type identifiers. Runtime expressions are not valid inside attribute arguments.
-
-#### Known Attributes
-
-| Attribute                | Valid on                | Purpose                                   |
-| ------------------------ | ----------------------- | ----------------------------------------- |
-| `@extern("sym")`         | `let`, `const` func/var | Bind to C/OS/Vulkan symbol                |
-| `@extern("sym", "conv")` | `let`, `const` func/var | With explicit calling convention          |
-| `@inline`                | func                    | Suggest always inline                     |
-| `@noinline`              | func                    | Prevent inlining                          |
-| `@packed`                | `struct`                | Remove padding — all fields byte-adjacent |
-| `@deprecated("msg")`     | func, var, struct       | Emit warning at every use site            |
-| `@aot`                   | `main` only             | Ahead-of-time compilation                 |
-| `@jit`                   | `main` only             | JIT compilation                           |
-
-`@inline` and `@noinline` are mutually exclusive on the same declaration.
-`@aot` and `@jit` are mutually exclusive on the same declaration.
-
-#### `@extern` Rules
-
-- Requires `const`, not `let` — the linker resolves the symbol permanently
-- Functions must have no body
-- `W3001` warning when `let` is used instead of `const`
-- `W3002` warning when an empty body `= {}` is supplied (body silently ignored)
-- `E3002` error when a non-empty body is supplied
-
-```luc
-@extern("malloc")
-const malloc (size uint64) -> *uint8?
-
-@extern("free")
-const free (ptr *uint8)
-
-@extern("printf", "C")
-const printf (fmt *uint8, args ...any) -> int
-
-@extern("vkCreateInstance")
-const vkCreateInstance (
-    pInfo      *VkInstanceCreateInfo,
-    pAllocator *VkAllocationCallbacks,
-    pInstance  **VkInstance
-) -> uint32
-
-@extern("__stack_top")
-const stackTop *uint8
-```
-
----
-
-### Compiler Intrinsics (`#`)
-
-Intrinsic calls appear in expression position and are prefixed with `#`.
-
-```
-intrinsic_call  := '#' IDENTIFIER '(' [ intrinsic_arg_list ] ')'
-
-intrinsic_arg_list := intrinsic_arg { ',' intrinsic_arg }
-
-intrinsic_arg   := expr
-                 | type
-```
-
-Unlike attributes, intrinsics can take runtime expressions and types as arguments.
-
----
-
-#### Compile-time type queries
-
-| Intrinsic     | Returns  | Notes                                              |
-| ------------- | -------- | -------------------------------------------------- |
-| `#sizeof(T)`  | `uint64` | Byte size of type T — compile-time constant        |
-| `#alignof(T)` | `uint64` | Alignment requirement of T — compile-time constant |
-
-```luc
-let size   uint64 = #sizeof(Vertex)
-let align  uint64 = #alignof(Vec2)
-```
-
----
-
-#### Floating-point math
-
-| Intrinsic         | Args         | Returns | Notes                                 |
-| ----------------- | ------------ | ------- | ------------------------------------- |
-| `#sqrt(x)`        | float/double | same    | Hardware square root                  |
-| `#floor(x)`       | float/double | same    | Round toward −∞                       |
-| `#ceil(x)`        | float/double | same    | Round toward +∞                       |
-| `#round(x)`       | float/double | same    | Round to nearest, half away from zero |
-| `#abs(x)`         | numeric      | same    | Absolute value                        |
-| `#pow(base, exp)` | float/double | same    | Exponentiation                        |
-| `#fma(a, b, c)`   | float/double | same    | Fused multiply-add: `(a*b)+c`         |
-| `#min(a, b)`      | same type    | same    | Minimum                               |
-| `#max(a, b)`      | same type    | same    | Maximum                               |
-
-```luc
-let hyp       float = #sqrt(x*x + y*y)
-let rounded   float = #round(value)
-let maxVal    int   = #min(a, b)
-```
-
----
-
-#### Bit manipulation (integer types only)
-
-| Intrinsic      | Args    | Returns | Notes                           |
-| -------------- | ------- | ------- | ------------------------------- |
-| `#clz(x)`      | integer | same    | Count leading zero bits         |
-| `#ctz(x)`      | integer | same    | Count trailing zero bits        |
-| `#popcount(x)` | integer | same    | Count set (1) bits              |
-| `#bswap(x)`    | integer | same    | Reverse byte order (endianness) |
-
-```luc
-let leading   uint32 = #clz(flags)
-let trailing  uint32 = #ctz(flags)
-let bits      uint32 = #popcount(mask)
-let swapped   uint32 = #bswap(networkOrder)
-```
-
----
-
-#### Memory operations
-
-| Intrinsic                 | Args               | Returns | Notes                       |
-| ------------------------- | ------------------ | ------- | --------------------------- |
-| `#memcpy(dst, src, len)`  | ptr, ptr, uint64   | void    | Copy bytes, no overlap      |
-| `#memmove(dst, src, len)` | ptr, ptr, uint64   | void    | Copy bytes, handles overlap |
-| `#memset(dst, val, len)`  | ptr, ubyte, uint64 | void    | Fill bytes with value       |
-
-All memory intrinsics operate on raw pointers (`*T`) and are only valid inside
-`@extern`-decorated functions or other intrinsic calls.
-
-```luc
-#memcpy(dest, src, #sizeof(Buffer))
-#memset(ptr, 0, size)
-```
-
----
-
-#### Pointer operations (The Sealed Conduit boundary)
-
-| Intrinsic            | Args       | Returns | Notes                                 |
-| -------------------- | ---------- | ------- | ------------------------------------- |
-| `#ptrToRef(ptr)`     | type, `*T` | `&T`    | Assert valid, cross to safe reference |
-| `#refToPtr(ref)`     | `&T`       | `*T`    | Convert reference to raw pointer      |
-| `#ptrOffset(ptr, n)` | `*T`, int  | `*T`    | Pointer arithmetic (element offset)   |
-| `#ptrDiff(p1, p2)`   | `*T`, `*T` | `int64` | Distance between pointers in elements |
-
-These intrinsics are the only way to cross the sealed conduit boundary or
-perform pointer arithmetic.
-
-```luc
-let buf *uint8 = malloc(1024)
-let ref &uint8 = #ptrToRef(buf)
-ref = 0xFF
-
-let next *uint8 = #ptrOffset(buf, 1)
-let distance int64 = #ptrDiff(next, buf)
-```
-
----
-
-#### Unsafe / Bit reinterpretation
-
-| Intrinsic        | Args        | Returns | Notes                                             |
-| ---------------- | ----------- | ------- | ------------------------------------------------- |
-| `#bitcast(T, x)` | type, value | `T`     | Reinterpret bits of x as type T; sizes must match |
-
-Valid only inside `@extern`-decorated functions or when the compiler flag
-`--unsafe` is enabled.
-
-```luc
-let bits uint32 = 0x3F800000
-let f   float32 = #bitcast(float32, bits)   -- 1.0
-```
-
----
-
-## Choice and Fallback Operators
-
-```
-fallback_expr   := expr '??' expr
-                   -- LHS is T (non-nil): result is T
-                   -- LHS is nil or Error: result is RHS
-
-catch_step      := expr '|>' 'catch' '(' identifier ')' block
-                   -- upstream is T: block skipped, T passed along
-                   -- upstream is Error: identifier bound to Error, block executes
-```
 
 ---
 
@@ -2431,8 +2210,7 @@ RAW_STRING_LITERAL := 'r' [ '#'+ ] '"' { any character } '"' [ '#'+ ]
                    -- when it contains a quote that would otherwise be ambiguous.
 ```
 
-Raw string literals use r followed by zero or more # characters, then a double quote, the literal content, a double quote, and the same number of # characters.
-The content is taken verbatim – no escape sequences are processed, and the delimiter pairs ("# / #") allow the string to contain arbitrary quotes and backslashes without ambiguity.
+Raw string literals use `r` followed by zero or more `#` characters, then a double quote, the literal content, a double quote, and the same number of `#` characters. The content is taken verbatim — no escape sequences are processed.
 
 ```luc
 let a = r"hello"                     -- simple, no quotes inside
@@ -2541,15 +2319,194 @@ pub impl Vec2 {
 
 ---
 
-## Keywords (Reserved)
+## `@` and `#` — Compiler Directives
+
+Two distinct prefixes, distinguished by position and symbol:
+
+| Prefix                  | Position               | Purpose                           |
+| ----------------------- | ---------------------- | --------------------------------- |
+| `@name` / `@name(args)` | Before a declaration   | Attach metadata (attribute)       |
+| `#name(args)`           | In expression position | Compiler-builtin call (intrinsic) |
+
+### Attributes (`@`)
 
 ```
-pub export package use as impl trait type from
-let const struct enum await
-bool byte short int long ubyte ushort uint ulong
-int8 int16 int32 int64 uint8 uint16 uint32 uint64
-float double decimal string char any nil
-if else match switch case default is
-while for in do return break continue
-and or not true false
+attribute       := '@' IDENTIFIER [ '(' attr_arg_list ')' ]
+
+attr_arg_list   := attr_arg { ',' attr_arg }
+
+attr_arg        := STRING_LITERAL | INT_LITERAL | HEX_LITERAL | 'true' | 'false' | IDENTIFIER
+```
+
+Attribute arguments are intentionally limited to compile-time literals and type identifiers. Runtime expressions are not valid inside attribute arguments.
+
+#### Known Attributes
+
+| Attribute                | Valid on                | Purpose                                   |
+| ------------------------ | ----------------------- | ----------------------------------------- |
+| `@extern("sym")`         | `let`, `const` func/var | Bind to C/OS/Vulkan symbol                |
+| `@extern("sym", "conv")` | `let`, `const` func/var | With explicit calling convention          |
+| `@inline`                | func                    | Suggest always inline                     |
+| `@noinline`              | func                    | Prevent inlining                          |
+| `@packed`                | `struct`                | Remove padding — all fields byte-adjacent |
+| `@deprecated("msg")`     | func, var, struct       | Emit warning at every use site            |
+| `@phantom`               | `type` alias            | Allow unused generic parameters           |
+| `@aot`                   | `main` only             | Ahead-of-time compilation                 |
+| `@jit`                   | `main` only             | JIT compilation                           |
+
+`@inline` and `@noinline` are mutually exclusive on the same declaration.
+`@aot` and `@jit` are mutually exclusive on the same declaration.
+
+#### `@extern` Rules
+
+- Requires `const`, not `let` — the linker resolves the symbol permanently.
+- Functions must have no body.
+- `W3001` warning when `let` is used instead of `const`.
+- `W3002` warning when an empty body `= {}` is supplied (body silently ignored).
+- `E3002` error when a non-empty body is supplied.
+
+```luc
+@extern("malloc")
+const malloc (size uint64) -> *uint8?
+
+@extern("free")
+const free (ptr *uint8)
+
+@extern("printf", "C")
+const printf (fmt *uint8, args ...any) -> int
+
+@extern("vkCreateInstance")
+const vkCreateInstance (
+    pInfo      *VkInstanceCreateInfo,
+    pAllocator *VkAllocationCallbacks,
+    pInstance  **VkInstance
+) -> uint32
+
+@extern("__stack_top")
+const stackTop *uint8
+```
+
+#### `@phantom` Rules
+
+- Only valid on type alias declarations that have generic parameters.
+- Without @phantom, a type parameter that does not appear in the alias body is a compile error.
+- With @phantom, unused parameters are permitted — the compiler treats them as phantom tags that exist only at the type-checking level and are erased at runtime.
+- Phantom parameters still participate in type identity: Tagged<int> and Tagged<string> are distinct types even though both resolve to int at runtime.
+
+```luc
+@phantom
+type Tagged<T> = int    -- OK: T is a phantom tag
+
+type Gen<T> = int       -- ERROR: T is unused — add @phantom if intentional
+```
+
+---
+
+### Compiler Intrinsics (`#`)
+
+Intrinsic calls appear in expression position and are prefixed with `#`. Unlike attributes, intrinsics can take runtime expressions and types as arguments.
+
+```
+intrinsic_call  := '#' IDENTIFIER '(' [ intrinsic_arg_list ] ')'
+
+intrinsic_arg_list := intrinsic_arg { ',' intrinsic_arg }
+
+intrinsic_arg   := expr
+                 | type
+```
+
+#### Compile-Time Type Queries
+
+| Intrinsic     | Returns  | Notes                                              |
+| ------------- | -------- | -------------------------------------------------- |
+| `#sizeof(T)`  | `uint64` | Byte size of type T — compile-time constant        |
+| `#alignof(T)` | `uint64` | Alignment requirement of T — compile-time constant |
+
+```luc
+let size  uint64 = #sizeof(Vertex)
+let align uint64 = #alignof(Vec2)
+```
+
+#### Floating-Point Math
+
+| Intrinsic         | Args         | Returns | Notes                                 |
+| ----------------- | ------------ | ------- | ------------------------------------- |
+| `#sqrt(x)`        | float/double | same    | Hardware square root                  |
+| `#floor(x)`       | float/double | same    | Round toward −∞                       |
+| `#ceil(x)`        | float/double | same    | Round toward +∞                       |
+| `#round(x)`       | float/double | same    | Round to nearest, half away from zero |
+| `#abs(x)`         | numeric      | same    | Absolute value                        |
+| `#pow(base, exp)` | float/double | same    | Exponentiation                        |
+| `#fma(a, b, c)`   | float/double | same    | Fused multiply-add: `(a*b)+c`         |
+| `#min(a, b)`      | same type    | same    | Minimum                               |
+| `#max(a, b)`      | same type    | same    | Maximum                               |
+
+```luc
+let hyp     float = #sqrt(x*x + y*y)
+let rounded float = #round(value)
+let maxVal  int   = #min(a, b)
+```
+
+#### Bit Manipulation (Integer Types Only)
+
+| Intrinsic      | Args    | Returns | Notes                           |
+| -------------- | ------- | ------- | ------------------------------- |
+| `#clz(x)`      | integer | same    | Count leading zero bits         |
+| `#ctz(x)`      | integer | same    | Count trailing zero bits        |
+| `#popcount(x)` | integer | same    | Count set (1) bits              |
+| `#bswap(x)`    | integer | same    | Reverse byte order (endianness) |
+
+```luc
+let leading  uint32 = #clz(flags)
+let trailing uint32 = #ctz(flags)
+let bits     uint32 = #popcount(mask)
+let swapped  uint32 = #bswap(networkOrder)
+```
+
+#### Memory Operations
+
+| Intrinsic                 | Args               | Returns | Notes                       |
+| ------------------------- | ------------------ | ------- | --------------------------- |
+| `#memcpy(dst, src, len)`  | ptr, ptr, uint64   | void    | Copy bytes, no overlap      |
+| `#memmove(dst, src, len)` | ptr, ptr, uint64   | void    | Copy bytes, handles overlap |
+| `#memset(dst, val, len)`  | ptr, ubyte, uint64 | void    | Fill bytes with value       |
+
+All memory intrinsics operate on raw pointers (`*T`) and are only valid inside `@extern`-decorated functions or other intrinsic calls.
+
+```luc
+#memcpy(dest, src, #sizeof(Buffer))
+#memset(ptr, 0, size)
+```
+
+#### Pointer Operations
+
+| Intrinsic            | Args       | Returns | Notes                                 |
+| -------------------- | ---------- | ------- | ------------------------------------- |
+| `#ptrToRef(ptr)`     | `*T`       | `&T`    | Assert valid, cross to safe reference |
+| `#refToPtr(ref)`     | `&T`       | `*T`    | Convert reference to raw pointer      |
+| `#ptrOffset(ptr, n)` | `*T`, int  | `*T`    | Pointer arithmetic (element offset)   |
+| `#ptrDiff(p1, p2)`   | `*T`, `*T` | `int64` | Distance between pointers in elements |
+
+These intrinsics are the only way to cross the sealed conduit boundary or perform pointer arithmetic.
+
+```luc
+let buf  *uint8 = malloc(1024)
+let ref  &uint8 = #ptrToRef(buf)
+ref = 0xFF
+
+let next     *uint8 = #ptrOffset(buf, 1)
+let distance  int64 = #ptrDiff(next, buf)
+```
+
+#### Unsafe / Bit Reinterpretation
+
+| Intrinsic        | Args        | Returns | Notes                                             |
+| ---------------- | ----------- | ------- | ------------------------------------------------- |
+| `#bitcast(T, x)` | type, value | `T`     | Reinterpret bits of x as type T; sizes must match |
+
+Valid only inside `@extern`-decorated functions or when the compiler flag `--unsafe` is enabled.
+
+```luc
+let bits uint32  = 0x3F800000
+let f    float32 = #bitcast(float32, bits)   -- 1.0
 ```

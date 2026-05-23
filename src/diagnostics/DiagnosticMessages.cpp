@@ -91,6 +91,7 @@ std::string_view getMessage(DiagCode code) {
         case DiagCode::E3041: return "'is' expression used outside conditional (statement context only).";
         case DiagCode::E3042: return "Pattern bind name '%s' conflicts with existing variable in scope.";
         case DiagCode::E3043: return "Unconditional bind pattern appears before more specific patterns in match arm.";
+        case DiagCode::E3044: return "Every generic parameter declared on a type alias must appear at least once in the right-hand side.";
 
         // Backend / Codegen
         case DiagCode::E4001: return "Target machine initialisation failed (unknown target triple).";
