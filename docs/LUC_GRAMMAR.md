@@ -1,6 +1,7 @@
 # Luc — Grammar Reference
 
-> [!TIP] Scope of this file
+> [!TIP]
+> Scope of this file
 > Formal grammar rules for the Luc parser. Code examples are in `LUC_EXAMPLES.md`. Project identity is in `LUC_PROJECT_OVERVIEW.md`.
 
 ---
@@ -202,8 +203,9 @@ return_type     := type
                  | param_group { param_group } '->' return_list
 ```
 
-> [!WARNING] No union types
-> Luc does **not** have union types (`T | U`). The idiomatic replacement depends on what you actually need:
+> [!WARNING]
+> No union types
+> Luc does **NOT** have union types (`T | U`). The idiomatic replacement depends on what you actually need:
 >
 > **For dynamic dispatch** — use `any` with `is` checks or `match` for type narrowing:
 >
@@ -402,7 +404,8 @@ decl_keyword    := 'let' | 'const'
 type_ann        := type
 ```
 
-> [!WARNING] No type inference
+> [!WARNING]
+> No type inference
 > Luc does not infer types. Every declaration **must** include an explicit type annotation. The compiler rejects any declaration without one.
 >
 > ```luc
@@ -464,7 +467,8 @@ expr_lhs          := IDENTIFIER
                    -- any expression that can be an lvalue (assignable)
 ```
 
-> [!NOTE] Reassignment rules
+> [!NOTE]
+> Reassignment rules
 > - Each `expr_lhs` must be a valid lvalue: a variable name, a field access, or an array/slice index. Function calls, literals, and other rvalue expressions are not allowed.
 > - The right-hand side must evaluate to exactly as many return values as there are left-hand side expressions.
 > - The values are assigned from left to right.
@@ -1676,7 +1680,8 @@ let intToString (x int) -> string = { ... }
 let process = doubleInt +> intToString    -- valid: both concrete
 ```
 
-> [!WARNING] Alias bypass is not allowed
+> [!WARNING]
+> Alias bypass is not allowed
 > The qualifier check for `+>` is enforced on the **resolved underlying type**. A variable whose type alias wraps a `~nullable` function is still forbidden as a composition operand — the compiler looks through the alias chain.
 >
 > ```luc
@@ -1892,7 +1897,8 @@ let curries [2] (int)(int) -> int = [add, mul]
 | Pass as argument     | `applyAll(handlers, data)`      | The array is passed by value (owned) or by reference (`&[]T`).             |
 | Return from function | `return getCallbacks()`         | Ownership follows array semantics (deep copy for dynamic, view for slice). |
 
-> [!WARNING] Restrictions on arrays of function types
+> [!WARNING]
+> Restrictions on arrays of function types
 >
 > 1. **No equality** — Function types are not comparable (`==`, `!=`). Consequently, arrays of functions are also not comparable.
 >
