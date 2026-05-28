@@ -1,11 +1,10 @@
 /**
  * @file ArenaSpan.hpp
- * @brief A non-owning, arena-allocated contiguous view of elements.
+ * @brief A non-owning, arena-allocated contiguous view of elements (read‑only).
  *
- * ArenaSpan is a lightweight replacement for `std::vector` when storing
- * child nodes or lists inside the AST. It provides a read/write view
- * into a contiguous block of arena-allocated memory, without any
- * allocation or deallocation overhead of its own.
+ * ArenaSpan provides a lightweight, immutable view into a contiguous block of
+ * arena-allocated memory. It replaces `std::vector` for storing child lists
+ * in the AST, offering better cache locality and no per‑element heap overhead.
  *
  * ## Why ArenaSpan instead of std::vector?
  *
@@ -15,6 +14,8 @@
  *   buffer on the heap, breaking arena contiguity.
  * - **Trivial destructor**: No need to destruct each element – the arena
  *   reclaims everything at once.
+ * - **Immutability**: Once built, the span is read‑only, preventing
+ *   accidental modification of AST data after construction.
  *
  * ## Usage Example
  *
@@ -25,26 +26,25 @@
  *   builder.push_back(parseExpr());
  *   ArenaSpan<ExprPtr> elements = builder.build();
  *
- *   for (ExprPtr& expr : elements) {
- *       expr->accept(visitor);
+ *   for (const ExprPtr& expr : elements) {
+ *       // read‑only access
  *   }
  * @endcode
  *
  * @tparam T The type of elements stored in the span. Typically a pointer
  *           type (e.g., `ExprPtr`, `ParamPtr`) or a trivial value type.
  *
- * @note This class is intentionally minimal – it does not provide
- *       modifying operations (push_back, etc.) to keep the AST immutable
- *       after construction. Use `ASTArena::SpanBuilder` to build spans
- *       incrementally during parsing.
+ * @note This class is intentionally minimal – it provides no modifying
+ *       operations. Use `ASTArena::SpanBuilder` to build spans incrementally
+ *       during parsing.
  */
 #pragma once
 #include <cstddef>
 
 template <typename T>
 class ArenaSpan {
-    T*     data_ = nullptr;   ///< Pointer to the first element (may be mutable or const-cast)
-    size_t size_ = 0;         ///< Number of elements in the span
+    const T* data_ = nullptr;   ///< Pointer to the first element (read‑only)
+    size_t size_ = 0;           ///< Number of elements in the span
 
 public:
     // ─────────────────────────────────────────────────────────────────────────
@@ -55,24 +55,18 @@ public:
     ArenaSpan() = default;
 
     /**
-     * @brief Construct a span from a mutable pointer and a size.
+     * @brief Construct a span from a pointer and a size.
      * @param data Pointer to the first element (must be valid for at least `size` elements).
      * @param size Number of elements.
      */
-    ArenaSpan(T* data, size_t size) : data_(data), size_(size) {}
+    ArenaSpan(const T* data, size_t size) : data_(data), size_(size) {}
 
     /**
-     * @brief Construct a span from a const pointer and a size.
-     *
-     * This constructor is necessary when returning a span from a const member
-     * function (e.g., `FuncSignature::getGroup()`). The underlying memory is
-     * not truly const – the const qualifier only reflects the method context.
-     * The caller is expected to use the returned span for read‑only access.
-     *
-     * @param data Pointer to the first element (may be const).
+     * @brief Construct a span from a mutable pointer (converts to const).
+     * @param data Mutable pointer to the first element.
      * @param size Number of elements.
      */
-    ArenaSpan(const T* data, size_t size) : data_(const_cast<T*>(data)), size_(size) {}
+    ArenaSpan(T* data, size_t size) : data_(data), size_(size) {}
 
     // Copy and move are defaulted – trivial because we hold only a pointer and size.
     ArenaSpan(const ArenaSpan&) = default;
@@ -84,9 +78,6 @@ public:
     // Accessors
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Returns a mutable pointer to the underlying data.
-    T* data() { return data_; }
-
     /// Returns a const pointer to the underlying data.
     const T* data() const { return data_; }
 
@@ -97,42 +88,27 @@ public:
     bool empty() const { return size_ == 0; }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Element access
+    // Element access (read‑only)
     // ─────────────────────────────────────────────────────────────────────────
-
-    /// Mutable element access (no bounds checking).
-    T& operator[](size_t idx) { return data_[idx]; }
 
     /// Const element access (no bounds checking).
     const T& operator[](size_t idx) const { return data_[idx]; }
 
-    /// Mutable reference to the first element (undefined if empty).
-    T& front() { return data_[0]; }
-
     /// Const reference to the first element (undefined if empty).
     const T& front() const { return data_[0]; }
-
-    /// Mutable reference to the last element (undefined if empty).
-    T& back() { return data_[size_ - 1]; }
 
     /// Const reference to the last element (undefined if empty).
     const T& back() const { return data_[size_ - 1]; }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Iterators
+    // Iterators (const only)
     // ─────────────────────────────────────────────────────────────────────────
-
-    /// Mutable iterator to the beginning.
-    T* begin() { return data_; }
-
-    /// Mutable iterator to the end.
-    T* end()   { return data_ + size_; }
 
     /// Const iterator to the beginning.
     const T* begin() const { return data_; }
 
     /// Const iterator to the end.
-    const T* end()   const { return data_ + size_; }
+    const T* end() const { return data_ + size_; }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Utility methods
@@ -175,15 +151,9 @@ public:
 };
 
 /**
- * @brief Deduction guide for creating an ArenaSpan from a const pointer.
+ * @brief Deduction guide for creating an ArenaSpan from a pointer and size.
  *
- * This allows the compiler to deduce `T` (non‑const) when a `const T*`
- * is passed to the constructor, avoiding the need to write `ArenaSpan<T>`
- * explicitly in contexts like:
- * @code
- *   const int* ptr = ...;
- *   ArenaSpan span(ptr, 10);   // deduces ArenaSpan<int>
- * @endcode
+ * Allows the compiler to deduce `T` from both mutable and const pointers.
  */
 template <typename T>
 ArenaSpan(const T*, size_t) -> ArenaSpan<T>;

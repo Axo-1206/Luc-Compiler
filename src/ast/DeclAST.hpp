@@ -86,7 +86,6 @@ struct PackageDeclAST : DeclAST {
     explicit PackageDeclAST(InternedString n)
         : DeclAST(ASTKind::PackageDecl), name(n) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,7 +112,6 @@ struct UseDeclAST : DeclAST {
     Visibility visibility = Visibility::Private;
 
     UseDeclAST() : DeclAST(ASTKind::UseDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,7 +140,6 @@ struct VarDeclAST : DeclAST {
     Visibility visibility = Visibility::Private;
 
     VarDeclAST() : DeclAST(ASTKind::VarDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +175,6 @@ struct FuncDeclAST : DeclAST {
     bool hasParams() const { return sig.hasParams(); }
 
     FuncDeclAST() : DeclAST(ASTKind::FuncDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using FuncDeclPtr = ASTPtr<FuncDeclAST>;
@@ -206,7 +202,6 @@ struct FieldDeclAST : BaseAST {
     ExprPtr defaultVal;   // nullptr if no default was written
 
     FieldDeclAST() : BaseAST(ASTKind::FieldDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using FieldDeclPtr = ASTPtr<FieldDeclAST>;
@@ -249,7 +244,6 @@ struct StructDeclAST : DeclAST {
     mutable ASTPtr<NamedTypeAST> selfType;
 
     StructDeclAST() : DeclAST(ASTKind::StructDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,7 +271,6 @@ struct EnumVariantAST : BaseAST {
     explicit EnumVariantAST(InternedString n)
         : BaseAST(ASTKind::EnumVariant), name(n) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using EnumVariantPtr = ASTPtr<EnumVariantAST>;
@@ -307,7 +300,6 @@ struct EnumDeclAST : DeclAST {
     Visibility visibility = Visibility::Private;
 
     EnumDeclAST() : DeclAST(ASTKind::EnumDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,7 +327,6 @@ struct TraitMethodAST : BaseAST {
     bool isAsync() const { return sig.isAsync(); }
 
     TraitMethodAST() : BaseAST(ASTKind::TraitMethod) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using TraitMethodPtr = ASTPtr<TraitMethodAST>;
@@ -366,7 +357,6 @@ struct TraitDeclAST : DeclAST {
     Visibility visibility = Visibility::Private;
 
     TraitDeclAST() : DeclAST(ASTKind::TraitDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -392,7 +382,6 @@ struct TraitRefAST : BaseAST {
     ArenaSpan<TypePtr> genericArgs;   // concrete type arguments
 
     TraitRefAST() : BaseAST(ASTKind::TraitRef) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using TraitRefPtr = ASTPtr<TraitRefAST>;
@@ -431,7 +420,6 @@ struct MethodDeclAST : BaseAST {
     bool isAsync() const { return sig.isAsync(); }
 
     MethodDeclAST() : BaseAST(ASTKind::MethodDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using MethodDeclPtr = ASTPtr<MethodDeclAST>;
@@ -465,9 +453,9 @@ struct FromEntryAST : BaseAST {
     FuncSignature sig;        // parameter groups (source type shape)
     TypePtr returnType;       // must match the target type of FromDeclAST
     StmtPtr body;             // always BlockStmtAST – the conversion logic
+    ExprPtr path;                // non‑null for path entry (e.g., IdentifierExprAST)
 
     FromEntryAST() : BaseAST(ASTKind::FromEntry) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using FromEntryPtr = ASTPtr<FromEntryAST>;
@@ -533,7 +521,6 @@ struct FromDeclAST : DeclAST {
     ArenaSpan<FromEntryPtr> entries;              // conversion definitions
 
     FromDeclAST() : DeclAST(ASTKind::FromDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -690,7 +677,6 @@ struct ImplDeclAST : DeclAST {
     mutable std::unordered_map<InternedString, TypeAST*> resolvedSubstitutionMap;
 
     ImplDeclAST() : DeclAST(ASTKind::ImplDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -723,5 +709,4 @@ struct TypeAliasDeclAST : DeclAST {
     Visibility visibility = Visibility::Private;
 
     TypeAliasDeclAST() : DeclAST(ASTKind::TypeAliasDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };

@@ -195,7 +195,6 @@ struct LiteralExprAST : ExprAST {
     LiteralExprAST(LiteralKind k, InternedString v)
         : ExprAST(ASTKind::LiteralExpr), kind(k), value(std::move(v)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -216,7 +215,6 @@ struct ArrayLiteralExprAST : ExprAST {
     ArenaSpan<ExprPtr> elements;   // may be empty
 
     ArrayLiteralExprAST() : ExprAST(ASTKind::ArrayLiteralExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -240,7 +238,6 @@ struct FieldInitAST : BaseAST {
     FieldInitAST(InternedString n, ExprPtr v)
         : BaseAST(ASTKind::FieldInit), name(n), value(std::move(v)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using FieldInitPtr = ASTPtr<FieldInitAST>;
@@ -268,7 +265,6 @@ struct StructLiteralExprAST : ExprAST {
     ASTPtr<NamedTypeAST> instantiatedType;       // semantic cache
 
     StructLiteralExprAST() : ExprAST(ASTKind::StructLiteralExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -296,7 +292,6 @@ struct IdentifierExprAST : ExprAST {
     explicit IdentifierExprAST(InternedString n)
         : ExprAST(ASTKind::IdentifierExpr), name(n) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -317,7 +312,6 @@ struct FieldAccessExprAST : ExprAST {
     InternedString field;
 
     FieldAccessExprAST() : ExprAST(ASTKind::FieldAccessExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -354,7 +348,6 @@ struct BehaviorAccessExprAST : ExprAST {
     ArenaSpan<TypePtr> genericArgs;               // explicit generic args
 
     BehaviorAccessExprAST() : ExprAST(ASTKind::BehaviorAccessExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -383,7 +376,6 @@ struct CallExprAST : ExprAST {
     bool isAsyncCall = false;         // true if calling an async function
 
     CallExprAST() : ExprAST(ASTKind::CallExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -409,7 +401,6 @@ struct IndexExprAST : ExprAST {
     mutable ASTPtr<TypeAST> sliceType;
 
     IndexExprAST() : ExprAST(ASTKind::IndexExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -433,7 +424,6 @@ struct BinaryExprAST : ExprAST {
     ExprPtr right;
 
     BinaryExprAST() : ExprAST(ASTKind::BinaryExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -452,7 +442,6 @@ struct UnaryExprAST : ExprAST {
     ExprPtr operand;
 
     UnaryExprAST() : ExprAST(ASTKind::UnaryExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -472,7 +461,6 @@ struct AssignExprAST : ExprAST {
     ExprPtr rhs;
 
     AssignExprAST() : ExprAST(ASTKind::AssignExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -493,7 +481,6 @@ struct IsExprAST : ExprAST {
     TypePtr checkType;   // the type being checked against
 
     IsExprAST() : ExprAST(ASTKind::IsExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -519,7 +506,6 @@ struct NullableChainExprAST : ExprAST {
     ArenaSpan<InternedString> steps;   // field names accessed via ?.
 
     NullableChainExprAST() : ExprAST(ASTKind::NullableChainExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -535,7 +521,6 @@ struct NullCoalesceExprAST : ExprAST {
     ExprPtr fallback;
 
     NullCoalesceExprAST() : ExprAST(ASTKind::NullCoalesceExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -562,7 +547,6 @@ struct PipelineStepAST : BaseAST {
     ExprPtr anonFunc;                        // for AnonFunc
 
     PipelineStepAST() : BaseAST(ASTKind::PipelineStep) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using PipelineStepPtr = ASTPtr<PipelineStepAST>;
@@ -584,7 +568,6 @@ struct PipelineExprAST : ExprAST {
     ArenaSpan<PipelineStepPtr> steps;   // at least one
 
     PipelineExprAST() : ExprAST(ASTKind::PipelineExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -602,7 +585,6 @@ struct ComposeOperandAST : BaseAST {
     InternedString field;       // FieldRef
 
     ComposeOperandAST() : BaseAST(ASTKind::ComposeOperand) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using ComposeOperandPtr = ASTPtr<ComposeOperandAST>;
@@ -623,7 +605,6 @@ struct ComposeExprAST : ExprAST {
     ArenaSpan<ComposeOperandPtr> operands;   // right‑hand operands in order
 
     ComposeExprAST() : ExprAST(ASTKind::ComposeExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -651,7 +632,6 @@ struct AnonFuncExprAST : ExprAST {
     bool hasParams() const { return sig.hasParams(); }
 
     AnonFuncExprAST() : ExprAST(ASTKind::AnonFuncExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -672,7 +652,6 @@ struct AwaitExprAST : ExprAST {
     explicit AwaitExprAST(ExprPtr e)
         : ExprAST(ASTKind::AwaitExpr), inner(std::move(e)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -701,7 +680,6 @@ struct OkArmAST : BaseAST {
     StmtPtr        body;       ///< Always BlockStmtAST
 
     OkArmAST() : BaseAST(ASTKind::OkArm) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using OkArmPtr = ASTPtr<OkArmAST>;
@@ -731,7 +709,6 @@ struct ErrArmAST : BaseAST {
     bool isBareError() const { return bindType == nullptr; }
 
     ErrArmAST() : BaseAST(ASTKind::ErrArm) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using ErrArmPtr = ASTPtr<ErrArmAST>;
@@ -762,7 +739,6 @@ struct ResolveExprAST : ExprAST {
     ErrArmPtr  errArm;    ///< Required err arm
 
     ResolveExprAST() : ExprAST(ASTKind::ResolveExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -788,7 +764,6 @@ struct IfExprAST : ExprAST {
     ExprPtr elseBranch;   // expression
 
     IfExprAST() : ExprAST(ASTKind::IfExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -814,7 +789,6 @@ struct RangeExprAST : ExprAST {
     bool isExclusive = false;   // true for ..<
 
     RangeExprAST() : ExprAST(ASTKind::RangeExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -838,7 +812,6 @@ struct TypeConvExprAST : ExprAST {
         : ExprAST(ASTKind::TypeConvExpr),
           targetType(std::move(t)), expr(std::move(e)), isUnsafe(unsafe) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -860,7 +833,6 @@ struct IntrinsicCallExprAST : ExprAST {
     ArenaSpan<ExprPtr> args;             // value arguments in order
 
     IntrinsicCallExprAST() : ExprAST(ASTKind::IntrinsicCallExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -895,7 +867,6 @@ struct BindPatternAST : PatternAST {
     explicit BindPatternAST(InternedString n)
         : PatternAST(ASTKind::BindPattern), name(n) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -908,7 +879,6 @@ struct WildcardPatternAST : PatternAST {
     static constexpr ASTKind staticKind = ASTKind::WildcardPattern;
 
     WildcardPatternAST() : PatternAST(ASTKind::WildcardPattern) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -923,7 +893,6 @@ struct PatternExprAST : PatternAST {
     ExprPtr inner;   // LiteralExprAST or RangeExprAST
 
     PatternExprAST(ExprPtr expr) : PatternAST(ASTKind::PatternExpr), inner(std::move(expr)) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -941,7 +910,6 @@ struct TypePatternAST : PatternAST {
     TypePtr checkType;          // the type being tested against
 
     TypePatternAST() : PatternAST(ASTKind::TypePattern) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -959,7 +927,6 @@ struct FieldPatternAST : BaseAST {
     ASTPtr<PatternAST> subPattern;
 
     FieldPatternAST() : BaseAST(ASTKind::FieldPattern) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using FieldPatternPtr = ASTPtr<FieldPatternAST>;
@@ -983,7 +950,6 @@ struct StructPatternAST : PatternAST {
     ArenaSpan<FieldPatternPtr> fields;           // field patterns in source order
 
     StructPatternAST() : PatternAST(ASTKind::StructPattern) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1013,7 +979,6 @@ struct MatchArmAST : BaseAST {
     ArenaSpan<ExprPtr> exprs;                 // 1 or more result expressions
 
     MatchArmAST() : BaseAST(ASTKind::MatchArm) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using MatchArmPtr = ASTPtr<MatchArmAST>;
@@ -1034,7 +999,6 @@ struct DefaultArmAST : BaseAST {
     ArenaSpan<ExprPtr> exprs;   // 1 or more result expressions
 
     DefaultArmAST() : BaseAST(ASTKind::DefaultArm) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using DefaultArmPtr = ASTPtr<DefaultArmAST>;
@@ -1064,5 +1028,4 @@ struct MatchExprAST : ExprAST {
     SourceLocation defaultLoc;           // location of 'default' keyword
 
     MatchExprAST() : ExprAST(ASTKind::MatchExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };

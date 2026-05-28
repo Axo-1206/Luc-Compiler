@@ -63,7 +63,6 @@ struct BlockStmtAST : StmtAST {
     ArenaSpan<StmtPtr> stmts;   ///< Statements in execution order
 
     BlockStmtAST() : StmtAST(ASTKind::BlockStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -90,7 +89,6 @@ struct ExprStmtAST : StmtAST {
     explicit ExprStmtAST(ExprPtr e)
         : StmtAST(ASTKind::ExprStmt), expr(std::move(e)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -132,7 +130,6 @@ struct DeclStmtAST : StmtAST {
     bool isUseDecl()    const { return decl && decl->isa<UseDeclAST>(); }
     bool isTrait()      const { return decl && decl->isa<TraitDeclAST>(); }
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -165,7 +162,6 @@ struct IfStmtAST : StmtAST {
     StmtPtr  elseBranch;  ///< `nullptr` | `BlockStmtAST` | `IfStmtAST`
 
     IfStmtAST() : StmtAST(ASTKind::IfStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -190,7 +186,6 @@ struct SwitchCaseAST : BaseAST {
     ASTPtr<BlockStmtAST> body;          ///< Statements executed on match
 
     SwitchCaseAST() : BaseAST(ASTKind::SwitchCase) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using SwitchCasePtr = ASTPtr<SwitchCaseAST>;
@@ -220,7 +215,6 @@ struct SwitchStmtAST : StmtAST {
     std::optional<SourceLocation> defaultLoc;  ///< Location of `default` keyword (for diagnostics)
 
     SwitchStmtAST() : StmtAST(ASTKind::SwitchStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -253,7 +247,6 @@ struct ForStmtAST : StmtAST {
     StmtPtr  body;      ///< Always a `BlockStmtAST`
 
     ForStmtAST() : StmtAST(ASTKind::ForStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -272,7 +265,6 @@ struct WhileStmtAST : StmtAST {
     StmtPtr body;        ///< Always a `BlockStmtAST`
 
     WhileStmtAST() : StmtAST(ASTKind::WhileStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -291,7 +283,6 @@ struct DoWhileStmtAST : StmtAST {
     ExprPtr condition;  ///< Evaluated after each iteration; must resolve to `bool`
 
     DoWhileStmtAST() : StmtAST(ASTKind::DoWhileStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -318,7 +309,6 @@ struct ReturnStmtAST : StmtAST {
     ArenaSpan<ExprPtr> values;   ///< Empty for bare `return`, otherwise one or more expressions
 
     ReturnStmtAST() : StmtAST(ASTKind::ReturnStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -335,7 +325,6 @@ struct BreakStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::BreakStmt;
 
     BreakStmtAST() : StmtAST(ASTKind::BreakStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -352,7 +341,6 @@ struct ContinueStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::ContinueStmt;
 
     ContinueStmtAST() : StmtAST(ASTKind::ContinueStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -382,7 +370,6 @@ struct MultiVarDeclAST : StmtAST {
     ExprPtr rhs;                                              ///< Initialiser expression
 
     MultiVarDeclAST() : StmtAST(ASTKind::MultiVarDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 /**
@@ -409,5 +396,4 @@ struct MultiAssignStmtAST : StmtAST {
     ExprPtr rhs;              ///< Right‑hand side expression (single)
 
     MultiAssignStmtAST() : StmtAST(ASTKind::MultiAssignStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };

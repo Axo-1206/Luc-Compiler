@@ -107,7 +107,6 @@ struct PrimitiveTypeAST : TypeAST {
     explicit PrimitiveTypeAST(PrimitiveKind k)
         : TypeAST(ASTKind::PrimitiveType), primitiveKind(k) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,7 +147,6 @@ struct NamedTypeAST : TypeAST {
     explicit NamedTypeAST(InternedString n)
         : TypeAST(ASTKind::NamedType), name(n) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,7 +175,6 @@ struct NullableTypeAST : TypeAST {
     explicit NullableTypeAST(TypePtr t)
         : TypeAST(ASTKind::NullableType), inner(std::move(t)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,7 +210,6 @@ struct ResultTypeAST : TypeAST {
     /// Convenience: true when this is a bare '!' with no error payload
     bool hasErrorType() const { return errorType != nullptr; }
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -241,7 +237,6 @@ struct FixedArrayTypeAST : TypeAST {
     FixedArrayTypeAST(std::uint64_t sz, TypePtr elem)
         : TypeAST(ASTKind::FixedArrayType), size(sz), element(std::move(elem)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,7 +263,6 @@ struct SliceTypeAST : TypeAST {
     explicit SliceTypeAST(TypePtr elem)
         : TypeAST(ASTKind::SliceType), element(std::move(elem)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,7 +290,6 @@ struct DynamicArrayTypeAST : TypeAST {
     explicit DynamicArrayTypeAST(TypePtr elem)
         : TypeAST(ASTKind::DynamicArrayType), element(std::move(elem)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,7 +317,6 @@ struct RefTypeAST : TypeAST {
     explicit RefTypeAST(TypePtr t)
         : TypeAST(ASTKind::RefType), inner(std::move(t)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -372,7 +364,6 @@ struct PtrTypeAST : TypeAST {
     explicit PtrTypeAST(TypePtr t)
         : TypeAST(ASTKind::PtrType), inner(std::move(t)) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -475,5 +466,4 @@ struct FuncTypeAST : TypeAST {
 
     explicit FuncTypeAST() : TypeAST(ASTKind::FuncType) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };

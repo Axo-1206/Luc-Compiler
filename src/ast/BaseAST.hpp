@@ -466,9 +466,6 @@ struct BaseAST {
     explicit BaseAST(ASTKind k) : kind(k) {}
     virtual ~BaseAST() = default;
 
-    // Visitor dispatch – every concrete node must implement this.
-    virtual void accept(ASTVisitor& visitor) = 0;
-
     // Kind‑based type checking (no RTTI overhead)
     template<typename T>
     bool isa() const { return kind == T::staticKind; }
@@ -506,7 +503,6 @@ struct AttributeArgAST : BaseAST {
     AttributeArgAST(AttributeArgKind k, InternedString v)
         : BaseAST(ASTKind::AttributeArg), kind(k), value(v) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using AttributeArgPtr = ASTPtr<AttributeArgAST>;
@@ -518,7 +514,6 @@ struct AttributeAST : BaseAST {
     ArenaSpan<AttributeArgPtr> args;   // arguments, if any
 
     AttributeAST() : BaseAST(ASTKind::Attribute) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using AttributePtr = ASTPtr<AttributeAST>;
@@ -577,7 +572,6 @@ struct ProgramAST : BaseAST {
     ArenaSpan<DeclPtr> decls;         // top‑level declarations in source order
 
     ProgramAST() : BaseAST(ASTKind::Program) {}
-    void accept(ASTVisitor& visitor) override { visitor.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -593,7 +587,6 @@ struct GenericParamAST : BaseAST {
     explicit GenericParamAST(InternedString n)
         : BaseAST(ASTKind::GenericParam), name(n) {}
 
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -608,7 +601,6 @@ struct ParamAST : BaseAST {
     bool           isVariadic = false;
 
     ParamAST() : BaseAST(ASTKind::Param) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 using ParamPtr      = ASTPtr<ParamAST>;
@@ -623,16 +615,7 @@ struct UnknownAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::Unknown;
 
     UnknownAST() : BaseAST(ASTKind::Unknown) {}
-
-    void accept(ASTVisitor& v) override {
-        LUC_LOG_SEMANTIC("visit(UnknownAST) – this should not happen");
-    }
 };
-
-inline UnknownAST* unknownAST() {
-    static UnknownAST instance;
-    return &instance;
-}
 
 inline bool isUnknown(const BaseAST* node) {
     if (!node) return true;
@@ -651,23 +634,19 @@ inline bool isUnknown(const BaseAST* node) {
 struct UnknownDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::UnknownDecl;
     UnknownDeclAST() : DeclAST(ASTKind::UnknownDecl) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 struct UnknownExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::UnknownExpr;
     UnknownExprAST() : ExprAST(ASTKind::UnknownExpr) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 struct UnknownStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::UnknownStmt;
     UnknownStmtAST() : StmtAST(ASTKind::UnknownStmt) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
 
 struct UnknownTypeAST : TypeAST {
     static constexpr ASTKind staticKind = ASTKind::UnknownType;
     UnknownTypeAST() : TypeAST(ASTKind::UnknownType) {}
-    void accept(ASTVisitor& v) override { v.visit(*this); }
 };
