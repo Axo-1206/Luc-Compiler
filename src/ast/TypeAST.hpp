@@ -210,6 +210,12 @@ struct ResultTypeAST : TypeAST {
     /// Convenience: true when this is a bare '!' with no error payload
     bool hasErrorType() const { return errorType != nullptr; }
 
+    // Makes the semantic pass cleaner and provides a single place to enforce the grammar rule.
+    bool isWellFormed() const {
+        if (inner && inner->isa<ResultTypeAST>()) return false;
+        if (errorType && errorType->isa<ResultTypeAST>()) return false;
+    return true;
+}
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1364,7 +1364,6 @@ impl_decl       := [ visibility_mod ] 'impl' impl_target
 impl_target     := IDENTIFIER     -- named type (struct, enum, alias, primitive)
                  | primitive_type -- primitive directly
                  | array_type     -- [_, T], [*, T], [N, T]
-                 | func_type      -- (params) -> return
 
 impl_generic_params := '<' impl_generic_param { ',' impl_generic_param } '>'
 
@@ -1487,23 +1486,20 @@ This `impl` block, being declared last, takes priority over both `file1` and `fi
 
 ### Impl Target Rules
 
-| Target type                                              | Allowed directly? | Example                                               |
-| -------------------------------------------------------- | ----------------- | ----------------------------------------------------- |
-| **Primitive** (`int`, `float`, `string`, `bool`, `char`) | ✅ Yes             | `impl int { isEven () -> bool = { … } }`              |
-| **Struct**                                               | ✅ Yes             | `impl Vec2 { length () -> float = { … } }`            |
-| **Enum**                                                 | ✅ Yes             | `impl Direction { isNorth () -> bool = { … } }`       |
-| **Type alias**                                           | ✅ Yes             | `impl IntList { sum () -> int = { … } }`              |
-| **Array type** (`[_, T]`, `[*, T]`, `[N, T]`)            | ✅ Yes             | `impl [_, int] { sum () -> int = { … } }`             |
-| **Function type**                                        | ✅ Yes             | `impl (int) -> bool { negate () -> (int) -> bool … }` |
-| **Trait**                                                | ❌ No              | Traits are contracts, not implementations             |
+| Target type                                              | Allowed directly? | Example                                         |
+| -------------------------------------------------------- | ----------------- | ----------------------------------------------- |
+| **Primitive** (`int`, `float`, `string`, `bool`, `char`) | ✅ Yes             | `impl int { isEven () -> bool = { … } }`        |
+| **Struct**                                               | ✅ Yes             | `impl Vec2 { length () -> float = { … } }`      |
+| **Enum**                                                 | ✅ Yes             | `impl Direction { isNorth () -> bool = { … } }` |
+| **Type alias**                                           | ✅ Yes             | `impl IntList { sum () -> int = { … } }`        |
+| **Array type** (`[_, T]`, `[*, T]`, `[N, T]`)            | ✅ Yes             | `impl [_, int] { sum () -> int = { … } }`       |
+| **Trait**                                                | ❌ No              | Traits are contracts, not implementations       |
 
-> [!WARNING] `impl` on array and function types
+> [!WARNING] `impl` on array types
 >
-> **Array types** — methods defined on `[_, int]` apply to every slice of `int` in the visible scope. Use with care or prefer a named alias for clarity and narrower scope. There are no built-in array methods to shadow — the compiler only knows indexing and slicing.
+> Methods defined on `[_, int]` apply to every slice of `int` in the visible scope. Use with care or prefer a named alias for clarity and narrower scope. There are no built-in array methods to shadow — the compiler only knows indexing and slicing.
 >
-> **Function types** — methods defined on a function type apply to every value of that exact signature in scope. Qualifiers are part of type identity: `impl (int) -> bool` does not cover `~async (int) -> bool`.
->
-> **Array of function types** — both rules apply together. The element function type must be an exact signature match including qualifiers:
+> Arrays of function types are valid targets — the element function type must be an exact signature match including qualifiers:
 >
 > ```luc
 > impl [_, (int) -> bool] as predicates {
@@ -1528,7 +1524,6 @@ An `impl` block may declare generic parameters **only when the target type is ge
 | Type alias (non-generic) | ✅ Yes                 | ❌ No                    |                                                           |
 | Type alias (generic)     | ✅ Yes                 | ✅ Yes, arity must match | `type Pair<K,V>` → `impl Pair<K,V>`                       |
 | Array type               | ✅ Yes                 | ❌ No                    | Methods apply to all arrays of that element type in scope |
-| Function type            | ✅ Yes                 | ❌ No                    | Qualifier is part of identity — exact match only          |
 | Trait                    | ❌ No                  | N/A                     | Traits are contracts, not implementations                 |
 
 When the target type is generic but the impl declaration omits generic parameters, the compiler requires them in method signatures — you must declare the type parameters to use them.
@@ -1636,13 +1631,6 @@ impl [_, int] as list {
     sort = utils.sortSlice(list)!    -- resolved: () -> [_, int]
 }
 
--- Function type with alias
-impl (int) -> bool as pred {
-    negate () -> (int) -> bool = {
-        return (x int) -> bool { return not pred(x) }
-    }
-}
-
 -- Generic type alias
 type Pair<T, E> = struct { ok T?, err E? }
 
@@ -1651,10 +1639,10 @@ impl Pair<T, E> as p {
 }
 
 -- ERROR cases
-impl int<T> { ... }      -- ERROR: primitive cannot have generics
-impl Enum<T> { ... }     -- ERROR: enum cannot have generics
-impl Vec2<T> { ... }     -- ERROR: non-generic struct cannot have generics
-impl Pair<X> { ... }     -- ERROR: arity mismatch (needs 2 parameters, got 1)
+impl int<T> { ... }         -- ERROR: primitive cannot have generics
+impl Enum<T> { ... }        -- ERROR: enum cannot have generics
+impl Vec2<T> { ... }        -- ERROR: non-generic struct cannot have generics
+impl Pair<X> { ... }        -- ERROR: arity mismatch (needs 2 parameters, got 1)
 ```
 
 ---
@@ -2095,8 +2083,9 @@ postfix_expr    := primary_expr { postfix_op }
 postfix_op      := '.' IDENTIFIER
                  | ':' IDENTIFIER
                  | '::' IDENTIFIER '.' IDENTIFIER
-                 | '?.' IDENTIFIER
-                 | '??' expr                  -- lhs is nil or T!E: result is rhs
+                 | '?.' IDENTIFIER                -- nullable chain: access field on nullable value
+                                                  -- must be terminated by '??' in the expression
+                 | '??' expr                      -- lhs is nil or T!E: result is rhs
                  | '[' expr ']'
                  | '[' expr '..'  expr ']'
                  | '[' expr '..<' expr ']'
@@ -2266,23 +2255,166 @@ The compiler has direct knowledge of three array operations only. Everything els
 
 ### Standard Library Methods
 
-All other array operations — `.len()`, `.push()`, `.pop()`, `.clear()`, `.reserve()`, etc. — are provided by the standard library as `impl` blocks on the array types. The standard library is included by default but is not part of the language specification.
+All array operations beyond indexing and slicing are provided by the standard library. The standard library exposes every operation in **two forms simultaneously** — a standalone function and an `impl` method. The developer chooses whichever fits their style.
 
-Users who want different semantics can write their own `impl` blocks. The compiler does not enforce any particular method names or signatures beyond the three built-in operations above.
+#### How the Standard Library Is Structured
+
+The standard library uses `@extern` to call into the Luc runtime for operations that require access to the internal array header (length, capacity, allocation). It then wraps those into exported functions, and registers those functions as `impl` methods via the injection form:
 
 ```luc
--- example: user-defined impl on a slice type
-impl [_, int] {
+-- ── @extern runtime calls (internal, not exported) ─────────────────
+
+@extern("luc_slice_len")
+const _sliceLen     (arr *uint8) -> uint64
+
+@extern("luc_dynarray_push")
+const _dynarrayPush (arr *uint8, elem *uint8)
+
+@extern("luc_dynarray_pop")
+const _dynarrayPop  (arr *uint8) -> *uint8
+
+@extern("luc_dynarray_clear")
+const _dynarrayClear (arr *uint8)
+
+@extern("luc_dynarray_reserve")
+const _dynarrayReserve (arr *uint8, n uint64)
+
+
+-- ── exported functions: usable directly ─────────────────────────────
+
+export const len<T>     (arr [_, T])          -> uint64 = { return _sliceLen(#refToPtr(arr)) }
+export const len<T>     (arr [*, T])          -> uint64 = { return _sliceLen(#refToPtr(arr)) }
+export const push<T>    (arr [*, T], v T)               = { _dynarrayPush(#refToPtr(arr), #refToPtr(v)) }
+export const pop<T>     (arr [*, T])          -> T      = { return #ptrToRef(_dynarrayPop(#refToPtr(arr))) }
+export const clear<T>   (arr [*, T])                    = { _dynarrayClear(#refToPtr(arr)) }
+export const reserve<T> (arr [*, T], n uint64)          = { _dynarrayReserve(#refToPtr(arr), n) }
+export const first<T>   (arr [_, T])          -> T      = { return arr[0] }
+export const last<T>    (arr [_, T])          -> T      = { return arr[arr:len() - 1] }
+
+
+-- ── impl blocks: usable as methods via injection ─────────────────────
+
+impl [_, T] as s {
+    len     = std.len<T>(s)!
+    isEmpty () -> bool = { return s:len() == 0 }
+    first   = std.first<T>(s)!
+    last    = std.last<T>(s)!
+}
+
+impl [*, T] as a {
+    len     = std.len<T>(a)!
+    isEmpty () -> bool = { return a:len() == 0 }
+    push    = std.push<T>(a)!
+    pop     = std.pop<T>(a)!
+    clear   = std.clear<T>(a)!
+    reserve = std.reserve<T>(a)!
+    first   = std.first<T>(a)!
+    last    = std.last<T>(a)!
+}
+
+impl [N, T] as b {
+    len     () -> uint64 = { return N }    -- compile-time constant, no extern needed
+    isEmpty () -> bool   = { return N == 0 }
+    first   = std.first<T>(b)!
+    last    = std.last<T>(b)!
+}
+```
+
+#### Two Options for the Developer
+
+**Option 1 — method style via `impl`:**
+
+```luc
+let nums [*, int] = [1, 2, 3, 4, 5]
+
+nums:push(6)
+let n     = nums:len()
+let first = nums:first()
+nums:clear()
+```
+
+**Option 2 — function style directly:**
+
+```luc
+let nums [*, int] = [1, 2, 3, 4, 5]
+
+std.push(nums, 6)
+let n     = std.len(nums)
+let first = std.first(nums)
+std.clear(nums)
+```
+
+**Option 2 also works in pipelines:**
+
+```luc
+let n = nums |> std.len
+```
+
+Both options are zero-overhead — the `impl` injection wrapper is inlined by the compiler to the same direct call as the function style.
+
+#### What Requires `@extern`
+
+Operations that require touching the internal array header cannot be expressed in plain Luc code and must use `@extern`:
+
+| Operation    | Requires `@extern`? | Why                            |
+| ------------ | ------------------- | ------------------------------ |
+| `len()`      | ✅ Yes               | reads internal header field    |
+| `cap()`      | ✅ Yes               | reads internal header field    |
+| `push()`     | ✅ Yes               | mutates header, may reallocate |
+| `pop()`      | ✅ Yes               | mutates header                 |
+| `clear()`    | ✅ Yes               | frees buffer, resets header    |
+| `reserve()`  | ✅ Yes               | allocates heap buffer          |
+| `first()`    | ❌ No                | only uses indexing             |
+| `last()`     | ❌ No                | only uses indexing + `len()`   |
+| `sum()`      | ❌ No                | only uses iteration            |
+| `contains()` | ❌ No                | only uses iteration            |
+
+#### Writing Your Own Array Methods
+
+Developers can add methods to any array type using `impl`. Operations that only need indexing and iteration require no `@extern`:
+
+```luc
+impl [_, int] as list {
     sum () -> int = {
         let total int = 0
-        for v int in self { total += v }
+        for v int in list { total += v }
         return total
     }
+
+    contains (target int) -> bool = {
+        for v int in list {
+            if v == target { return true }
+        }
+        return false
+    }
+}
+
+-- use as method or standalone function
+let nums [_, int] = [1, 2, 3, 4, 5]
+nums:sum()         -- 15
+nums:contains(3)   -- true
+```
+
+Operations that need the internal header must go through `@extern`:
+
+```luc
+-- declare the runtime function
+@extern("luc_slice_len")
+const _sliceLen (arr *uint8) -> uint64
+
+-- wrap it
+export const myLen<T> (arr [_, T]) -> uint64 = {
+    return _sliceLen(#refToPtr(arr))
+}
+
+-- register as method
+impl [_, int] as s {
+    myLen = myLen<int>(s)!
 }
 ```
 
 > [!NOTE]
-> The standard library's `impl` blocks for array types follow the same shadowing rules as any other `impl` — a local `impl` in a narrower scope wins over the std library's `impl` in the outer scope. This means users can selectively override individual methods without replacing the entire standard implementation.
+> The standard library's `impl` blocks follow the same scope-proximity rules as any other `impl` — a local `impl` in a narrower scope wins. Developers can selectively override individual methods without replacing the entire standard implementation.
 
 ---
 
@@ -2444,7 +2576,7 @@ When conditions are joined by `and`, the exit fires only if ALL are true. The in
 if a == nil and b == nil { return }
 -- inverse: a != nil OR b != nil
 -- only one is guaranteed non-nil — cannot narrow either safely
--- W3009 emitted: 'and' at top level prevents narrowing
+-- no narrowing applied when 'and' is at the top level
 ```
 
 **Nested `and`/`or` — compiler walks until it hits `and`:**
@@ -2833,6 +2965,132 @@ if cache:has(key) or expensiveLoad(key) { ... }        -- short-circuit
 if not isValid { ... }
 if not x { ... }    -- x is nullable: nil treated as false, not flips to true
 ```
+
+---
+
+## Nullable Chain Operator `?.`
+
+`?.` accesses a field on a nullable value without requiring an explicit nil check first. If the value is nil, the entire chain short-circuits and produces nil. The chain **must** be terminated by `??` — the compiler enforces this. Using `?.` without a terminating `??` is a compile error.
+
+```
+nullable_chain  := expr '?.' IDENTIFIER { '?.' IDENTIFIER } '??' expr
+                   -- expr before ??  : the chain — one or more ?. accesses
+                   -- expr after  ??  : the fallback value when any step is nil
+```
+
+### How It Works
+
+`?.` propagates nil through the chain lazily. Each step is evaluated only if the previous step was non-nil. The first nil encountered short-circuits the rest of the chain and the `??` fallback is produced:
+
+```luc
+struct Address { city string  zip string }
+struct User    { name string  address Address? }
+
+let user User? = getUser()
+
+-- without ?.
+let city string = ""
+if user != nil and user.address != nil {
+    city = user.address.city
+}
+
+-- with ?. — flat, readable, same semantics
+let city string = user?.address?.city ?? ""
+```
+
+### Chaining Rules
+
+Each `?.` step accesses one field or calls one method on the result of the previous step. The result of the entire chain before `??` is the type of the final accessed field wrapped in `?`:
+
+```luc
+let user  User?    = getUser()
+let zip   string   = user?.address?.zip ?? "unknown"
+--                   ^^^^^^^^^^^^^^^^^^^
+--                   type before ?? is string? — nullable because chain may short-circuit
+
+let len   int      = user?.name?.len() ?? 0     -- method call at end of chain
+```
+
+### `?.` vs `.` vs `??`
+
+| Operator | Requires non-nil?     | Produces              |
+| -------- | --------------------- | --------------------- |
+| `.`      | ✅ Yes — crash if nil  | `T`                   |
+| `?.`     | ❌ No — short-circuits | `T?`                  |
+| `??`     | —                     | `T` (fallback if nil) |
+
+`?.` and `??` are complementary — `?.` introduces potential nil, `??` resolves it:
+
+```luc
+struct Foo { field int }
+
+let a Foo? = nil
+
+a.field          -- ERROR: a is nullable, use ?. or guard first
+a?.field         -- OK: produces int? — but still needs ??
+a?.field ?? 0    -- OK: full chain, produces int
+```
+
+### Nullable Element Access in Arrays
+
+`?.` also applies to array element access on nullable arrays:
+
+```luc
+type IntList = [_, int]
+
+let arr IntList? = getList()
+
+let first int = arr?[0] ?? -1    -- arr is nil: -1, else arr[0]
+```
+
+### Nested Structs — Full Example
+
+```luc
+struct Engine  { horsepower int  cylinders int }
+struct Car     { engine Engine?  model string  }
+struct Garage  { car Car?  owner string }
+
+let garage Garage? = getGarage()
+
+-- deeply nested nullable access — flat with ?.
+let hp      int    = garage?.car?.engine?.horsepower ?? 0
+let model   string = garage?.car?.model              ?? "unknown"
+let owner   string = garage?.owner                   ?? "no owner"
+
+-- partial chain — access stops at Car level
+let car     Car?   = garage?.car ?? Car { engine = nil  model = "default" }
+```
+
+### With Method Calls
+
+`?.` can appear before a method call using `:` at the end of the chain:
+
+```luc
+let user User? = getUser()
+
+let upper string = user?.name:toUpper() ?? ""
+--                 ^^^^^^^^^^ ?.  accesses name (string? if User? → name is string)
+--                                :toUpper() called on string
+--                                ?? resolves the nullable result
+```
+
+> [!WARNING]
+> `?.` without a terminating `??` anywhere in the enclosing expression is a compile error. The compiler enforces that every nullable chain is resolved before the value is used:
+>
+> ```luc
+> let city = user?.address?.city      -- ERROR: nullable chain not terminated by ??
+> let city = user?.address?.city ?? ""  -- OK
+> ```
+
+> [!NOTE]
+> `?.` only applies to field access and method calls — not to function calls on a nullable function binding. For nullable function calls, use a nil guard or the `~nullable` qualifier pattern:
+>
+> ```luc
+> let handler ~nullable (e Event) = nil
+>
+> handler?.()          -- ERROR: ?. not valid for function calls
+> if handler != nil { handler(e) }    -- OK: explicit guard
+> ```
 
 ---
 
@@ -3350,10 +3608,8 @@ Attribute arguments are intentionally limited to compile-time literals and type 
 #### `@extern` Rules
 
 - Requires `const`, not `let` — the linker resolves the symbol permanently.
-- Functions must have no body.
-- `W3001` warning when `let` is used instead of `const`.
-- `W3002` warning when an empty body `= {}` is supplied (body silently ignored).
-- `E3002` error when a non-empty body is supplied.
+- Functions must have no body — the compiler emits a warning if an empty body `= {}` is supplied (it is silently ignored) and an error if a non-empty body is supplied.
+- Using `let` instead of `const` produces a warning.
 
 ```luc
 @extern("malloc")
