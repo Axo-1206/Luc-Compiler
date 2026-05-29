@@ -5,7 +5,7 @@ namespace DiagnosticMessages {
 std::string_view getMessage(DiagCode code) {
     switch (code) {
         case DiagCode::E0001: return "File not found or inaccessible.";
-        case DiagCode::E1001: return "Invalid character.";
+        case DiagCode::E1001: return "Invalid character '%s' in source code (only ASCII allowed).";
         case DiagCode::E1002: return "Unterminated string literal.";
         case DiagCode::E1003: return "Unterminated raw string literal.";
         case DiagCode::E1004: return "Mismatched '#' count in raw string literal.";

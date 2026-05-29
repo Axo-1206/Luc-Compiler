@@ -27,10 +27,6 @@ std::string getAbsolutePath(const std::string& path) {
     return path;
 }
 
-/**
- * Luc Engine Entry Point — Semantic Test Driver
- * Handles source loading, lexical analysis, parsing, and full semantic validation.
- */
 int main(int argc, char* argv[]) {
     // ========================================================================
     // DEBUG INITIALIZATION - Print configuration
@@ -87,14 +83,16 @@ int main(int argc, char* argv[]) {
     std::cout << "[MAIN] Source file size: " << source.size() << " bytes" << std::endl;
 
     StringPool stringPool; 
+    InternedString fileId = stringPool.intern(filePath);
     AttributeRegistry::instance().setStringPool(stringPool);
     IntrinsicRegistry::instance().setStringPool(stringPool);
     QualifierRegistry::instance().setStringPool(stringPool);
     
     // Phase 1: Lexical Analysis
     std::cout << "[MAIN] Starting lexical analysis..." << std::endl;
-    Lexer lexer(source);
-    std::vector<Token> tokens = lexer.tokenize();
+    LexerState* lexer = createLexer(source, fileId);
+    std::vector<Token> tokens = tokenize(lexer);
+    destroyLexer(lexer);
     std::cout << "[MAIN] Lexical analysis complete: " << tokens.size() << " tokens" << std::endl;
     
     // Error reporting for Lexer
