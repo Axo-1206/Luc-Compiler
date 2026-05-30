@@ -205,17 +205,17 @@ array_type      := '[' '_' ',' type ']'              -- slice:   [_, T]  (fat po
                  | '[' '*' ',' type ']'              -- dynamic: [*, T]  (heap-owned, growable)
                  | '[' INT_LITERAL ',' type ']'      -- fixed:   [N, T]  (stack, compile-time size)
 
--- Generic array type — only valid as an impl target.
+-- Generic array type — valid as an impl target or a from target.
 -- '<' IDENTIFIER '>' inside the bracket declares a free type variable.
--- The compiler unifies the variable with the concrete element type at the call site.
--- Equivalent to declaring a type alias 'type Slice<T> = [_, T]' and using 'impl Slice<T>'.
--- Multiple variables allowed: [_, <K>, <V>] is not valid — arrays have one element type.
--- Only one type variable per array type.
--- IMPORTANT: generic_array_type is ONLY valid as an impl target — it is NOT a valid type
--- in variable declarations, function parameters, return types, or struct fields.
+-- The compiler unifies the variable with the concrete element type at the declaration site.
+-- Equivalent to declaring a type alias 'type Slice<T> = [_, T]' and using 'impl Slice<T>'
+-- or 'from Slice<T>'.
+-- Only one type variable per array type — arrays have one element type.
+-- IMPORTANT: generic_array_type is ONLY valid as an impl or from target — it is NOT a valid
+-- type in variable declarations, function parameters, return types, or struct fields.
 -- Use a type alias for those contexts: type Slice<T> = [_, T]
-generic_array_type := '[' '_' ',' '<' IDENTIFIER '>' ']'        -- [_, <T>]
-                    | '[' '*' ',' '<' IDENTIFIER '>' ']'        -- [*, <T>]
+generic_array_type := '[' '_' ',' '<' IDENTIFIER '>' ']'         -- [_, <T>]
+                    | '[' '*' ',' '<' IDENTIFIER '>' ']'         -- [*, <T>]
                     | '[' INT_LITERAL ',' '<' IDENTIFIER '>' ']' -- [N, <T>]
 
 -- Generic arguments — always before '?'
@@ -1841,7 +1841,7 @@ impl_target     := IDENTIFIER          -- named type (struct, enum, alias, primi
                  | primitive_type      -- primitive directly
                  | array_type          -- [_, T], [*, T], [N, T]  — concrete element type
                  | generic_array_type  -- [_, <T>], [*, <T>], [N, <T>]  — free type variable
-                   -- generic_array_type is ONLY valid as an impl target
+                   -- generic_array_type is valid as an impl or from target
                    -- the '<T>' declares T as a free type variable unified at each call site
                    -- equivalent to: type Slice<T> = [_, T]  then  impl Slice<T>
                    -- T is then usable in method signatures as a plain IDENTIFIER
@@ -2105,19 +2105,24 @@ nums:last()     -- 3  — from impl Slice<T> with T = int, same target
 When a method needs to refer to the element type — for example returning `T` from `first()` or accepting `T` in `push()` — use the `<T>` syntax inside the bracket to declare a free type variable:
 
 > [!WARNING]
-> `[_, <T>]` is only valid as an `impl` target
+> `[_, <T>]` is only valid as an `impl` or `from` target
 > The `<T>` syntax inside an array bracket is **not a valid type** in any other context. It cannot appear in variable declarations, function parameters, return types, or struct fields. For those contexts, use a named type alias:
 >
 > ```luc
-> -- ONLY valid here: impl target
+> -- valid: impl target
 > impl [_, <T>] as s { ... }
+>
+> -- valid: from target
+> from [_, <T>] {
+>     sliceOf<T>    -- registers (T) -> [_, T]
+> }
 >
 > -- INVALID everywhere else
 > let arr  [_, <T>]  = []         -- ERROR: not a valid variable type
 > let f    (items [_, <T>]) = {}  -- ERROR: not a valid parameter type
 > type Foo = [_, <T>]             -- ERROR: not a valid alias body
 >
-> -- CORRECT for non-impl contexts: use a type alias
+> -- CORRECT for non-impl/from contexts: use a type alias
 > type Slice<T> = [_, T]
 > let arr  Slice<int>          = []
 > let f    (items Slice<int>)  = {}
@@ -2253,6 +2258,46 @@ impl int as i {
     toStr = utils.toStr<int>(i)!    -- generic instantiated, i injected
 }
 
+-- Generic function assigned to generic struct impl
+-- The generic parameter T flows from impl Box<T> into the method assignment
+export const unwrap<T>  (box Box<T>) -> T      = { return box.value }
+export const rewrap<T>  (box Box<T>, v T) -> Box<T> = { return Box<T> { value = v } }
+export const transform<T, U> (box Box<T>, f (T) -> U) -> Box<U> = {
+    return Box<U> { value = f(box.value) }
+}
+
+impl Box<T> as b {
+    -- inject b as first param, T flows through from impl Box<T>
+    unwrap    = unwrap<T>(b)!
+    rewrap    = rewrap<T>(b)!
+
+    -- transform has two param groups: (box Box<T>)(f ...) → after injection: (f (T) -> U) -> Box<U>
+    -- U is a free type variable resolved at the call site
+    map<U>    = transform<T, U>(b)!    -- generic method: extra type param U at call site
+}
+
+-- call sites
+let box  Box<int>    = Box<int> { value = 42 }
+box:unwrap()                              -- 42
+box:rewrap(100)                           -- Box<int> { value = 100 }
+box:map<string>(toString<int>)            -- Box<string> { value = "42" }
+
+-- Generic array impl with generic function injection
+export const sortSlice<T : Comparable> (s [_, T]) -> [_, T] = { ... }
+export const findFirst<T> (s [_, T], pred (T) -> bool) -> T? = { ... }
+
+impl [_, <T>] as s {
+    -- plain generic injection: T flows from [_, <T>]
+    sort      = sortSlice<T>(s)!
+
+    -- findFirst needs a pred argument at the call site
+    findFirst = findFirst<T>(s)!    -- resolved: (pred (T) -> bool) -> T?
+}
+
+let nums [_, int] = [3, 1, 4, 1, 5]
+nums:sort()                                       -- sorted slice
+nums:findFirst((v int) -> bool { return v > 3 }) -- 4?
+
 -- @extern single param — works perfectly
 @extern("strlen")
 const strlen (s *uint8) -> uint64
@@ -2327,8 +2372,12 @@ impl Pair<X> { ... }        -- ERROR: arity mismatch (needs 2 parameters, got 1)
 `from` can be declared at top level or inside a block. Local declarations **must not** have `pub` or `export`.
 
 ```
-from_decl   := [ visibility_mod ] 'from' type [ generic_params ]
+from_decl   := [ visibility_mod ] 'from' from_target [ generic_params ]
                '{' { from_entry } '}'
+
+from_target := type                -- any named, primitive, array, or alias type
+             | generic_array_type  -- [_, <T>], [*, <T>], [N, <T>]  — free type variable
+                                   -- same rule as impl: T declared here, usable in entries
 
 from_entry  := param_group { param_group } '->' type '=' func_body   -- inline entry
              | func_ref                                               -- path entry
@@ -2372,6 +2421,48 @@ A `from` block defines implicit and explicit conversions from a source type (des
 - The function must be a plain non-qualified function — qualifiers forbidden.
 - No receiver injection (`!`) — `from` converts *to* the target type, not *on* it.
 - Local functions, imported functions, and `@extern` non-variadic functions are all valid.
+
+**Generic function as path entry — concrete target:**
+
+A generic function can be used as a path entry by instantiating it at the entry site with explicit type arguments. The compiler reads the instantiated signature and registers it as a conversion entry. The target type must match the instantiated return type:
+
+```luc
+export const toString<T>  (v T)      -> string = { ... }
+export const parseAs<T>   (s string) -> T      = { ... }
+
+-- concrete target: instantiate at entry site
+from string {
+    toString<int>      -- registers (int) -> string
+    toString<float>    -- registers (float) -> string
+    toString<bool>     -- registers (bool) -> string
+}
+
+from int {
+    parseAs<int>       -- registers (string) -> int
+}
+```
+
+**Generic function as path entry — generic target:**
+
+When the `from` target is a generic type, its type parameters are available to path entries — the same rule as `impl Box<T>`. The generic parameter flows from the `from` declaration into the path entry instantiation:
+
+```luc
+struct Box<T> { value T }
+
+export const wrap<T>   (v T)      -> Box<T> = { return Box<T> { value = v } }
+export const rewrap<T> (s string) -> Box<T> = { return Box<T> { value = parseAs<T>(s) } }
+
+-- T flows from from Box<T> into the path entries
+from Box<T> {
+    wrap<T>      -- registers (T) -> Box<T>
+    rewrap<T>    -- registers (string) -> Box<T>
+}
+
+-- call sites
+let b  Box<int>    = Box<int>(42)       -- uses wrap<int>
+let b2 Box<int>    = Box<int>("42")     -- uses rewrap<int>
+let b3 Box<string> = Box<string>("hi")  -- uses wrap<string>
+```
 
 **Conflict resolution** — if two `from` entries in the same block have identical source signatures, it is a compile error. Across multiple `from` blocks for the same target type, the innermost or last-declared block wins by the same scope-proximity rule as `impl`.
 
@@ -2455,11 +2546,50 @@ from string {
     localCharToStr                         -- path entry: local function
 }
 
--- Path entry with generic instantiation
--- utils.toStr<int>: (n int) -> string → registered as from entry
+-- Path entries with generic instantiation — concrete target
+-- instantiate at the entry site, compiler reads the resolved signature
+export const toString<T>  (v T)      -> string = { ... }
+export const parseAs<T>   (s string) -> T      = { ... }
+
 from string {
-    utils.toStr<int>    -- instantiate generic, register signature
+    toString<int>      -- registers (int)    -> string
+    toString<float>    -- registers (float)  -> string
+    toString<bool>     -- registers (bool)   -> string
 }
+
+from int {
+    parseAs<int>       -- registers (string) -> int
+}
+
+let s1 string = string(42)       -- uses toString<int>
+let s2 string = string(3.14)     -- uses toString<float>
+let n  int    = int("42")        -- uses parseAs<int>
+
+-- Generic function path entry — generic target
+-- T flows from from Box<T> into path entries, same rule as impl Box<T>
+struct Box<T> { value T }
+
+export const wrap<T>   (v T)      -> Box<T> = { return Box<T> { value = v } }
+export const rewrap<T> (s string) -> Box<T> = { return Box<T> { value = parseAs<T>(s) } }
+
+from Box<T> {
+    wrap<T>      -- registers (T)      -> Box<T>
+    rewrap<T>    -- registers (string) -> Box<T>
+}
+
+let b1 Box<int>    = Box<int>(42)      -- uses wrap<int>
+let b2 Box<int>    = Box<int>("42")    -- uses rewrap<int>
+let b3 Box<string> = Box<string>("hi") -- uses wrap<string>
+
+-- Generic array target
+export const sliceOf<T> (v T) -> [_, T] = { return [v] }
+
+from [_, <T>] {
+    sliceOf<T>    -- registers (T) -> [_, T]
+}
+
+let nums [_, int]    = [_, int](42)      -- [42]
+let strs [_, string] = [_, string]("hi") -- ["hi"]
 
 -- From on array type directly
 from [_, int] {
