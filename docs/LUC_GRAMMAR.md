@@ -897,49 +897,20 @@ let g (src string) -> (int, bool, string)
 
 ### Currying
 
-Multiple parameter groups express curry. Each `()` group is one call step. The compiler desugars this into a function that returns another function.
+Multiple parameter groups express curry. Each `()` group is one call step. See **`## Curry Functions`** for the full specification of both forms, execution semantics, partial application, and performance characteristics.
 
 ```luc
--- give add an int, get back (b int) -> int
 let add (a int)(b int) -> int = { return a + b }
 
 add(10)       -- returns (b int) -> int
-add(10)(5)    -- returns 15
+add(10)(5)    -- 15
 
--- deep curry
-let clamp (min int)(max int)(value int) -> int = {
-    if value < min { return min }
-    if value > max { return max }
-    return value
-}
+-- chains with |> and +>
+let addTen (b int) -> int = add(10)
+42 |> addTen                   -- 52
 
-let clamp0to100 = clamp(0)(100)    -- (value int) -> int
-clamp0to100(42)                    -- 42
-clamp0to100(150)                   -- 100
-
--- chains naturally with |> and +>
-let addTen = add(10)
-42 |> addTen |> string             -- "52"
-
-let process = add(10) +> string    -- (b int) -> string
-process(5)                         -- "15"
-```
-
-The compiler desugars multiple parameter groups into a function that explicitly returns an anonymous function. You always write the sugar form:
-
-```luc
--- what you write
-let add (a int)(b int) -> int = { return a + b }
-
--- what the compiler produces internally (never write this yourself)
-let add (a int) -> (b int) -> int = { return (b int) -> int { return a + b } }
-```
-
-To close over a local variable (not a parameter), write the anonymous function explicitly:
-
-```luc
-let multiplier int = 3
-let scale = (x int) -> int { return x * multiplier }
+let process (b int) -> string = add(10) +> string
+process(5)                     -- "15"
 ```
 
 ### Returned Curry Functions
@@ -1225,6 +1196,223 @@ let f (a int) -> Transform? = { ... }
 -- curry returning nullable function inline
 let f (a int) -> ~nullable (b int) -> int = { ... }
 ```
+
+---
+
+## Curry Functions
+
+A curry function is a function that can be partially applied — called with fewer argument groups than it declares, producing a new function that accepts the remaining groups. Luc supports two syntactic forms for curry functions. Both produce the same call site but have different semantics, performance characteristics, and expressiveness.
+
+### Form 1 — Explicit Return Function
+
+The outer function explicitly returns an inner function as its body result. The return type in the signature names the inner function type:
+
+```luc
+let add (a int) -> (b int) -> int = {
+    return (b int) -> int { return a + b }
+}
+```
+
+**What executes when:**
+
+The outer body runs immediately when the first group is called. The inner function is created at that point and returned as a value:
+
+```luc
+let addTen (b int) -> int = add(10)
+-- outer body ran: closure created capturing a=10
+-- inner function returned and stored in addTen
+
+let result int = addTen(5)    -- 15: inner body runs here
+```
+
+**Pre-computation at partial application:**
+
+Because the outer body runs at the first call, you can do expensive setup once and capture the result — the inner function then uses the already-computed value:
+
+```luc
+let makeProcessor (config Config) -> (data string) -> string = {
+    let compiled = config:compile()    -- runs ONCE at makeProcessor(config)
+    return (data string) -> string { return compiled:apply(data) }
+}
+
+let process (data string) -> string = makeProcessor(myConfig)
+-- config:compile() already done — process(data) is cheap on every call
+process("input1")
+process("input2")
+```
+
+**Explicit capture control:**
+
+The inner function captures only what you explicitly reference. You can transform outer parameters before capturing:
+
+```luc
+let scaleBy (factor int) -> (v int) -> int = {
+    let multiplier int = factor * 2    -- transform before capture
+    return (v int) -> int { return v * multiplier }
+    -- multiplier captured, not factor
+}
+```
+
+### Form 2 — Multiple Parameter Groups
+
+Multiple `()` groups after the function name. The body runs only when **all** groups are provided. The compiler desugars this into form 1 internally — you never write the nested return:
+
+```luc
+let add (a int)(b int) -> int = {
+    return a + b    -- a and b both available: body runs when both groups provided
+}
+```
+
+**What executes when:**
+
+The body does not run until every parameter group is supplied. Partial application produces a compiler-generated closure:
+
+```luc
+let addTen (b int) -> int = add(10)
+-- body has NOT run yet: compiler wrapped add with a=10 captured
+-- addTen is a closure waiting for b
+
+let result int = addTen(5)    -- body runs NOW: a=10, b=5 → 15
+```
+
+**Deep curry:**
+
+```luc
+let clamp (lo int)(hi int)(v int) -> int = {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+
+let clamp0to100 (v int) -> int = clamp(0)(100)
+clamp0to100(42)     -- 42
+clamp0to100(150)    -- 100
+clamp0to100(-5)     -- 0
+```
+
+**Generic parameters apply to all groups:**
+
+```luc
+let map<T, U> (items [_, T])(f (T) -> U) -> [*, U] = {
+    let result [*, U] = []
+    for item T in items { result:push(f(item)) }
+    return result
+}
+
+let doubled [*, int] = map<int, int>([1, 2, 3])(double)
+let strs     [*, string] = map<int, string>([1, 2, 3])(toString<int>)
+```
+
+### Key Differences
+
+|                             | Form 1                                          | Form 2                                   |
+| --------------------------- | ----------------------------------------------- | ---------------------------------------- |
+| Syntax                      | `(a int) -> (b int) -> int`                     | `(a int)(b int) -> int`                  |
+| Body runs at                | First group call                                | All groups provided                      |
+| Pre-computation             | ✅ Before inner function created                 | ❌ Not possible                           |
+| Capture control             | ✅ Explicit — reference what you need            | ❌ Implicit — compiler captures used vars |
+| Boilerplate                 | Higher — must write `return (...) -> T { ... }` | Lower — plain body                       |
+| Mixing logic between groups | ✅ Yes — outer body is free code                 | ❌ No — only one body for all groups      |
+| Compiler desugars to        | Itself                                          | Form 1                                   |
+
+### Partial Application — Intermediate Type Annotation Required
+
+Luc requires explicit type annotations on all declarations — partial application is no exception. When storing an intermediate result, you must write the full type of the remaining function:
+
+```luc
+let add (a int)(b int) -> int = { return a + b }
+
+-- CORRECT: explicit type annotation on the partial result
+let addTen (b int) -> int = add(10)
+
+-- ERROR: no type annotation
+let addTen = add(10)    -- ERROR: type annotation required
+```
+
+The type annotation documents what the partial application produces and makes the remaining parameter groups explicit to the reader.
+
+### Mixing Forms
+
+You can mix form 1 and form 2 in the same declaration — form 2 groups come first, followed by a form 1 explicit return:
+
+```luc
+-- form 2 for first two groups, form 1 for the third
+let f (a int)(b int) -> (c int) -> int = {
+    let sum int = a + b              -- runs when both a and b are provided
+    return (c int) -> int { return sum + c }
+}
+
+-- partial applications
+let f10_20 (c int) -> int = f(10)(20)   -- sum=30 computed here
+f10_20(5)                               -- 35
+```
+
+### Recursion
+
+Both forms support recursion. In form 2, the recursive call provides all groups:
+
+```luc
+let power (base int)(exp int) -> int = {
+    if exp == 0 { return 1 }
+    return base * power(base)(exp - 1)    -- all groups provided
+}
+
+power(2)(10)    -- 1024
+```
+
+In form 1, recursion can appear in either the outer body or the inner function:
+
+```luc
+let countdown (n int) -> (step int) -> int = {
+    if n <= 0 { return (step int) -> int { return 0 } }
+    return (step int) -> int { return n + countdown(n - step)(step) }
+}
+```
+
+### Curry in `impl`
+
+Methods declared with multiple parameter groups in an `impl` block follow the same rules. The receiver (`self` or `as` alias) is always the implicit zeroth argument — separate from the parameter groups:
+
+```luc
+impl int as i {
+    add (b int)(c int) -> int = { return i + b + c }
+}
+
+-- call site
+let result int = 5:add(3)(2)    -- i=5, b=3, c=2 → 10
+
+-- partial application — receiver already bound
+let add3 (c int) -> int = 5:add(3)    -- i=5, b=3 captured
+add3(2)                                -- 10
+```
+
+### Curry and Pipelines / Composition
+
+Curry functions are **forbidden** as direct `|>` steps or `+>` operands — the upstream value fills only the first group, leaving remaining groups unresolvable. Pre-apply all but the last group first:
+
+```luc
+-- ERROR: curry function as pipeline step
+42 |> add        -- ERROR: add has 2 groups
+
+-- CORRECT: pre-apply to produce a single-group function
+let addTen (b int) -> int = add(10)
+42 |> addTen     -- OK: addTen has one group
+
+-- CORRECT: same for +>
+let process (b int) -> string = add(10) +> string
+```
+
+### Performance
+
+| Usage                           | Form 1                      | Form 2                       |
+| ------------------------------- | --------------------------- | ---------------------------- |
+| Full application `add(1)(2)`    | Inlined — zero overhead     | Inlined — zero overhead      |
+| Partial stored `let f = add(1)` | Heap closure                | Heap closure                 |
+| Pre-computation at partial      | ✅ Runs once at partial      | ❌ Repeats on every full call |
+| LLVM escape analysis            | Stack-alloc if non-escaping | Stack-alloc if non-escaping  |
+| Inline `add(1)(2)` in pipeline  | LLVM eliminates closure     | LLVM eliminates closure      |
+
+For pure functions with no setup work, both forms have identical runtime performance. Form 1 only outperforms form 2 when the outer body performs computation that should run once at the partial application boundary.
 
 ---
 
