@@ -1715,22 +1715,69 @@ type AsyncMaybeOp = ~async ~nullable (a int) -> int
 
 Type alias names should reflect their kind at a glance. The following conventions are recommended:
 
-| Kind                     | Convention              | Example                        |
-| ------------------------ | ----------------------- | ------------------------------ |
-| Slice (`[_, T]`)         | `...List` suffix        | `IntList`, `UserList`          |
-| Dynamic array (`[*, T]`) | `...Array` suffix       | `IntArray`, `UserArray`        |
-| Fixed array (`[N, T]`)   | `...Buffer` suffix      | `ByteBuffer`, `FloatBuffer`    |
-| Nullable (`T?`)          | `Maybe...` prefix       | `MaybeInt`, `MaybeUser`        |
-| Result (`T!E`)           | `...Or...` — both sides | `IntOrString`, `UserOrDbError` |
-| Function type            | `...Fn` suffix          | `ParserFn`, `HandlerFn`        |
-| Nullable function        | `Maybe...Fn`            | `MaybeParserFn`                |
-| Async function           | `...AsyncFn` suffix     | `FetchAsyncFn`                 |
-| Parallel function        | `...ParallelFn` suffix  | `TransformParallelFn`          |
+| Kind                         | Convention                 | Example                        |
+| ---------------------------- | -------------------------- | ------------------------------ |
+| Slice (`[_, T]`)             | `...List` suffix           | `IntList`, `UserList`          |
+| Dynamic array (`[*, T]`)     | `...Array` suffix          | `IntArray`, `UserArray`        |
+| Fixed array (`[N, T]`)       | `...Buffer` suffix         | `ByteBuffer`, `FloatBuffer`    |
+| Generic slice (`[_, <T>]`)   | `List<T>` — no prefix      | `List<T>`, `List<User>`        |
+| Generic dynamic (`[*, <T>]`) | `Array<T>` — no prefix     | `Array<T>`, `Array<User>`      |
+| Generic fixed (`[N, <T>]`)   | `Buffer<T, N>` — no prefix | `Buffer<T, 256>`               |
+| Nullable (`T?`)              | `Maybe...` prefix          | `MaybeInt`, `MaybeUser`        |
+| Result (`T!E`)               | `...Or...` — both sides    | `IntOrString`, `UserOrDbError` |
+| Function type                | `...Fn` suffix             | `ParserFn`, `HandlerFn`        |
+| Nullable function            | `Maybe...Fn`               | `MaybeParserFn`                |
+| Async function               | `...AsyncFn` suffix        | `FetchAsyncFn`                 |
+| Parallel function            | `...ParallelFn` suffix     | `TransformParallelFn`          |
 
-The `Or` convention for result types surfaces both the success and error type explicitly — `IntOrString` immediately tells you success is `int` and failure is `string` without opening the definition. Generic aliases need no convention — `<>` already signals the kind clearly.
+The `Or` convention for result types surfaces both the success and error type explicitly. Generic aliases follow the same base suffix as their concrete counterparts — the `<T>` already signals the kind, so no prefix like `Generic` or `T` is needed or wanted.
 
 > [!TIP]
 > These are conventions only — the compiler does not enforce them. Combinations chain naturally: `MaybeUserOrDbError` (nullable success, can fail), `UserListOrDbError` (array that can fail).
+
+### Generic Naming Convention
+
+When naming a generic type alias, the rule is simple: **use the same name you would for the concrete version, just add `<T>`**. Do not prefix or suffix with `Generic`, `T`, or any other marker — the angle brackets already communicate that the alias is generic.
+
+```luc
+-- concrete aliases
+type UserList   = [_, User]       -- slice of User
+type IntArray   = [*, int]        -- dynamic array of int
+type ByteBuffer = [256, byte]     -- fixed buffer of bytes
+
+-- generic counterparts — same name, add <T>
+type List<T>      = [_, T]        -- NOT TList, NOT GenericList
+type Array<T>     = [*, T]        -- NOT TArray, NOT GenericArray
+type Buffer<T, N> = [N, T]        -- NOT TBuffer, NOT GenericBuffer
+
+-- generic and concrete read the same way at use sites
+let users  List<User>  = []
+let users  UserList    = []       -- equivalent concrete form
+```
+
+Generic aliases for function types and structs follow the same principle:
+
+```luc
+-- concrete function alias
+type ParserFn    = (src string) -> int
+
+-- generic function alias — same base name, add <T>
+type ParserFn<T> = (src string) -> T    -- NOT TParserFn, NOT GenericParserFn
+
+-- struct aliases are already generic by nature — no extra marker needed
+type Pair<K, V>                 = struct { first K  second V }
+type SortedPair<T : Comparable> = struct { first T  second T }
+```
+
+The only time a qualifier word is appropriate is when the constraint is semantically meaningful and the name without it would be misleading:
+
+```luc
+-- 'Comparable' is useful here — it tells the reader this list guarantees ordering
+type ComparableList<T : Comparable> = [_, T]
+
+-- 'Generic' would be useless — all lists with <T> are already obviously generic
+type GenericList<T> = [_, T]    -- bad: Generic adds nothing
+```
 
 ### Examples
 
@@ -1746,16 +1793,23 @@ type MaybeUser = User?
 type IntOrString   = int!string
 type UserOrDbError = User!DbError
 
--- array aliases (postfix syntax)
+-- concrete array aliases
 type UserArray  = [*, User]
 type UserList   = [_, User]
 type ByteBuffer = [256, byte]
 
+-- generic array aliases — same base name, add <T>
+type List<T>      = [_, T]
+type Array<T>     = [*, T]
+type Buffer<T, N> = [N, T]
+
 -- array result — alias the array first, then apply Or convention
-type UserArrayOrDbError = UserArray!DbError
+type UserArrayOrDbError  = UserArray!DbError
+type ListOrDbError<T>    = List<T>!DbError    -- generic result alias
 
 -- function aliases
 type ParserFn            = (src string) -> int
+type ParserFn<T>         = (src string) -> T      -- generic variant
 type FetchAsyncFn        = ~async    (url string) -> string
 type TransformParallelFn = ~parallel (item Vec2)  -> Vec2
 
@@ -1765,17 +1819,19 @@ type FetchAsyncFnOrNetError = FetchAsyncFn!NetworkError
 -- nullable function alias
 type MaybeParserFn = ~nullable (src string) -> int
 
--- array of function type — alias optional, shown for named reuse
-type HandlerFn      = (event Event) -> bool
-type HandlerFnList  = [_, HandlerFn]    -- slice of handlers
-type HandlerFnArray = [*, HandlerFn]    -- dynamic array of handlers
+-- array of function type
+type HandlerFn        = (event Event) -> bool
+type HandlerFnList    = [_, HandlerFn]          -- concrete: slice of handlers
+type HandlerFnArray   = [*, HandlerFn]          -- concrete: dynamic array of handlers
+type HandlerFnList<T> = [_, (event T) -> bool]  -- generic variant
 
--- generic alias — no convention needed
-type Transform<T> = (v T) -> T
+-- generic struct alias
 type Pair<K, V>   = struct { first K  second V }
+type Transform<T> = (v T) -> T
 
 -- constrained generic alias
-type SortedPair<T : Comparable> = struct { first T  second T }
+type SortedPair<T : Comparable>     = struct { first T  second T }
+type ComparableList<T : Comparable> = [_, T]
 ```
 
 ### Consistency Rule
@@ -1854,24 +1910,35 @@ trait_ref       := IDENTIFIER [ generic_args ]
 
 method_decl     := IDENTIFIER [ qualifier_list ] param_group { param_group }
                    [ '->' return_list ] '=' func_body -- inline body
+                   -- qualifier_list applies to the method: ~async, ~nullable, ~parallel
+                   -- type annotation required on all inline body methods
 
-                 | IDENTIFIER '=' func_ref -- plain assignment, no injection
-                                           -- func_ref exposed as-is
+                 | IDENTIFIER '=' func_ref            -- plain assignment, no injection
+                                                      -- full type INCLUDING qualifiers
+                                                      -- is read from func_ref — no annotation
+                                                      -- and no qualifier written on the method name
 
                  | IDENTIFIER '=' func_ref '(' receiver_arg ')' '!'
                    -- injection form
-                   -- receiver_arg: must be 'self' or the impl's 'as' alias
+                   -- full type INCLUDING qualifiers is read from func_ref — no annotation
+                   -- and no qualifier written on the method name
+                   -- receiver_arg: must be 'self' or the impl's 'as' alias — nothing else
                    -- semantic phase removes the first parameter of the first group
                    -- and produces a new resolved function type
                    -- compiler generates an internal wrapper capturing the receiver
-                   -- func_ref must be a plain function — qualifiers forbidden
                    -- variadic @extern functions are forbidden with '!'
+                   -- func_ref must be a named function reference — NOT a call expression,
+                   -- NOT a returned function, NOT a partial application result
 
 func_ref        := IDENTIFIER                -- local or imported name
                  | IDENTIFIER '.' IDENTIFIER -- module path: file.fn
                  | func_ref generic_args     -- generic instantiation: fn<T>
-                   -- func_ref must resolve to a plain non-qualified function
+                   -- func_ref may be plain or carry qualifiers (~async, ~nullable, ~parallel)
+                   -- the full resolved type including qualifiers becomes the method's type
                    -- @extern functions are allowed if non-variadic
+                   -- function calls, expressions that produce functions, and
+                   -- factory functions whose return value is a function are ALL forbidden
+                   -- use an inline body for those cases
 ```
 
 The `as IDENTIFIER` clause introduces a local alias for the receiver inside the method bodies. If omitted, the receiver is accessible as `self`.
@@ -1913,16 +1980,46 @@ The wrapper is a thin closure capturing the receiver. For primitive types and sm
 
 > [!WARNING]
 > Injection restrictions
-> - `func_ref` must be a **plain function** — no `~async`, `~nullable`, or `~parallel` qualifiers.
+> - `func_ref` must be a **named function reference** — a named function, a module path, or a generic instantiation. It cannot be a function call, a factory function whose return value is another function, a partial application result, or any expression that produces a function value at runtime.
 > - `func_ref` must **not** be a variadic `@extern` function (`args ...any`).
-> - `receiver_arg` must be exactly `self` or the `as` alias declared on this `impl` block.
+> - `receiver_arg` must be exactly `self` or the `as` alias declared on this `impl` block — no other value, no field access, no computed expression.
 > - The first parameter group must have **at least one parameter** — the first parameter is the one removed.
+> - The method's full type — **including any qualifiers** — is read from `func_ref`. No type annotation and no qualifier is written on the method name. This is the explicit exception to Luc's type annotation requirement.
 >
 > ```luc
+> export const httpGet   ~async    (url string) -> string = { ... }
+> export const maybeFind ~nullable (pred (int) -> bool) -> int = { ... }
+> export const intToStr             (n int) -> string = { ... }
+>
+> impl string as s {
+>     fetch  = httpGet(s)!       -- method type: ~async () -> string
+>     toStr  = intToStr(s)!      -- method type: () -> string
+> }
+>
+> impl [_, int] as list {
+>     find   = maybeFind(list)!  -- method type: ~nullable (pred (int) -> bool) -> int
+> }
+>
+> -- call sites — qualifier comes from the inferred method type
+> let result string = await url:fetch()       -- ~async: must await
+> let s      string = 42:toStr()             -- plain: no await
+> if list:find != nil {                       -- ~nullable: must guard
+>     list:find((v int) -> bool { return v > 2 })
+> }
+>
 > impl int as i {
->     fetch  = httpGet(i)!      -- ERROR: httpGet is ~async
->     find   = maybeGet(i)!     -- ERROR: maybeGet is ~nullable
->     printf = printf(i)!       -- ERROR: printf is variadic @extern
+>     -- ERROR: function call as func_ref
+>     addBase = makeAdder(10)(i)!
+>
+>     -- ERROR: field access as receiver_arg
+>     xScale  = scaleFloat(i.x)!
+>
+>     -- ERROR: variadic @extern
+>     printf  = printf(i)!
+>
+>     -- CORRECT: inline body for factory or computed receiver cases
+>     addBase  (v int) -> int   = { return makeAdder(10)(v) + i }
+>     xScale   (f float) -> float = { return scaleFloat(i.x, f) }
 > }
 > ```
 
@@ -2381,9 +2478,9 @@ from_target := type                -- any named, primitive, array, or alias type
 
 from_entry  := param_group { param_group } '->' type '=' func_body   -- inline entry
              | func_ref                                               -- path entry
-               -- compiler reads func_ref's full signature as the entry signature
+               -- compiler reads func_ref's full signature INCLUDING qualifiers
+               -- as the entry signature — no type annotation written
                -- the return type must match the enclosing from target type
-               -- func_ref must be a plain function — qualifiers forbidden
                -- no receiver injection: from entries convert TO the target, not on it
 
 func_ref    := IDENTIFIER
@@ -2416,11 +2513,11 @@ A `from` block defines implicit and explicit conversions from a source type (des
 
 **Path entry** — references an existing function by name:
 
-- The compiler reads the function's full signature and registers it as a `from` entry.
+- The compiler reads the function's full signature — including any qualifiers — and registers it as a `from` entry. No type annotation is written.
 - The function's return type must match the enclosing `from` target type — compile error otherwise.
-- The function must be a plain non-qualified function — qualifiers forbidden.
 - No receiver injection (`!`) — `from` converts *to* the target type, not *on* it.
 - Local functions, imported functions, and `@extern` non-variadic functions are all valid.
+- Function calls, expressions that produce functions, and factory functions are forbidden — use an inline entry for those cases.
 
 **Generic function as path entry — concrete target:**
 
@@ -2648,10 +2745,9 @@ from int {
 
 -- ERROR cases
 from int {
-    utils.asyncParser      -- ERROR: asyncParser is ~async
-    utils.maybeParser      -- ERROR: maybeParser is ~nullable
     utils.badReturn        -- ERROR: return type is string, not int
     utils.printf           -- ERROR: printf is variadic @extern
+    parseIntFromStr()      -- ERROR: function call, not a reference
 }
 ```
 
