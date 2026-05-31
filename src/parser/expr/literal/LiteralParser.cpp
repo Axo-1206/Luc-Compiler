@@ -3,6 +3,25 @@
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
 
+// ============================================================================
+// Literal and Value Parsers (Primary Expression Factories)
+// ============================================================================
+// 
+// These functions parse atomic expression values:
+// 
+//   parseLiteralExpr()       : scalar literals (int, float, string, char, bool, nil)
+//   parseArrayLiteralExpr()  : [1, 2, 3] (returns temporary vector → SpanBuilder)
+//   parseStructLiteralExpr() : Point { x = 0, y = 0 }
+//   parseAnonFuncExpr()      : (x int) -> int { return x * 2 }
+//   parseAwaitExpr()         : await expr
+//   parseIfExpr()            : if cond ?? then else else
+//   parseTypeConvExpr()      : type(expr) or *type(expr)
+//   parseRangeExpr()         : lo..hi or lo..<hi
+// 
+// Struct literals use '=' for field initialisation, not ':'.
+// Anonymous functions cannot have qualifiers (~async, etc.) – they are plain values.
+// ============================================================================
+
 ExprPtr Parser::parseLiteralExpr() {
     SourceLocation loc = ts_.currentLoc();
     Token tok = ts_.advance();

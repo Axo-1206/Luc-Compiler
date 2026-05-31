@@ -1,0 +1,312 @@
+#include "parser/Parser.hpp"
+#include "ast/support/InternedString.hpp"
+#include "diagnostics/DiagnosticCodes.hpp"
+#include "debug/DebugUtils.hpp"
+
+// ============================================================================
+// Match Expression (Stub)
+// ============================================================================
+// 
+// parseMatchExpr() parses the pattern‑matching expression.
+// 
+// Grammar: match expr { pattern [if guard] => expr [, expr], default => expr }
+// 
+// The actual pattern parsing (bind, wildcard, type, struct, literal, range)
+// is implemented in ParserPattern.cpp. This function only:
+//   1. Parses the subject expression
+//   2. Collects match arms (calls parseMatchArm)
+//   3. Enforces that a 'default' arm is present and last
+//   4. Builds ArenaSpan for arms
+// ============================================================================
+
+ExprPtr Parser::parseMatchExpr() {
+    SourceLocation loc = ts_.currentLoc();
+    ts_.consume(TokenType::MATCH, "expected 'match'");
+
+    ExprPtr subject = parseExpr(false);
+    if (!subject) {
+        errorAt(DiagCode::E2008, "expected expression after 'match'");
+        return arena_.make<UnknownExprAST>();
+    }
+
+    ts_.consume(TokenType::LBRACE, "expected '{' after match subject");
+
+    auto node = arena_.make<MatchExprAST>();
+    node->loc = loc;
+    node->subject = std::move(subject);
+
+    std::vector<MatchArmPtr> arms;  // temporary
+    bool hasDefault = false;
+
+    while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
+        ts_.match(TokenType::SEMICOLON);
+        ts_.match(TokenType::COMMA);
+        if (ts_.check(TokenType::RBRACE)) break;
+
+        if (ts_.check(TokenType::DEFAULT)) {
+            if (hasDefault) {
+                errorAt(DiagCode::E2007, "duplicate 'default' arm in match expression");
+            }
+            node->defaultBody = parseDefaultArm();
+            if (node->defaultBody) {
+                node->defaultLoc = node->defaultBody->loc;
+            }
+            hasDefault = true;
+            break;
+        }
+
+        size_t beforePos = ts_.getPos();
+        MatchArmPtr arm = parseMatchArm();
+        if (ts_.getPos() == beforePos) {
+            errorAt(DiagCode::E2007, "failed to parse match arm, skipping");
+            ts_.advance();
+            continue;
+        }
+        if (!arm) {
+            errorAt(DiagCode::E2007, "invalid match arm, skipping");
+            continue;
+        }
+        arms.push_back(std::move(arm));
+    }
+
+    ts_.consume(TokenType::RBRACE, "expected '}' to close match expression");
+
+    if (!hasDefault) {
+        error(loc, DiagCode::E2006, "match expression must have a 'default' arm");
+    }
+
+    auto armsBuilder = arena_.makeBuilder<MatchArmPtr>();
+    for (auto& a : arms) armsBuilder.push_back(std::move(a));
+    node->arms = armsBuilder.build();
+
+    return node;
+}
+
+// ============================================================================
+// Match Arm
+// ============================================================================
+// 
+// parseMatchArm() parses a single non‑default arm in a match expression.
+// 
+// Grammar: pattern { ',' pattern } [ 'if' guard_expr ] '=>' expr [ ',' expr ]
+// 
+// Examples:
+//   200 => "ok"
+//   200, 201, 202 => "success"
+//   1..10 => "light"
+//   n if n < 0 => "negative"
+//   Vec2 { x, y } => "at " + string(x) + ", " + string(y)
+//   200 => "ok", "request succeeded"
+// 
+// ─── Pattern List ───────────────────────────────────────────────────────────
+//   - One or more patterns, comma‑separated
+//   - All patterns in the list must bind the same set of names (semantic pass)
+//   - The arm fires if ANY pattern matches
+// 
+// ─── Guard Expression ───────────────────────────────────────────────────────
+//   - Optional 'if' followed by an expression
+//   - Only valid after a bind or wildcard pattern
+//   - May reference names introduced by bind patterns
+// 
+// ─── Arm Body (Result Expressions) ─────────────────────────────────────────
+//   - One required expression, optionally followed by a comma and a second
+//   - At most two expressions per arm
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at the first pattern token
+// On exit:  positioned after the last result expression
+// 
+// ─── Loop Safety ──────────────────────────────────────────────────────────
+//   - Uses saved position pattern when parsing additional patterns after commas
+//   - Checks peekNextType() to ensure a valid pattern follows before consuming comma
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+//   - Missing pattern after comma: breaks loop
+//   - Missing guard expression: reports error, continues
+//   - Missing result expression: reports error, creates empty exprs
+//   - More than two expressions: reports error, skips rest of arm
+// ============================================================================
+
+MatchArmPtr Parser::parseMatchArm() {
+    SourceLocation loc = ts_.currentLoc();
+    auto arm = arena_.make<MatchArmAST>();
+    arm->loc = loc;
+
+    // Parse patterns (at least one)
+    std::vector<ASTPtr<PatternAST>> patterns;
+    ASTPtr<PatternAST> pat = parsePattern();
+    if (!pat) return nullptr;
+    patterns.push_back(std::move(pat));
+
+    while (ts_.check(TokenType::COMMA)) {
+        // Peek ahead - is the next token a valid pattern start?
+        TokenType nextType = ts_.peekNextType();
+        bool isPatternStart = (nextType == TokenType::WILDCARD ||
+                               nextType == TokenType::INT_LITERAL ||
+                               nextType == TokenType::FLOAT_LITERAL ||
+                               nextType == TokenType::STRING_LITERAL ||
+                               nextType == TokenType::RAW_STRING_LITERAL ||
+                               nextType == TokenType::CHAR_LITERAL ||
+                               nextType == TokenType::HEX_LITERAL ||
+                               nextType == TokenType::BINARY_LITERAL ||
+                               nextType == TokenType::TRUE ||
+                               nextType == TokenType::FALSE ||
+                               nextType == TokenType::NIL ||
+                               nextType == TokenType::MINUS ||
+                               nextType == TokenType::IDENTIFIER);
+        if (!isPatternStart) {
+            errorAt(DiagCode::E2007, "expected pattern after ',' in match arm");
+            break;
+        }
+        ts_.advance(); // consume comma
+        pat = parsePattern();
+        if (!pat) break;
+        patterns.push_back(std::move(pat));
+    }
+
+    // Build patterns span
+    auto patternsBuilder = arena_.makeBuilder<ASTPtr<PatternAST>>();
+    for (auto& p : patterns) patternsBuilder.push_back(std::move(p));
+    arm->patterns = patternsBuilder.build();
+
+    // Optional guard: 'if' expr
+    if (ts_.check(TokenType::IF)) {
+        ts_.advance();
+        size_t savedPos = ts_.getPos();
+        ExprPtr guard = parseExpr();
+        if (ts_.getPos() == savedPos) {
+            errorAt(DiagCode::E2008, "expected guard expression after 'if' in match arm");
+        } else {
+            arm->guard = std::move(guard);
+        }
+    }
+
+    ts_.consume(TokenType::FAT_ARROW, "expected '=>' after match pattern");
+
+    // Parse result expressions: at least one, at most two
+    std::vector<ExprPtr> exprs;
+    size_t beforePos = ts_.getPos();
+    ExprPtr first = parseExpr();
+    if (ts_.getPos() == beforePos || !first) {
+        errorAt(DiagCode::E2008, "expected result expression after '=>' in match arm");
+    } else {
+        exprs.push_back(std::move(first));
+    }
+
+    // Optional second expression after comma
+    if (ts_.match(TokenType::COMMA)) {
+        if (ts_.check(TokenType::COMMA) || ts_.check(TokenType::RBRACE) || 
+            ts_.check(TokenType::FAT_ARROW) || ts_.isAtEnd()) {
+            errorAt(DiagCode::E2001, "expected expression after ',' in match arm");
+        } else {
+            size_t beforePos2 = ts_.getPos();
+            ExprPtr second = parseExpr();
+            if (ts_.getPos() == beforePos2 || !second) {
+                errorAt(DiagCode::E2008, "expected second result expression after ',' in match arm");
+            } else {
+                exprs.push_back(std::move(second));
+            }
+        }
+        // No more commas allowed
+        if (ts_.match(TokenType::COMMA)) {
+            errorAt(DiagCode::E2001, "match arm cannot have more than two expressions");
+            while (!ts_.isAtEnd() && !ts_.check(TokenType::RBRACE) && !ts_.check(TokenType::DEFAULT)) {
+                TokenType t = ts_.peekType();
+                if (t == TokenType::WILDCARD || t == TokenType::IDENTIFIER ||
+                    t == TokenType::INT_LITERAL || t == TokenType::FLOAT_LITERAL ||
+                    t == TokenType::STRING_LITERAL || t == TokenType::CHAR_LITERAL ||
+                    t == TokenType::HEX_LITERAL || t == TokenType::BINARY_LITERAL ||
+                    t == TokenType::TRUE || t == TokenType::FALSE || t == TokenType::NIL ||
+                    t == TokenType::MINUS) {
+                    break;
+                }
+                ts_.advance();
+            }
+        }
+    }
+
+    auto exprsBuilder = arena_.makeBuilder<ExprPtr>();
+    for (auto& e : exprs) exprsBuilder.push_back(std::move(e));
+    arm->exprs = exprsBuilder.build();
+
+    return arm;
+}
+
+// ============================================================================
+// Default Arm
+// ============================================================================
+// 
+// parseDefaultArm() parses the required fallback arm in a match expression.
+// 
+// Grammar: 'default' '=>' expr [ ',' expr ]
+// 
+// Example: default => "unknown"
+// 
+// ─── Position Requirement ──────────────────────────────────────────────────
+//   - The default arm must be the last arm in the match expression
+//   - Only one default arm is allowed
+//   - These rules are enforced by the caller (parseMatchExpr)
+// 
+// ─── Arm Body (Result Expressions) ─────────────────────────────────────────
+//   - One required expression, optionally followed by a comma and a second
+//   - At most two expressions
+//   - Secondary value presence must be consistent with other arms
+// 
+// ─── Token Consumption ─────────────────────────────────────────────────────
+// On entry: positioned at 'default' keyword
+// On exit:  positioned after the last result expression
+// 
+// ─── Error Recovery ───────────────────────────────────────────────────────
+//   - Missing '=>' after 'default': consume() reports error
+//   - Missing expression after '=>': reports error, returns arm with empty exprs
+//   - More than two expressions: reports error, skips rest
+// ============================================================================
+
+ASTPtr<DefaultArmAST> Parser::parseDefaultArm() {
+    SourceLocation loc = ts_.currentLoc();
+    ts_.consume(TokenType::DEFAULT, "expected 'default'");
+    ts_.consume(TokenType::FAT_ARROW, "expected '=>' after 'default'");
+
+    auto arm = arena_.make<DefaultArmAST>();
+    arm->loc = loc;
+
+    std::vector<ExprPtr> exprs;
+
+    // First expression (required)
+    size_t savedPos = ts_.getPos();
+    ExprPtr first = parseExpr();
+    if (ts_.getPos() == savedPos || !first) {
+        errorAt(DiagCode::E2008, "expected expression after '=>' in default arm");
+    } else {
+        exprs.push_back(std::move(first));
+    }
+
+    // Optional second expression after comma
+    if (ts_.match(TokenType::COMMA)) {
+        if (ts_.check(TokenType::COMMA) || ts_.check(TokenType::RBRACE) || 
+            ts_.check(TokenType::FAT_ARROW) || ts_.isAtEnd()) {
+            errorAt(DiagCode::E2001, "expected expression after ',' in default arm");
+        } else {
+            size_t savedPos2 = ts_.getPos();
+            ExprPtr second = parseExpr();
+            if (ts_.getPos() == savedPos2 || !second) {
+                errorAt(DiagCode::E2008, "expected second expression after ',' in default arm");
+            } else {
+                exprs.push_back(std::move(second));
+            }
+        }
+        // No more commas allowed
+        if (ts_.match(TokenType::COMMA)) {
+            errorAt(DiagCode::E2001, "default arm cannot have more than two expressions");
+            while (!ts_.isAtEnd() && !ts_.check(TokenType::RBRACE) && !ts_.check(TokenType::DEFAULT)) {
+                ts_.advance();
+            }
+        }
+    }
+
+    auto builder = arena_.makeBuilder<ExprPtr>();
+    for (auto& e : exprs) builder.push_back(std::move(e));
+    arm->exprs = builder.build();
+
+    return arm;
+}

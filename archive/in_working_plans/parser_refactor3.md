@@ -14,22 +14,12 @@ src/parser/
 ├── decl/                          # Data declarations
 │   ├── VarParser.cpp              # parseVarDecl
 │   ├── TypeAliasParser.cpp        # parseTypeAliasDecl
+│   ├── TraitParser.cpp            # parseTraitDecl, parseTraitMethod, parseTraitRef
+│   ├── EnumParser.cpp             # parseEnumDecl, parseEnumVariant
+│   ├── FuncParser.cpp             # parseFuncDecl (entry point)
+│   ├── FromParser.cpp             # parseFromDecl, parseFromEntry
+│   ├── ImplParser.cpp             # parseImplDecl, parseMethodDecl, parseFuncRef
 │   └── StructParser.cpp           # parseStructDecl, parseFieldDecl
-│
-├── function/                      # Function declarations
-│   └── FuncParser.cpp             # parseFuncDecl (entry point)
-│
-├── enum/                          # Enums
-│   └── EnumParser.cpp             # parseEnumDecl, parseEnumVariant
-│
-├── trait/                         # Traits
-│   └── TraitParser.cpp            # parseTraitDecl, parseTraitMethod, parseTraitRef
-│
-├── impl/                          # Impl blocks
-│   └── ImplParser.cpp             # parseImplDecl, parseMethodDecl, parseFuncRef
-│
-├── from/                          # From blocks
-│   └── FromParser.cpp             # parseFromDecl, parseFromEntry
 │
 ├── type/                          # Type annotations
 │   ├── TypeParser.cpp             # parseType, parseTypeWithNullable, parseBaseType
@@ -48,7 +38,7 @@ src/parser/
 │   └── LiteralParser.cpp          # parseLiteralExpr, parseArrayLiteralExpr, parseStructLiteralExpr, parseAnonFuncExpr
 │
 ├── operator/                      # Operators and pipelines
-│   ├── UnaryParser.cpp            # parseUnaryExpr
+│   ├── TypeConvParser.cpp         # parseTypeConvExpr
 │   ├── BinaryParser.cpp           # parseInfixBinary, parseInfixAssign, parseInfixIs, parseInfixNullCoalesce
 │   ├── PipelineParser.cpp         # parsePipelineExpr, parsePipelineStep
 │   └── ComposeParser.cpp          # parseComposeExpr, parseComposeOperand
@@ -56,22 +46,17 @@ src/parser/
 ├── special/                       # Special expressions
 │   ├── AwaitParser.cpp            # parseAwaitExpr
 │   ├── IfExprParser.cpp           # parseIfExpr
-│   ├── RangeParser.cpp            # parseRangeExpr
-│   └── CastParser.cpp             # parseTypeConvExpr
+│   ├── IntrinsicParser.cpp        # parseIntrinsicCallExpr
+│   ├── ResolveParser.cpp          # parseResolveExpr, parseOkArm, parseErrArm
+│   └── RangeParser.cpp            # parseRangeExpr
 │
-├── call/                          # Calls and indexing
-│   ├── CallParser.cpp             # parseCallExpr, parseArgList
+├── other/                          # Calls and indexing
+│   ├── CallParser.cpp             # parseCallExpr
 │   └── IndexParser.cpp            # parseIndexExpr
 │
 ├── match/                         # Match expressions
 │   ├── MatchParser.cpp            # parseMatchExpr, parseMatchArm, parseDefaultArm
 │   └── PatternParser.cpp          # parsePattern, parseBindPattern, parseWildcardPattern, parseTypePattern, parseStructPattern, parseFieldPattern
-│
-├── resolve/                       # Resolve expressions
-│   └── ResolveParser.cpp          # parseResolveExpr, parseOkArm, parseErrArm
-│
-├── intrinsic/                     # Intrinsic calls
-│   └── IntrinsicParser.cpp        # parseIntrinsicCallExpr
 │
 ├── stmt/                          # Statements
 │   ├── StmtParser.cpp             # parseStmt (entry), parseExprStmt

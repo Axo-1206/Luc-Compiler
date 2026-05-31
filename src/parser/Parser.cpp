@@ -228,423 +228,6 @@ Visibility Parser::parseVisibility() {
 }
 
 // ============================================================================
-// Qualifiers
-// ============================================================================
-
-QualifierSet Parser::parseQualifiers() {
-    QualifierSet qs;
-    auto& registry = QualifierRegistry::instance();
-    
-    while (ts_.check(TokenType::TILDE)) {
-        SourceLocation loc = ts_.currentLoc();
-        ts_.advance();
-        
-        if (!ts_.check(TokenType::IDENTIFIER)) {
-            error(loc, DiagCode::E2003, "expected qualifier name after '~'");
-            break;
-        }
-        InternedString name = pool_.intern(ts_.advance().value);
-        
-        const QualifierInfo* info = registry.lookup(name);
-        // if (!info) {
-        //     error(loc, DiagCode::E2010, 
-        //           "unknown qualifier '~" + std::string(pool_.lookup(name)) + 
-        //           "'; known qualifiers: " + registry.allNames());
-        //     continue;
-        // }
-        
-        qs.raw.push_back(name);
-        qs.bitmask |= info->bit;
-    }
-    return qs;
-}
-
-// ============================================================================
-// Module path parsing
-// ============================================================================
-
-std::vector<InternedString> Parser::parseModulePath() {
-    std::vector<InternedString> path;
-    if (!ts_.check(TokenType::IDENTIFIER)) return path;
-    path.push_back(pool_.intern(ts_.advance().value));
-    while (ts_.match(TokenType::DOT)) {
-        if (!ts_.check(TokenType::IDENTIFIER)) {
-            errorAt(DiagCode::E2003, "expected identifier after '.'");
-            break;
-        }
-        path.push_back(pool_.intern(ts_.advance().value));
-    }
-    return path;
-}
-
-// ============================================================================
-// List helpers (temporary vector builders)
-// ============================================================================
-
-std::vector<ExprPtr> Parser::parseExprList(TokenType endType) {
-    std::vector<ExprPtr> list;
-    while (!ts_.check(endType) && !ts_.isAtEnd()) {
-        if (!list.empty() && !ts_.match(TokenType::COMMA))
-            break;
-        ExprPtr expr = parseExpr();
-        if (expr) list.push_back(std::move(expr));
-    }
-    ts_.consume(endType, "expected '" + LucDebug::tokenTypeToString(endType) + "'");
-    return list;
-}
-
-std::vector<TypePtr> Parser::parseTypeList(TokenType endType) {
-    std::vector<TypePtr> list;
-    while (!ts_.check(endType) && !ts_.isAtEnd()) {
-        if (!list.empty() && !ts_.match(TokenType::COMMA))
-            break;
-        TypePtr ty = parseType();
-        if (ty) list.push_back(std::move(ty));
-    }
-    ts_.consume(endType, "expected '" + LucDebug::tokenTypeToString(endType) + "'");
-    return list;
-}
-
-std::vector<StmtPtr> Parser::parseStmtList(TokenType endType) {
-    std::vector<StmtPtr> list;
-    while (!ts_.check(endType) && !ts_.isAtEnd()) {
-        StmtPtr stmt = parseStmt();
-        if (stmt) list.push_back(std::move(stmt));
-    }
-    ts_.consume(endType, "expected '" + LucDebug::tokenTypeToString(endType) + "'");
-    return list;
-}
-
-std::vector<ParamPtr> Parser::parseParamList() {
-    std::vector<ParamPtr> list;
-    while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
-        if (!list.empty() && !ts_.match(TokenType::COMMA))
-            break;
-        if (!ts_.check(TokenType::IDENTIFIER)) {
-            errorAt(DiagCode::E2003, "expected parameter name");
-            break;
-        }
-        auto param = arena_.make<ParamAST>();
-        param->name = pool_.intern(ts_.advance().value);
-        param->isVariadic = ts_.match(TokenType::VARIADIC);
-        param->type = parseType();
-        if (param->type) list.push_back(std::move(param));
-    }
-    return list;
-}
-
-// ============================================================================
-// Parameter Group Parsing
-// ============================================================================
-// 
-// parseParamGroup() is called for each `( param_list )` in function types and
-// function declarations.
-// 
-// Grammar: '(' [ param_list ] ')'
-// 
-// The function is implemented in Parser.cpp but documented here for context.
-// 
-// ─── Token Consumption ─────────────────────────────────────────────────────
-// On entry: positioned at '('
-// On exit:  positioned after the closing ')'
-//
-// ─── Return Value ─────────────────────────────────────────────────────────
-//   Returns ParamGroup (std::vector<ParamPtr>) – temporary collection
-//   Caller is responsible for converting to ArenaSpan using SpanBuilder
-//
-// ─── Loop Safety ──────────────────────────────────────────────────────────
-// Uses parseParamList() which has its own loop safety.
-//
-// ─── Error Recovery ───────────────────────────────────────────────────────
-// - Missing '(': consume() reports error
-// - Missing ')': consume() reports error
-//
-// ============================================================================
-
-ParamGroup Parser::parseParamGroup() {
-    SourceLocation loc = ts_.currentLoc();
-    ts_.consume(TokenType::LPAREN, "expected '(' to start parameter group");
-    
-    std::vector<ParamPtr> params = parseParamList();
-    
-    ts_.consume(TokenType::RPAREN, "expected ')' to close parameter group");
-    
-    return params;
-}
-
-/**
- * @brief Parses the return list after '->' in function signatures.
- * 
- * Grammar:
- *   return_list := '(' [ return_type { ',' return_type } ] ')'   -- multiple
- *                | return_type                                    -- single
- * 
- * where `return_type` can itself be a function type with its own '->'.
- * 
- * Examples:
- *   -> int                                    -- single return
- *   -> (int, string)                          -- multi-return
- *   -> (x int) -> int                         -- function type
- *   -> (Result, int)                          -- multi-return with named type
- *   -> ((x int) -> int, string)               -- multi-return with function type
- *   -> () -> int                              -- zero-parameter function type
- * 
- * ─── Detection Strategy ─────────────────────────────────────────────────────
- *   To distinguish between multi-return `(Type, Type)` and function type
- *   `(param Type) -> Ret`, the parser:
- * 
- *   1. Looks inside the parentheses
- *   2. If it sees `IDENTIFIER` followed by a type start (parameter pattern)
- *      and later finds `->` after a complete parameter group, it parses as
- *      a function type
- *   3. Otherwise, it parses as a multi-return list
- * 
- *   This correctly handles ambiguous cases like `(Result, int)` where `Result`
- *   is a named type, not a parameter name.
- * 
- * ─── Function Type Detection Details ───────────────────────────────────────
- *   - Empty parentheses `()` are treated as a function type (zero parameters)
- *   - Single identifier without following type is NOT a function type
- *   - The presence of `->` after parameter group(s) confirms function type
- *   - Uses temporary parsing to test hypothesis without consuming tokens
- * 
- * ─── Token Consumption ─────────────────────────────────────────────────────
- * On entry: positioned at the token after '->' (may be '(' or type start)
- * On exit:  positioned after the return list
- * 
- * ─── Return Value ─────────────────────────────────────────────────────────
- *   Returns ArenaSpan<TypePtr> – empty span indicates void function.
- * 
- * ─── Error Recovery ───────────────────────────────────────────────────────
- * - Missing return type: reports error, returns empty span
- * - Missing ')' in multi-return: consume() reports error
- * - Invalid type in list: skips type, continues
- * 
- * @return ArenaSpan<TypePtr> – span of return types (empty = void)
- */
-ArenaSpan<TypePtr> Parser::parseReturnList() {
-    // Helper to check if a token type can start a type
-    auto isTypeStart = [this](TokenType tt) -> bool {
-        return isPrimitiveTypeToken(tt) ||
-               tt == TokenType::IDENTIFIER ||
-               tt == TokenType::LBRACKET ||
-               tt == TokenType::AMPERSAND ||
-               tt == TokenType::MUL ||
-               tt == TokenType::LPAREN ||
-               tt == TokenType::TILDE;
-    };
-
-    // Case 1: No parentheses → single return type
-    if (!ts_.check(TokenType::LPAREN)) {
-        TypePtr t = parseType();
-        if (!t || t->isa<UnknownTypeAST>()) {
-            errorAt(DiagCode::E2005, "expected return type after '->'");
-            return ArenaSpan<TypePtr>();
-        }
-        auto builder = arena_.makeBuilder<TypePtr>();
-        builder.push_back(std::move(t));
-        return builder.build();
-    }
-
-    // We have '(' - need to determine if it's a function type or multi-return
-    // Strategy: Peek inside and look for '->' after a complete parameter group
-    
-    size_t savedPos = ts_.getPos();
-    const auto& tokens = ts_.getTokens();
-    size_t tokenCount = ts_.getTokenCount();
-    
-    // Try to parse as a function type first
-    // We'll attempt to parse a complete function type and see if it succeeds
-    // without consuming tokens permanently
-    
-    // Create a temporary copy of the parser position
-    size_t testPos = savedPos;
-    
-    // Skip comments at the start
-    testPos = ts_.skipCommentsFrom(testPos);
-    
-    // Check if the '(' is followed by something that looks like a parameter group
-    if (testPos < tokenCount && tokens[testPos].type == TokenType::LPAREN) {
-        ++testPos; // consume '('
-        testPos = ts_.skipCommentsFrom(testPos);
-        
-        // If we see a closing ')' immediately, this could be empty function type
-        bool isEmptyParen = (testPos < tokenCount && tokens[testPos].type == TokenType::RPAREN);
-        
-        if (!isEmptyParen) {
-            // Need to see if this looks like a parameter: IDENTIFIER followed by type start
-            // vs just a type name (multi-return case)
-            
-            // Check if the next token is an identifier AND the token after that starts a type
-            bool looksLikeParameter = false;
-            if (testPos < tokenCount && tokens[testPos].type == TokenType::IDENTIFIER) {
-                size_t afterIdent = testPos + 1;
-                afterIdent = ts_.skipCommentsFrom(afterIdent);
-                if (afterIdent < tokenCount && isTypeStart(tokens[afterIdent].type)) {
-                    // This looks like a parameter: "name Type"
-                    looksLikeParameter = true;
-                }
-            }
-            
-            if (looksLikeParameter) {
-                // Try to parse a complete function type
-                // We need to see if there's a '->' after the parameter group(s)
-                
-                // Simulate parsing up to the closing ')' of the first parameter group
-                int parenDepth = 1;
-                size_t paramEnd = testPos;
-                while (paramEnd < tokenCount && parenDepth > 0) {
-                    paramEnd = ts_.skipCommentsFrom(paramEnd);
-                    if (paramEnd >= tokenCount) break;
-                    TokenType tt = tokens[paramEnd].type;
-                    if (tt == TokenType::LPAREN) ++parenDepth;
-                    else if (tt == TokenType::RPAREN) --parenDepth;
-                    ++paramEnd;
-                }
-                
-                // Check after the closing ')' for '->' or more parameter groups
-                size_t afterParams = paramEnd;
-                afterParams = ts_.skipCommentsFrom(afterParams);
-                
-                // Look for additional parameter groups or '->'
-                bool hasArrow = false;
-                while (afterParams < tokenCount) {
-                    afterParams = ts_.skipCommentsFrom(afterParams);
-                    if (afterParams >= tokenCount) break;
-                    TokenType tt = tokens[afterParams].type;
-                    if (tt == TokenType::ARROW) {
-                        hasArrow = true;
-                        break;
-                    }
-                    if (tt == TokenType::LPAREN) {
-                        // More parameter groups - continue scanning
-                        ++afterParams;
-                        continue;
-                    }
-                    break;
-                }
-                
-                if (hasArrow) {
-                    // This is definitely a function type
-                    TypePtr funcType = parseFuncType();
-                    if (!funcType || funcType->isa<UnknownTypeAST>()) {
-                        errorAt(DiagCode::E2005, "expected function type");
-                        return ArenaSpan<TypePtr>();
-                    }
-                    auto builder = arena_.makeBuilder<TypePtr>();
-                    builder.push_back(std::move(funcType));
-                    return builder.build();
-                }
-            }
-        } else {
-            // Empty parentheses - this is a function type with zero parameters
-            // Check if there's a '->' after the closing ')'
-            size_t afterParen = testPos + 1; // skip the ')'
-            afterParen = ts_.skipCommentsFrom(afterParen);
-            if (afterParen < tokenCount && tokens[afterParen].type == TokenType::ARROW) {
-                TypePtr funcType = parseFuncType();
-                if (!funcType || funcType->isa<UnknownTypeAST>()) {
-                    errorAt(DiagCode::E2005, "expected function type");
-                    return ArenaSpan<TypePtr>();
-                }
-                auto builder = arena_.makeBuilder<TypePtr>();
-                builder.push_back(std::move(funcType));
-                return builder.build();
-            }
-        }
-    }
-    
-    // Not a function type (or detection inconclusive) → parse as multi-return list
-    // Restore position and parse as multi-return
-    ts_.setPos(savedPos);
-    ts_.advance(); // consume '('
-    
-    std::vector<TypePtr> types;
-    
-    while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
-        if (!types.empty() && !ts_.match(TokenType::COMMA)) {
-            // Missing comma - try to continue
-            if (ts_.check(TokenType::RPAREN)) break;
-            errorAt(DiagCode::E2001, "expected ',' between return types");
-            // Skip to next comma or closing parenthesis
-            while (!ts_.isAtEnd() && !ts_.check(TokenType::COMMA) && !ts_.check(TokenType::RPAREN)) {
-                ts_.advance();
-            }
-            continue;
-        }
-        
-        if (ts_.check(TokenType::RPAREN)) break;
-        
-        size_t typeSavedPos = ts_.getPos();
-        TypePtr t = parseType();
-        if (ts_.getPos() == typeSavedPos) {
-            errorAt(DiagCode::E2005, "expected return type");
-            // Skip to closing parenthesis
-            while (!ts_.isAtEnd() && !ts_.check(TokenType::RPAREN)) {
-                ts_.advance();
-            }
-            break;
-        }
-        if (t && !t->isa<UnknownTypeAST>()) {
-            types.push_back(std::move(t));
-        }
-    }
-    
-    ts_.consume(TokenType::RPAREN, "expected ')' to close return type list");
-    
-    auto builder = arena_.makeBuilder<TypePtr>();
-    for (auto& t : types) builder.push_back(std::move(t));
-    return builder.build();
-}
-
-// ============================================================================
-// Generic Parameters and Arguments Helpers
-// ============================================================================
-
-
-ArenaSpan<ExprPtr> Parser::parseArgList() {
-    std::vector<ExprPtr> args;
-    int consecutiveErrors = 0;
-    const int MAX_CONSECUTIVE_ERRORS = 5;
-
-    while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            errorAt(DiagCode::E2002, "too many consecutive errors in argument list; skipping to ')'");
-            while (!ts_.isAtEnd() && !ts_.check(TokenType::RPAREN)) ts_.advance();
-            break;
-        }
-
-        size_t savedPos = ts_.getPos();
-        ExprPtr arg = parseExpr();
-
-        if (ts_.getPos() == savedPos) {
-            errorAt(DiagCode::E2008, "expected argument expression");
-            if (!ts_.isAtEnd()) ts_.advance();
-            consecutiveErrors++;
-            if (ts_.check(TokenType::COMMA)) ts_.advance();
-            continue;
-        }
-
-        consecutiveErrors = 0;
-        args.push_back(std::move(arg));
-
-        if (ts_.check(TokenType::RPAREN)) break;
-        if (!ts_.match(TokenType::COMMA)) {
-            errorAt(DiagCode::E2001, "expected ',' after argument");
-            while (!ts_.isAtEnd() && !ts_.check(TokenType::COMMA) && !ts_.check(TokenType::RPAREN)) {
-                ts_.advance();
-            }
-            if (ts_.check(TokenType::COMMA)) ts_.advance();
-            break;
-        }
-    }
-    
-    auto builder = arena_.makeBuilder<ExprPtr>();
-    for (auto& a : args) builder.push_back(std::move(a));
-    return builder.build();
-}
-
-// ============================================================================
 // Doc Comment Harvesting
 // ============================================================================
 // 
@@ -737,90 +320,6 @@ std::optional<DocComment> Parser::harvestDocComment() {
     }
     
     return std::nullopt;
-}
-
-// ============================================================================
-// Attribute Parsing
-// ============================================================================
-// 
-// Attributes use the syntax: @name or @name(arg1, arg2, ...)
-// 
-// Supported arguments (from LUC_GRAMMAR.md):
-//   - String literals     : "hello"
-//   - Integer literals    : 42, 0xFF, 0b1010
-//   - Boolean literals    : true, false
-//   - Type identifiers    : TypeName (e.g., in @extern("malloc", C))
-// 
-// Attributes are collected as temporary vectors and attached to declarations
-// via attachMetadata() in parseDeclaration(). The semantic pass validates
-// attribute names and arguments.
-// 
-// Example:
-//   @inline
-//   @deprecated("Use newAPI")
-//   @extern("malloc") const malloc (size uint64) -> *uint8?
-// ============================================================================
-
-std::vector<AttributePtr> Parser::parseAttributes() {
-    std::vector<AttributePtr> attrs;
-    while (ts_.check(TokenType::AT_SIGN)) {
-        AttributePtr attr = parseAttribute();
-        if (attr) attrs.push_back(std::move(attr));
-    }
-    return attrs;
-}
-
-AttributePtr Parser::parseAttribute() {
-    SourceLocation loc = ts_.currentLoc();
-    ts_.consume(TokenType::AT_SIGN, "expected '@'");
-    
-    if (!ts_.check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected attribute name after '@'");
-        return nullptr;
-    }
-    InternedString name = pool_.intern(ts_.advance().value);
-    
-    auto attr = arena_.make<AttributeAST>();
-    attr->name = name;
-    attr->loc = loc;
-
-    if (ts_.match(TokenType::LPAREN)) {
-        std::vector<AttributeArgPtr> args;
-        while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
-            if (!args.empty() && !ts_.match(TokenType::COMMA))
-                break;
-            AttributeArgPtr arg = parseAttributeArgLiteral();
-            if (arg) args.push_back(std::move(arg));
-        }
-        ts_.consume(TokenType::RPAREN, "expected ')' after attribute arguments");
-        
-        auto builder = arena_.makeBuilder<AttributeArgPtr>();
-        for (auto& a : args) builder.push_back(std::move(a));
-        attr->args = builder.build();
-    }
-    return attr;
-}
-
-AttributeArgPtr Parser::parseAttributeArgLiteral() {
-    if (ts_.check(TokenType::STRING_LITERAL)) {
-        return arena_.make<AttributeArgAST>(AttributeArgKind::StringLit,
-                                            pool_.intern(ts_.advance().value));
-    }
-    if (ts_.check(TokenType::INT_LITERAL) || ts_.check(TokenType::HEX_LITERAL) ||
-        ts_.check(TokenType::BINARY_LITERAL)) {
-        return arena_.make<AttributeArgAST>(AttributeArgKind::IntLit,
-                                            pool_.intern(ts_.advance().value));
-    }
-    if (ts_.check(TokenType::TRUE) || ts_.check(TokenType::FALSE)) {
-        return arena_.make<AttributeArgAST>(AttributeArgKind::BoolLit,
-                                            pool_.intern(ts_.advance().value));
-    }
-    if (ts_.check(TokenType::IDENTIFIER)) {
-        return arena_.make<AttributeArgAST>(AttributeArgKind::TypeIdent,
-                                            pool_.intern(ts_.advance().value));
-    }
-    errorAt(DiagCode::E2002, "expected string, integer, boolean, or type identifier in attribute argument");
-    return nullptr;
 }
 
 // ============================================================================
@@ -989,4 +488,626 @@ DeclPtr Parser::parseDeclaration(DeclContext ctx) {
     }
     
     return decl;
+}
+
+// ============================================================================
+// Precedence Helpers
+// ============================================================================
+// 
+// These functions map token types to precedence levels and operator enums.
+// 
+//   infixPrec()       : returns precedence for an infix operator
+//   tokenToBinaryOp() : converts TokenType → BinaryOp (arithmetic, comparison, etc.)
+//   tokenToAssignOp() : converts TokenType → AssignOp (assignment operators)
+//   isAssignOp()      : true for assignment operators (lowest precedence)
+// 
+// The precedence values are used by parsePrattExpr to decide whether to
+// consume an operator or stop.
+// ============================================================================
+
+int Parser::infixPrec(TokenType t) const {
+    switch (t) {
+        case TokenType::ASSIGN:
+        case TokenType::PLUS_ASSIGN:
+        case TokenType::MINUS_ASSIGN:
+        case TokenType::MUL_ASSIGN:
+        case TokenType::DIV_ASSIGN:
+        case TokenType::POW_ASSIGN:
+        case TokenType::MOD_ASSIGN:
+        case TokenType::BIT_AND_ASSIGN:
+        case TokenType::BIT_OR_ASSIGN:
+        case TokenType::BIT_XOR_ASSIGN:
+        case TokenType::SHL_ASSIGN:
+        case TokenType::SHR_ASSIGN:
+            return PREC_ASSIGN;
+        case TokenType::COMPOSE:            return PREC_COMPOSE;
+        case TokenType::PIPELINE:           return PREC_PIPE;
+        case TokenType::QUESTION_QUESTION:  return PREC_NULLCOAL;
+        case TokenType::OR:                 return PREC_OR;
+        case TokenType::AND:                return PREC_AND;
+        case TokenType::EQUAL_EQUAL:
+        case TokenType::EQUAL_EQUAL_EQUAL:
+        case TokenType::NOT_EQUAL:
+        case TokenType::LESS:
+        case TokenType::GREATER:
+        case TokenType::LESS_EQUAL:
+        case TokenType::GREATER_EQUAL:
+        case TokenType::IS:
+            return PREC_CMP;
+        case TokenType::BIT_AND:
+        case TokenType::BIT_OR:
+        case TokenType::BIT_XOR:
+        case TokenType::SHL:
+        case TokenType::SHR:
+            return PREC_BITWISE;
+        case TokenType::PLUS:
+        case TokenType::MINUS:
+            return PREC_ADD;
+        case TokenType::MUL:
+        case TokenType::DIV:
+        case TokenType::MOD:
+            return PREC_MUL;
+        case TokenType::POW:
+            return PREC_POW;
+        default:
+            return PREC_NONE;
+    }
+}
+
+BinaryOp Parser::tokenToBinaryOp(TokenType t) const {
+    switch (t) {
+        case TokenType::PLUS:                return BinaryOp::Add;
+        case TokenType::MINUS:               return BinaryOp::Sub;
+        case TokenType::MUL:                 return BinaryOp::Mul;
+        case TokenType::DIV:                 return BinaryOp::Div;
+        case TokenType::POW:                 return BinaryOp::Pow;
+        case TokenType::MOD:                 return BinaryOp::Mod;
+        case TokenType::EQUAL_EQUAL:         return BinaryOp::Eq;
+        case TokenType::EQUAL_EQUAL_EQUAL:   return BinaryOp::RefEq;
+        case TokenType::NOT_EQUAL:           return BinaryOp::Ne;
+        case TokenType::LESS:                return BinaryOp::Lt;
+        case TokenType::GREATER:             return BinaryOp::Gt;
+        case TokenType::LESS_EQUAL:          return BinaryOp::Le;
+        case TokenType::GREATER_EQUAL:       return BinaryOp::Ge;
+        case TokenType::AND:                 return BinaryOp::And;
+        case TokenType::OR:                  return BinaryOp::Or;
+        case TokenType::BIT_AND:             return BinaryOp::BitAnd;
+        case TokenType::BIT_OR:              return BinaryOp::BitOr;
+        case TokenType::BIT_XOR:             return BinaryOp::BitXor;
+        case TokenType::SHL:                 return BinaryOp::Shl;
+        case TokenType::SHR:                 return BinaryOp::Shr;
+        default:                             return BinaryOp::Add;
+    }
+}
+
+AssignOp Parser::tokenToAssignOp(TokenType t) const {
+    switch (t) {
+        case TokenType::ASSIGN:          return AssignOp::Assign;
+        case TokenType::PLUS_ASSIGN:     return AssignOp::AddAssign;
+        case TokenType::MINUS_ASSIGN:    return AssignOp::SubAssign;
+        case TokenType::MUL_ASSIGN:      return AssignOp::MulAssign;
+        case TokenType::DIV_ASSIGN:      return AssignOp::DivAssign;
+        case TokenType::POW_ASSIGN:      return AssignOp::PowAssign;
+        case TokenType::MOD_ASSIGN:      return AssignOp::ModAssign;
+        case TokenType::BIT_AND_ASSIGN:  return AssignOp::BitAndAssign;
+        case TokenType::BIT_OR_ASSIGN:   return AssignOp::BitOrAssign;
+        case TokenType::BIT_XOR_ASSIGN:  return AssignOp::BitXorAssign;
+        case TokenType::SHL_ASSIGN:      return AssignOp::ShlAssign;
+        case TokenType::SHR_ASSIGN:      return AssignOp::ShrAssign;
+        default:                         return AssignOp::Assign;
+    }
+}
+
+bool Parser::isAssignOp(TokenType t) const {
+    switch (t) {
+        case TokenType::ASSIGN:
+        case TokenType::PLUS_ASSIGN:
+        case TokenType::MINUS_ASSIGN:
+        case TokenType::MUL_ASSIGN:
+        case TokenType::DIV_ASSIGN:
+        case TokenType::POW_ASSIGN:
+        case TokenType::MOD_ASSIGN:
+        case TokenType::BIT_AND_ASSIGN:
+        case TokenType::BIT_OR_ASSIGN:
+        case TokenType::BIT_XOR_ASSIGN:
+        case TokenType::SHL_ASSIGN:
+        case TokenType::SHR_ASSIGN:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// ============================================================================
+// Pratt Parser Core
+// ============================================================================
+// 
+// The Pratt parser is a recursive‑descent operator precedence parser.
+// 
+//   parseExpr()          : entry point, starts at lowest precedence
+//   parsePrattExpr()     : main climbing algorithm
+//   parsePrefixExpr()    : handles unary operators and primary expressions
+//   parsePostfixExpr()   : handles calls, indexing, field access after the prefix
+// 
+// Algorithm (in parsePrattExpr):
+//   1. Parse a prefix expression (unary op or primary)
+//   2. Apply all postfix operators (calls, indexing, ., :, ?.)
+//   3. While next token is infix operator with precedence > minPrec:
+//        a. If assignment operator → parseInfixAssign, break
+//        b. If 'is' → parseInfixIs, continue
+//        c. If '|>' → parsePipelineExpr, continue
+//        d. If '+>' → parseComposeExpr, continue
+//        e. If '??' → parseInfixNullCoalesce, break
+//        f. Otherwise → parseInfixBinary, then re‑apply postfix
+// 
+// Right‑associative operators (^, ??, assignment) use `prec - 1` when recursing.
+// ============================================================================
+
+ExprPtr Parser::parseExpr(bool allowStructLiteral) {
+    return parsePrattExpr(PREC_NONE, allowStructLiteral);
+}
+
+ExprPtr Parser::parsePrattExpr(int minPrec, bool allowStructLiteral) {
+    ExprPtr lhs = parsePrefixExpr(allowStructLiteral);
+    if (!lhs) {
+        return arena_.make<UnknownExprAST>();
+    }
+
+    lhs = parsePostfixExpr(std::move(lhs));
+
+    while (true) {
+        int prec = infixPrec(ts_.peekType());
+        if (prec <= minPrec) break;
+
+        TokenType opTok = ts_.peekType();
+
+        if (isAssignOp(opTok)) {
+            lhs = parseInfixAssign(std::move(lhs), allowStructLiteral);
+            break;
+        }
+
+        if (opTok == TokenType::IS) {
+            lhs = parseInfixIs(std::move(lhs));
+            continue;
+        }
+
+        if (opTok == TokenType::PIPELINE) {
+            lhs = parsePipelineExpr(std::move(lhs));
+            continue;
+        }
+
+        if (opTok == TokenType::COMPOSE) {
+            lhs = parseComposeExpr(std::move(lhs));
+            continue;
+        }
+
+        if (opTok == TokenType::QUESTION_QUESTION) {
+            lhs = parseInfixNullCoalesce(std::move(lhs), allowStructLiteral);
+            break;
+        }
+
+        lhs = parseInfixBinary(std::move(lhs), opTok, prec, allowStructLiteral);
+        lhs = parsePostfixExpr(std::move(lhs));
+    }
+
+    return lhs;
+}
+
+// ============================================================================
+// Prefix & Primary Parsers
+// ============================================================================
+// 
+//   parsePrefixExpr() : handles unary operators (-, not, ~~, &) then calls
+//                       parsePrimaryExpr() for the operand.
+//   parsePrimaryExpr(): dispatches to expression atom parsers based on the
+//                       current token. Dispatch order is critical:
+// 
+// Dispatch Priority (highest to lowest):
+//   1. match expression    : 'match'
+//   2. if expression       : 'if' (expression form, requires '??' and 'else')
+//   3. #intrinsic call     : '#'
+//   4. await               : 'await'
+//   5. array literal       : '['
+//   6. bare '{' error      : suggests missing struct name or match
+//   7. anonymous function  : looksLikeAnonFunc()
+//   8. grouped expression  : '(' expr ')'
+//   9. '*' unsafe cast     : '*T(expr)'
+//   10. identifier         : IDENTIFIER (struct literal, behavior, or plain)
+//   11. primitive type cast: 'float(x)'
+//   12. literal            : numbers, strings, true, false, nil
+// 
+// The allowStructLiteral flag controls whether IDENTIFIER '{' is parsed as a
+// struct literal. It is disabled in contexts where '{' belongs to something
+// else (e.g., after 'if' or 'match').
+// ============================================================================
+
+ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
+    SourceLocation loc = ts_.currentLoc();
+
+    switch (ts_.peekType()) {
+        case TokenType::MINUS: {
+            ts_.advance();
+            ExprPtr operand = parsePrefixExpr(allowStructLiteral);
+            if (!operand) {
+                errorAt(DiagCode::E2008, "expected expression after '-'");
+                return arena_.make<UnknownExprAST>();
+            }
+            auto node = arena_.make<UnaryExprAST>();
+            node->loc = loc;
+            node->op = UnaryOp::Neg;
+            node->operand = std::move(operand);
+            return node;
+        }
+        case TokenType::NOT: {
+            ts_.advance();
+            ExprPtr operand = parsePrefixExpr(allowStructLiteral);
+            if (!operand) {
+                errorAt(DiagCode::E2008, "expected expression after 'not'");
+                return arena_.make<UnknownExprAST>();
+            }
+            auto node = arena_.make<UnaryExprAST>();
+            node->loc = loc;
+            node->op = UnaryOp::Not;
+            node->operand = std::move(operand);
+            return node;
+        }
+        case TokenType::BIT_NOT: {
+            ts_.advance();
+            ExprPtr operand = parsePrefixExpr(allowStructLiteral);
+            if (!operand) {
+                errorAt(DiagCode::E2008, "expected expression after '~'");
+                return arena_.make<UnknownExprAST>();
+            }
+            auto node = arena_.make<UnaryExprAST>();
+            node->loc = loc;
+            node->op = UnaryOp::BitNot;
+            node->operand = std::move(operand);
+            return node;
+        }
+        case TokenType::AMPERSAND: {
+            ts_.advance();
+            ExprPtr operand = parsePrefixExpr(allowStructLiteral);
+            if (!operand) {
+                errorAt(DiagCode::E2008, "expected expression after '&'");
+                return arena_.make<UnknownExprAST>();
+            }
+            auto node = arena_.make<UnaryExprAST>();
+            node->loc = loc;
+            node->op = UnaryOp::Ref;
+            node->operand = std::move(operand);
+            return node;
+        }
+        default:
+            return parsePrimaryExpr(allowStructLiteral);
+    }
+}
+
+/**
+ * @brief Parses a primary expression (atom) from the token stream.
+ * 
+ * Dispatch Priority (highest to lowest):
+ *   1. `match` expression
+ *   2. `if` expression (expression form)
+ *   3. `resolve` expression          // NEW
+ *   4. `#intrinsic` call
+ *   5. `await` expression
+ *   6. array literal `[...]`
+ *   7. bare `{` (error)
+ *   8. anonymous function
+ *   9. grouped expression `(expr)`
+ *   10. unsafe cast `*T(expr)`
+ *   11. identifier (struct literal, behavior access, or plain)
+ *   12. primitive type cast `T(expr)`
+ *   13. literal (numbers, strings, true, false, nil)
+ * 
+ * @param allowStructLiteral When false, `IDENTIFIER '{'` is NOT parsed as a
+ *        struct literal (used in contexts like `if` conditions).
+ * 
+ * @return ExprPtr – the parsed expression, or UnknownExprAST on error
+ */
+ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
+    SourceLocation loc = ts_.currentLoc();
+
+    // match expression
+    if (ts_.check(TokenType::MATCH)) {
+        return parseMatchExpr();
+    }
+
+    // if expression
+    if (ts_.check(TokenType::IF)) {
+        return parseIfExpr();
+    }
+
+    // resolve expression
+    if (ts_.check(TokenType::RESOLVE)) {
+        return parseResolveExpr();
+    }
+
+    // #intrinsic call
+    if (ts_.check(TokenType::HASH)) {
+        return parseIntrinsicCallExpr();
+    }
+
+    // await
+    if (ts_.check(TokenType::AWAIT)) {
+        return parseAwaitExpr();
+    }
+
+    // array literal
+    if (ts_.check(TokenType::LBRACKET)) {
+        return parseArrayLiteralExpr();
+    }
+
+    // bare '{' error
+    if (ts_.check(TokenType::LBRACE)) {
+        errorAt(DiagCode::E2007, "unexpected block in expression position");
+        int braceDepth = 1;
+        ts_.advance();
+        while (!ts_.isAtEnd() && braceDepth > 0) {
+            if (ts_.match(TokenType::LBRACE)) braceDepth++;
+            else if (ts_.match(TokenType::RBRACE)) braceDepth--;
+            else ts_.advance();
+        }
+        return arena_.make<UnknownExprAST>();
+    }
+
+    // anonymous function
+    if (looksLikeAnonFunc()) {
+        return parseAnonFuncExpr();
+    }
+
+    // grouped expression
+    if (ts_.check(TokenType::LPAREN)) {
+        ts_.advance();
+        ExprPtr inner = parsePrattExpr(PREC_NONE, allowStructLiteral);
+        if (!ts_.check(TokenType::RPAREN)) {
+            errorAt(DiagCode::E2001, "expected ')' to close grouped expression");
+        } else {
+            ts_.advance();
+        }
+        return inner;
+    }
+
+    // '*' unsafe cast
+    if (ts_.check(TokenType::MUL) && looksLikeType()) {
+        ts_.advance();
+        TypePtr targetType = parseBaseType();
+        if (!targetType) {
+            errorAt(DiagCode::E2005, "expected type after '*' in unsafe cast");
+            return arena_.make<UnknownExprAST>();
+        }
+        if (!ts_.check(TokenType::LPAREN)) {
+            errorAt(DiagCode::E2001, "expected '(' after type in unsafe cast");
+            return arena_.make<UnknownExprAST>();
+        }
+        return parseTypeConvExpr(true, std::move(targetType));
+    }
+
+    // identifier
+    if (ts_.check(TokenType::IDENTIFIER)) {
+        std::string name = ts_.peek().value;
+
+        // struct literal
+        if (allowStructLiteral && looksLikeStructLiteral()) {
+            ts_.advance();
+            ArenaSpan<TypePtr> genericArgs;
+            if (ts_.check(TokenType::LESS)) {
+                genericArgs = parseGenericArgs();
+            }
+            return parseStructLiteralExpr(name, genericArgs);
+        }
+
+        // behavior access
+        if (looksLikeBehaviorAccess()) {
+            std::string typeName = ts_.advance().value;
+            ArenaSpan<TypePtr> genericArgs;
+            if (ts_.check(TokenType::LESS)) {
+                genericArgs = parseGenericArgs();
+            }
+            ts_.consume(TokenType::COLON, "expected ':' in behavior access");
+            if (!ts_.check(TokenType::IDENTIFIER)) {
+                errorAt(DiagCode::E2003, "expected method name after ':'");
+                return arena_.make<UnknownExprAST>();
+            }
+            std::string method = ts_.advance().value;
+
+            auto node = arena_.make<BehaviorAccessExprAST>();
+            node->loc = loc;
+            node->typeName = pool_.intern(typeName);
+            node->genericArgs = genericArgs;
+            node->method = pool_.intern(method);
+            node->isBehaviorMember = true;
+            return node;
+        }
+
+        // plain identifier
+        ts_.advance();
+        auto node = arena_.make<IdentifierExprAST>(pool_.intern(name));
+        node->loc = loc;
+        return node;
+    }
+
+    // primitive type cast
+    if (looksLikeType() && ts_.peekNextType() == TokenType::LPAREN) {
+        TypePtr targetType = parsePrimitiveType();
+        if (targetType && ts_.check(TokenType::LPAREN)) {
+            return parseTypeConvExpr(false, std::move(targetType));
+        }
+    }
+
+    // literal
+    return parseLiteralExpr();
+}
+
+// ============================================================================
+// Postfix Parser
+// ============================================================================
+// 
+// parsePostfixExpr applies postfix operators to an already‑parsed left‑hand
+// side expression. It handles:
+// 
+//   - Function call      : lhs(args)
+//   - Generic call       : lhs<T>(args)
+//   - Indexing           : lhs[expr] or lhs[start..end]
+//   - Field access       : lhs.field
+//   - Nullable chain     : lhs?.field (collects multiple steps)
+// 
+// Important: This does NOT handle '|>', '+>', or ':' (method access) – those
+// are handled at higher precedence levels in parsePrattExpr.
+// 
+// Nullable chains are collected in one go: each '?.' appends a field name to
+// a single NullableChainExprAST. The grammar requires every '?.' chain to be
+// terminated by '??' – this is enforced by parseInfixNullCoalesce.
+// ============================================================================
+
+ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
+    while (true) {
+        if (ts_.check(TokenType::RPAREN)) break;
+        if (ts_.check(TokenType::PIPELINE) || ts_.check(TokenType::COMPOSE)) break;
+
+        // function call
+        if (ts_.check(TokenType::LPAREN)) {
+            lhs = parseCallExpr(std::move(lhs), ArenaSpan<TypePtr>());
+            continue;
+        }
+
+        // generic call
+        if (ts_.check(TokenType::LESS) && 
+            (lhs->isa<IdentifierExprAST>() || lhs->isa<BehaviorAccessExprAST>())) {
+            
+            size_t savedPos = ts_.getPos();
+            int depth = 1;
+            size_t i = ts_.getPos() + 1;
+            const auto& tokens = ts_.getTokens();
+            size_t tokenCount = ts_.getTokenCount();
+            
+            while (i < tokenCount && depth > 0) {
+                if (tokens[i].type == TokenType::LESS) ++depth;
+                else if (tokens[i].type == TokenType::GREATER) --depth;
+                else if (tokens[i].type == TokenType::EOF_TOKEN) break;
+                ++i;
+            }
+            
+            if (depth == 0 && i + 1 < tokenCount && tokens[i + 1].type == TokenType::LPAREN) {
+                ArenaSpan<TypePtr> genericArgs = parseGenericArgs();
+                lhs = parseCallExpr(std::move(lhs), genericArgs);
+                continue;
+            }
+        }
+
+        // index/slice
+        if (ts_.check(TokenType::LBRACKET)) {
+            lhs = parseIndexExpr(std::move(lhs));
+            continue;
+        }
+
+        // field access
+        if (ts_.check(TokenType::DOT)) {
+            ts_.advance();
+            if (!ts_.check(TokenType::IDENTIFIER)) {
+                errorAt(DiagCode::E2003, "expected field name after '.'");
+                break;
+            }
+            std::string field = ts_.advance().value;
+            auto node = arena_.make<FieldAccessExprAST>();
+            node->loc = lhs->loc;
+            node->object = std::move(lhs);
+            node->field = pool_.intern(field);
+            lhs = std::move(node);
+            continue;
+        }
+
+        // nullable chain
+        if (ts_.check(TokenType::QUESTION_DOT)) {
+            // Collect all consecutive '?.' steps in one go
+            std::vector<InternedString> steps;
+            ExprPtr object = std::move(lhs);
+            
+            while (ts_.check(TokenType::QUESTION_DOT)) {
+                ts_.advance(); // consume '?.'
+                if (!ts_.check(TokenType::IDENTIFIER)) {
+                    errorAt(DiagCode::E2003, "expected field name after '?.'");
+                    break;
+                }
+                steps.push_back(pool_.intern(ts_.advance().value));
+            }
+            
+            auto chain = arena_.make<NullableChainExprAST>();
+            chain->loc = object->loc;
+            chain->object = std::move(object);
+            
+            auto builder = arena_.makeBuilder<InternedString>();
+            for (auto& s : steps) builder.push_back(std::move(s));
+            chain->steps = builder.build();
+            
+            lhs = std::move(chain);
+            continue;
+        }
+
+        break;
+    }
+
+    return lhs;
+}
+
+// ============================================================================
+// Lvalue Parsing (for Assignments)
+// ============================================================================
+// 
+// parseLvalue() parses an assignable left‑hand side expression for multi‑assignment.
+// 
+// Grammar: IDENTIFIER { ( '.' IDENTIFIER ) | ( '[' expr ']' ) }
+// 
+// Examples: x, point.x, arr[i], matrix[row][col]
+// 
+// This is distinct from parseExpr() because it stops before operators like '='
+// and does not allow behavior access (':') or function calls.
+// ============================================================================
+
+ExprPtr Parser::parseLvalue() {
+    if (!ts_.check(TokenType::IDENTIFIER)) {
+        errorAt(DiagCode::E2003, "expected identifier for lvalue");
+        return nullptr;
+    }
+    std::string name = ts_.advance().value;
+    ExprPtr expr = arena_.make<IdentifierExprAST>(pool_.intern(name));
+    expr->loc = ts_.currentLoc();
+
+    while (true) {
+        if (ts_.check(TokenType::DOT)) {
+            ts_.advance();
+            if (!ts_.check(TokenType::IDENTIFIER)) {
+                errorAt(DiagCode::E2003, "expected field name after '.'");
+                return expr;
+            }
+            std::string field = ts_.advance().value;
+            auto node = arena_.make<FieldAccessExprAST>();
+            node->loc = expr->loc;
+            node->object = std::move(expr);
+            node->field = pool_.intern(field);
+            expr = std::move(node);
+        } 
+        else if (ts_.check(TokenType::LBRACKET)) {
+            ts_.advance();
+            ExprPtr index = parseExpr();
+            if (!index) {
+                errorAt(DiagCode::E2008, "expected index expression");
+                return expr;
+            }
+            ts_.consume(TokenType::RBRACKET, "expected ']' after index");
+            auto node = arena_.make<IndexExprAST>();
+            node->loc = expr->loc;
+            node->target = std::move(expr);
+            node->index = std::move(index);
+            node->kind = IndexKind::Element;
+            expr = std::move(node);
+        }
+        else if (ts_.check(TokenType::COLON)) {
+            break;
+        }
+        else {
+            break;
+        }
+    }
+    return expr;
 }

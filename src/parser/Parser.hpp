@@ -109,6 +109,23 @@
 #include <vector>
 #include <string>
 
+// name spacce for expr
+namespace {
+    // Precedence levels
+    constexpr int PREC_NONE = 0;
+    constexpr int PREC_ASSIGN = 1;
+    constexpr int PREC_COMPOSE = 2;
+    constexpr int PREC_PIPE = 3;
+    constexpr int PREC_NULLCOAL = 4;
+    constexpr int PREC_OR = 5;
+    constexpr int PREC_AND = 6;
+    constexpr int PREC_CMP = 7;
+    constexpr int PREC_BITWISE = 8;
+    constexpr int PREC_ADD = 10;
+    constexpr int PREC_MUL = 11;
+    constexpr int PREC_POW = 12;
+}
+
 // ============================================================================
 // TokenStream – Safe token stream abstraction
 // ============================================================================

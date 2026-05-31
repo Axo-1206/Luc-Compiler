@@ -34,10 +34,9 @@ add_executable(luc-comp
     src/lexer/Lexer.cpp
     src/diagnostics/diagnostic.cpp
     src/diagnostics/DiagnosticMessages.cpp
+
     src/parser/Parser.cpp
-    src/parser/ParserExpr.cpp
     src/parser/lookahead/ParserLookahead.cpp
-    src/parser/ParserPattern.cpp
     src/semantic/SymbolTable.cpp
     src/semantic/SemanticAnalyzer.cpp
     src/semantic/TypeResolver.cpp
@@ -47,24 +46,30 @@ add_executable(luc-comp
     src/semantic/SemanticStmt.cpp
     src/semantic/TypeChecker.cpp
     src/semantic/Annotator.cpp
+
     src/debug/ASTDumper.cpp
     src/registry/QualifierRegistry.cpp
     src/registry/AttributeRegistry.cpp
     src/registry/IntrinsicRegistry.cpp
     src/ast/support/StringPool.cpp
+
     src/parser/top/PackageParser.cpp
     src/parser/top/UseParser.cpp
-    src/parser/stmt/StmtParser.cpp
-    src/parser/stmt/BlockParser.cpp
-    src/parser/stmt/SwitchParser.cpp
-    src/parser/stmt/LoopParser.cpp
-    src/parser/stmt/FlowControlParser.cpp
-    src/parser/stmt/LocalDeclParser.cpp
+
     src/parser/generic/GenericArgParser.cpp
     src/parser/generic/GenericParamParser.cpp
-    src/parser/literal/LiteralParser.cpp
-    src/parser/trait/TraitParser.cpp
-    src/parser/enum/EnumParser.cpp
+    src/parser/common/ParserHelpers.cpp
+    src/parser/common/ParserAttributes.cpp
+
+    src/parser/decl/TraitParser.cpp
+    src/parser/decl/EnumParser.cpp
+    src/parser/decl/FromParser.cpp
+    src/parser/decl/ImplParser.cpp
+    src/parser/decl/TypeAliasParser.cpp
+    src/parser/decl/StructParser.cpp
+    src/parser/decl/FuncParser.cpp
+    src/parser/decl/VarParser.cpp
+
     src/parser/type/TypeParser.cpp
     src/parser/type/PrimitiveParser.cpp
     src/parser/type/NamedParser.cpp
@@ -72,12 +77,37 @@ add_executable(luc-comp
     src/parser/type/RefParser.cpp
     src/parser/type/PtrParser.cpp
     src/parser/type/FuncTypeParser.cpp
-    src/parser/decl/FromParser.cpp
-    src/parser/decl/ImplParser.cpp
-    src/parser/decl/TypeAliasParser.cpp
-    src/parser/decl/StructParser.cpp
-    src/parser/decl/FuncParser.cpp
-    src/parser/decl/VarParser.cpp
+
+    src/parser/stmt/StmtParser.cpp
+    src/parser/stmt/BlockParser.cpp
+    src/parser/stmt/SwitchParser.cpp
+    src/parser/stmt/LoopParser.cpp
+    src/parser/stmt/FlowControlParser.cpp
+    src/parser/stmt/LocalDeclParser.cpp
+
+    
+
+    src/parser/expr/literal/LiteralParser.cpp
+    src/parser/expr/operator/BinaryParser.cpp
+    src/parser/expr/operator/PipelineParser.cpp
+    src/parser/expr/operator/ComposeParser.cpp
+    
+
+    src/parser/expr/special/IntrinsicParser.cpp
+    src/parser/expr/special/RangeParser.cpp
+    src/parser/expr/special/IfExprParser.cpp
+    src/parser/expr/special/AwaitParser.cpp
+    src/parser/expr/special/ResolveParser.cpp
+    src/parser/expr/special/TypeConvParser.cpp
+    
+
+    src/parser/expr/match/MatchParser.cpp
+    src/parser/expr/match/PatternParser.cpp
+    src/parser/expr/other/CallParser.cpp
+    src/parser/expr/other/IndexParser.cpp
+
+
+
     # src/codegen/CodeGen.cpp
     # src/codegen/CodeGenExpr.cpp
     # src/codegen/CodeGenDecl.cpp
