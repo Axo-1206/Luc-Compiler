@@ -89,6 +89,83 @@ bool Parser::looksLikeType() const {
 }
 
 // ============================================================================
+// isFunctionTypeAfterParen
+// ============================================================================
+//
+// Checks whether the current position (starting after a '(' token) looks like
+// the start of a function type rather than a multi‑return list.
+//
+// A function type is recognised by:
+//   - A parameter list (possibly empty) inside the parentheses, followed by
+//     an arrow '->' after the closing ')'.
+//   - If the parentheses are empty, we look for '->' immediately after.
+//   - If non‑empty, we look for a parameter pattern: IDENTIFIER followed by a
+//     type start, then balanced parentheses, then '->'.
+//
+// This function is non‑consuming – it does NOT modify the token stream.
+//
+// @param startPos The token index immediately after the '(' that was consumed.
+// @return true if the tokens at `startPos` indicate a function type, false otherwise.
+//
+// ─── Complexity ────────────────────────────────────────────────────────────
+// O(n) where n is the number of tokens inside the parentheses and up to '->'.
+// ============================================================================
+
+bool Parser::isFunctionTypeAfterParen(size_t startPos) const {
+    const auto& tokens = ts_.getTokens();
+    size_t tokenCount = ts_.getTokenCount();
+    size_t i = startPos;
+
+    // Local helper to check if a token type can start a type
+    auto isTypeStartToken = [&](TokenType tt) -> bool {
+        return isPrimitiveTypeToken(tt) ||
+               tt == TokenType::IDENTIFIER ||
+               tt == TokenType::LBRACKET ||
+               tt == TokenType::AMPERSAND ||
+               tt == TokenType::MUL ||
+               tt == TokenType::LPAREN ||
+               tt == TokenType::TILDE;
+    };
+
+    // Helper to skip a complete parameter group and return index after its closing ')'
+    auto skipParamGroup = [&](size_t pos) -> size_t {
+        if (pos >= tokenCount || tokens[pos].type != TokenType::LPAREN) return pos;
+        int parenDepth = 1;
+        size_t j = pos + 1;
+        while (j < tokenCount && parenDepth > 0) {
+            j = ts_.skipCommentsFrom(j);
+            if (j >= tokenCount) break;
+            TokenType tt = tokens[j].type;
+            if (tt == TokenType::LPAREN) ++parenDepth;
+            else if (tt == TokenType::RPAREN) --parenDepth;
+            ++j;
+        }
+        return j;
+    };
+
+    i = ts_.skipCommentsFrom(i);
+    if (i >= tokenCount) return false;
+
+    bool isEmptyParen = (tokens[i].type == TokenType::RPAREN);
+
+    if (isEmptyParen) {
+        size_t afterParen = i + 1;
+        afterParen = ts_.skipCommentsFrom(afterParen);
+        return (afterParen < tokenCount && tokens[afterParen].type == TokenType::ARROW);
+    }
+
+    // Use the local type-start checker – it does not depend on parser state
+    if (!isTypeStartToken(tokens[i].type)) return false;
+
+    size_t afterFirstGroup = skipParamGroup(i);
+    if (afterFirstGroup == i) return false;
+
+    size_t afterGroup = afterFirstGroup;
+    afterGroup = ts_.skipCommentsFrom(afterGroup);
+    return (afterGroup < tokenCount && tokens[afterGroup].type == TokenType::ARROW);
+}
+
+// ============================================================================
 // looksLikeFuncDecl
 // ============================================================================
 // 

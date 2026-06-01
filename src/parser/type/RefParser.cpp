@@ -33,7 +33,8 @@ TypePtr Parser::parseRefType() {
     ts_.consume(TokenType::AMPERSAND, "expected '&'");
     TypePtr inner = parseBaseType();
     if (!inner) {
-        errorAt(DiagCode::E2005, "expected type after '&'");
+        // Use E1005: "Expected type annotation" (parsing error)
+        errorAt(DiagCode::E1005, "expected type after '&'");
         return arena_.make<UnknownTypeAST>();
     }
     auto node = arena_.make<RefTypeAST>(std::move(inner));

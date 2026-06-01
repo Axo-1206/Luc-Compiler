@@ -546,6 +546,7 @@ private:
     // Lookahead helpers (non‑consuming)
     // ========================================================================
     bool looksLikeType() const;
+    bool isFunctionTypeAfterParen(size_t startPos) const;
     bool looksLikeFuncDecl() const;
     bool looksLikeAnonFunc() const;
     bool looksLikeStructLiteral() const;

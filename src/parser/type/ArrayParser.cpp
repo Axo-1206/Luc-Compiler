@@ -80,7 +80,7 @@ TypePtr Parser::parseArrayType() {
         ts_.consume(TokenType::RBRACKET, "expected ']' after '*'");
         TypePtr elem = parseType();
         if (!elem) {
-            errorAt(DiagCode::E2005, "expected element type after '[*]'");
+            errorAt(DiagCode::E1005, "expected element type after '[*]'");
             return arena_.make<UnknownTypeAST>();
         }
         auto node = arena_.make<ArrayTypeAST>(arrayKind, 0, std::move(elem));
@@ -95,7 +95,7 @@ TypePtr Parser::parseArrayType() {
         ts_.consume(TokenType::RBRACKET, "expected ']' after '_'");
         TypePtr elem = parseType();
         if (!elem) {
-            errorAt(DiagCode::E2005, "expected element type after '[_, '");
+            errorAt(DiagCode::E1005, "expected element type after '[_, '");
             return arena_.make<UnknownTypeAST>();
         }
         auto node = arena_.make<ArrayTypeAST>(arrayKind, 0, std::move(elem));
@@ -113,14 +113,14 @@ TypePtr Parser::parseArrayType() {
         char* end = nullptr;
         fixedSize = std::strtoull(raw.c_str(), &end, 10);
         if (*end != '\0') {
-            error(ts_.locOf(sizeTok), DiagCode::E2009, "invalid array size");
+            error(ts_.locOf(sizeTok), DiagCode::E1007, "invalid array size");
             fixedSize = 0;
         }
         
         ts_.consume(TokenType::RBRACKET, "expected ']' after array size");
         TypePtr elem = parseType();
         if (!elem) {
-            errorAt(DiagCode::E2005, "expected element type after '[" + sizeTok.value + ", '");
+            errorAt(DiagCode::E1005, "expected element type after '[" + sizeTok.value + ", '");
             return arena_.make<UnknownTypeAST>();
         }
         auto node = arena_.make<ArrayTypeAST>(arrayKind, fixedSize, std::move(elem));
@@ -128,7 +128,24 @@ TypePtr Parser::parseArrayType() {
         return node;
     }
 
-    errorAt(DiagCode::E2001, "expected '_', '*', or integer in array type");
+    // If we see a '<' after the comma? That would be a generic array, which is invalid here.
+    // The grammar for generic array is only allowed in impl/from targets or type alias RHS.
+    // We need to detect this early to give a meaningful error.
+    if (ts_.check(TokenType::LESS) && !ts_.isAtEnd()) {
+        // Look ahead: after '<' there might be an identifier then '>'
+        // This is a generic array syntax used in wrong context.
+        errorAt(DiagCode::E1024, "generic array type (e.g., '[_, <T>]') only allowed as `impl` target, `from` target, or in type alias right‑hand side");
+        // Skip the whole '[ ... ]' to recover
+        int depth = 1;
+        while (!ts_.isAtEnd() && depth > 0) {
+            if (ts_.check(TokenType::LBRACKET)) depth++;
+            else if (ts_.check(TokenType::RBRACKET)) depth--;
+            ts_.advance();
+        }
+        return arena_.make<UnknownTypeAST>();
+    }
+
+    errorAt(DiagCode::E1001, "expected '_', '*', or integer in array type");
     // Recovery: skip to matching ']'
     int depth = 1;
     while (!ts_.isAtEnd() && depth > 0) {
@@ -202,11 +219,11 @@ TypePtr Parser::parseGenericArray() {
         char* end = nullptr;
         fixedSize = std::strtoull(raw.c_str(), &end, 10);
         if (*end != '\0') {
-            error(ts_.locOf(sizeTok), DiagCode::E2009, "invalid array size");
+            error(ts_.locOf(sizeTok), DiagCode::E1007, "invalid array size");
             fixedSize = 0;
         }
     } else {
-        errorAt(DiagCode::E2001, "expected '_', '*', or integer literal in generic array");
+        errorAt(DiagCode::E1001, "expected '_', '*', or integer literal in generic array");
         // Recovery: skip to matching ']'
         int depth = 1;
         while (!ts_.isAtEnd() && depth > 0) {
@@ -223,7 +240,7 @@ TypePtr Parser::parseGenericArray() {
     ts_.consume(TokenType::LESS, "expected '<' before type variable in generic array");
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected type variable name after '<'");
+        errorAt(DiagCode::E1003, "expected type variable name after '<'");
         // Still try to recover
         ts_.consume(TokenType::GREATER, "expected '>' after type variable");
         ts_.consume(TokenType::RBRACKET, "expected ']' to close generic array");

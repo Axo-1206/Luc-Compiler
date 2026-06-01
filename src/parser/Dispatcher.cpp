@@ -95,7 +95,7 @@ DeclPtr Parser::parseDeclaration(DeclContext ctx) {
         vis = parseVisibility();
     } else {
         if (ts_.checkAny({TokenType::PUB, TokenType::EXPORT})) {
-            errorAt(DiagCode::E2014, "visibility modifier not allowed in local declaration");
+            errorAt(DiagCode::E1014, "visibility modifier not allowed in local declaration");
             ts_.advance();
         }
     }
@@ -104,7 +104,7 @@ DeclPtr Parser::parseDeclaration(DeclContext ctx) {
     
     if (ts_.check(TokenType::USE)) {
         if (ctx == DeclContext::Local) {
-            errorAt(DiagCode::E2006, "'use' declaration is not allowed inside a block");
+            errorAt(DiagCode::E1006, "'use' declaration is not allowed inside a block");
             ts_.advance();
             while (!ts_.isAtEnd() && !ts_.checkAny({TokenType::SEMICOLON, TokenType::RBRACE, 
                     TokenType::LET, TokenType::CONST, TokenType::IF, TokenType::FOR,
@@ -135,7 +135,7 @@ DeclPtr Parser::parseDeclaration(DeclContext ctx) {
             decl = parseVarDecl(vis);
         }
     } else {
-        errorAt(DiagCode::E2002, "expected declaration");
+        errorAt(DiagCode::E1002, "expected declaration");
         return nullptr;
     }
 
@@ -231,7 +231,7 @@ TypePtr Parser::parseBaseType() {
             return parseFuncType();
 
         default:
-            errorAt(DiagCode::E2005, "expected type, got '" + ts_.peek().value + "'");
+            errorAt(DiagCode::E1005, "expected type, got '" + ts_.peek().value + "'");
             return arena_.make<UnknownTypeAST>();
     }
 }
@@ -296,7 +296,7 @@ StmtPtr Parser::parseStmt() {
 
     // 'pub' inside a block - error
     if (ts_.check(TokenType::PUB)) {
-        errorAt(DiagCode::E2014, "'pub' is not valid inside a block");
+        errorAt(DiagCode::E1014, "'pub' is not valid inside a block");
         ts_.advance();
         if (ts_.checkAny({TokenType::LET, TokenType::CONST, TokenType::TYPE,
                           TokenType::STRUCT, TokenType::ENUM, TokenType::IMPL,
@@ -328,7 +328,7 @@ StmtPtr Parser::parseStmt() {
         size_t savedPos = ts_.getPos();
         ts_.advance();
         if (looksLikeType() && ts_.check(TokenType::ASSIGN)) {
-            errorAt(DiagCode::E2002, "variable declaration requires 'let' or 'const'");
+            errorAt(DiagCode::E1002, "variable declaration requires 'let' or 'const'");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::SEMICOLON) && !ts_.check(TokenType::RBRACE)) {
                 ts_.advance();
             }
@@ -342,7 +342,7 @@ StmtPtr Parser::parseStmt() {
 
     // Expression statement
     if (!looksLikeStmtStart()) {
-        errorAt(DiagCode::E2002, "unexpected token '" + ts_.peek().value + "'");
+        errorAt(DiagCode::E1002, "unexpected token '" + ts_.peek().value + "'");
         auto unknown = arena_.make<UnknownStmtAST>();
         unknown->loc = ts_.currentLoc();
         if (!ts_.isAtEnd()) ts_.advance();
@@ -352,7 +352,7 @@ StmtPtr Parser::parseStmt() {
     SourceLocation loc = ts_.currentLoc();
     ExprPtr expr = parseExpr();
     if (!expr) {
-        errorAt(DiagCode::E2008, "expected expression statement");
+        errorAt(DiagCode::E1008, "expected expression statement");
         auto unknown = arena_.make<UnknownStmtAST>();
         unknown->loc = ts_.currentLoc();
         while (!ts_.isAtEnd() && !ts_.check(TokenType::SEMICOLON) && !ts_.check(TokenType::RBRACE)) {
@@ -437,7 +437,7 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
             ts_.advance();
             ExprPtr operand = parsePrefixExpr(allowStructLiteral);
             if (!operand) {
-                errorAt(DiagCode::E2008, "expected expression after '-'");
+                errorAt(DiagCode::E1008, "expected expression after '-'");
                 return arena_.make<UnknownExprAST>();
             }
             auto node = arena_.make<UnaryExprAST>();
@@ -450,7 +450,7 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
             ts_.advance();
             ExprPtr operand = parsePrefixExpr(allowStructLiteral);
             if (!operand) {
-                errorAt(DiagCode::E2008, "expected expression after 'not'");
+                errorAt(DiagCode::E1008, "expected expression after 'not'");
                 return arena_.make<UnknownExprAST>();
             }
             auto node = arena_.make<UnaryExprAST>();
@@ -463,7 +463,7 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
             ts_.advance();
             ExprPtr operand = parsePrefixExpr(allowStructLiteral);
             if (!operand) {
-                errorAt(DiagCode::E2008, "expected expression after '~'");
+                errorAt(DiagCode::E1008, "expected expression after '~'");
                 return arena_.make<UnknownExprAST>();
             }
             auto node = arena_.make<UnaryExprAST>();
@@ -476,7 +476,7 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
             ts_.advance();
             ExprPtr operand = parsePrefixExpr(allowStructLiteral);
             if (!operand) {
-                errorAt(DiagCode::E2008, "expected expression after '&'");
+                errorAt(DiagCode::E1008, "expected expression after '&'");
                 return arena_.make<UnknownExprAST>();
             }
             auto node = arena_.make<UnaryExprAST>();
@@ -518,7 +518,7 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
     if (ts_.check(TokenType::LBRACKET))  return parseArrayLiteralExpr();
 
     if (ts_.check(TokenType::LBRACE)) {
-        errorAt(DiagCode::E2007, "unexpected block in expression position");
+        errorAt(DiagCode::E1006, "unexpected block in expression position");
         int braceDepth = 1;
         ts_.advance();
         while (!ts_.isAtEnd() && braceDepth > 0) {
@@ -535,7 +535,7 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
         ts_.advance();
         ExprPtr inner = parsePrattExpr(PREC_NONE, allowStructLiteral);
         if (!ts_.check(TokenType::RPAREN)) {
-            errorAt(DiagCode::E2001, "expected ')' to close grouped expression");
+            errorAt(DiagCode::E1001, "expected ')' to close grouped expression");
         } else {
             ts_.advance();
         }
@@ -562,7 +562,7 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
             }
             ts_.consume(TokenType::COLON, "expected ':' in behavior access");
             if (!ts_.check(TokenType::IDENTIFIER)) {
-                errorAt(DiagCode::E2003, "expected method name after ':'");
+                errorAt(DiagCode::E1003, "expected method name after ':'");
                 return arena_.make<UnknownExprAST>();
             }
             std::string method = ts_.advance().value;
@@ -643,7 +643,7 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
         if (ts_.check(TokenType::DOT)) {
             ts_.advance();
             if (!ts_.check(TokenType::IDENTIFIER)) {
-                errorAt(DiagCode::E2003, "expected field name after '.'");
+                errorAt(DiagCode::E1003, "expected field name after '.'");
                 break;
             }
             std::string field = ts_.advance().value;
@@ -662,7 +662,7 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
             while (ts_.check(TokenType::QUESTION_DOT)) {
                 ts_.advance();
                 if (!ts_.check(TokenType::IDENTIFIER)) {
-                    errorAt(DiagCode::E2003, "expected field name after '?.'");
+                    errorAt(DiagCode::E1003, "expected field name after '?.'");
                     break;
                 }
                 steps.push_back(pool_.intern(ts_.advance().value));

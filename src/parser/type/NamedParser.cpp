@@ -35,7 +35,7 @@ TypePtr Parser::parseNamedType() {
     SourceLocation loc = ts_.currentLoc();
     
     if (!ts_.check(TokenType::IDENTIFIER)) {
-        errorAt(DiagCode::E2003, "expected type name");
+        errorAt(DiagCode::E1003, "expected type name");
         return arena_.make<UnknownTypeAST>();
     }
     

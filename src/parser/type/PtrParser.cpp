@@ -37,7 +37,8 @@ TypePtr Parser::parsePtrType() {
     ts_.consume(TokenType::MUL, "expected '*'");
     TypePtr inner = parseBaseType();
     if (!inner) {
-        errorAt(DiagCode::E2005, "expected type after '*'");
+        // Use E1005: "Expected type annotation" (parsing error)
+        errorAt(DiagCode::E1005, "expected type after '*'");
         return arena_.make<UnknownTypeAST>();
     }
     auto node = arena_.make<PtrTypeAST>(std::move(inner));

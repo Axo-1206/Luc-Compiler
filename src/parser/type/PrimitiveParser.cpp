@@ -61,7 +61,8 @@ TypePtr Parser::parsePrimitiveType() {
         case TokenType::TYPE_CHAR:   kind = PrimitiveKind::Char; break;
         case TokenType::TYPE_ANY:    kind = PrimitiveKind::Any; break;
         default:
-            errorAt(DiagCode::E2002, "internal error: expected primitive type");
+            // Use E1002: "Unexpected token" (parsing error)
+            errorAt(DiagCode::E1002, "internal error: expected primitive type");
             return arena_.make<UnknownTypeAST>();
     }
 

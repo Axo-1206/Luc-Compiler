@@ -41,6 +41,7 @@ enum class DiagCode : uint32_t {
     E1021,          ///< Nested '!' in type (use alias).
     E1022,          ///< Chained comparison (use 'and').
     E1023,          ///< Mismatched parentheses in curry type.
+    E1024,          ///< Invalid context for generic array
 
     // ========== 2000–2999: Semantic ==========
     E2001 = 2000,   ///< Undeclared identifier '%s'.

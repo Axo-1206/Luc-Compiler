@@ -53,7 +53,7 @@ TypePtr Parser::parseFuncType() {
     while (ts_.check(TokenType::TILDE)) {
         ts_.advance();
         if (!ts_.check(TokenType::IDENTIFIER)) {
-            errorAt(DiagCode::E2003, "expected qualifier name after '~'");
+            errorAt(DiagCode::E1003, "expected qualifier name after '~'");
             break;
         }
         InternedString q = pool_.intern(ts_.advance().value);
@@ -74,7 +74,7 @@ TypePtr Parser::parseFuncType() {
     std::vector<size_t> groupSizes;
     
     if (!ts_.check(TokenType::LPAREN)) {
-        errorAt(DiagCode::E2001, "expected '(' for function type parameters");
+        errorAt(DiagCode::E1001, "expected '(' for function type parameters");
         return arena_.make<UnknownTypeAST>();
     }
     

@@ -169,16 +169,6 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
 // ============================================================================
 // 2. RETURN LIST PARSER
 // ============================================================================
-//
-// parseReturnList() handles the return types after '->' in function signatures.
-// It must distinguish between three forms:
-//   - Single return type:   `-> int`
-//   - Multi‑return:         `-> (int, string)`
-//   - Function type:        `-> (x int) -> int` (returns a function)
-//   - Empty parentheses:    `-> () -> int` (function with zero parameters)
-//
-// The detection uses non‑consuming lookahead to avoid permanent token consumption.
-// ============================================================================
 
 /**
  * @brief Parses the return list after '->' in function signatures.
@@ -188,22 +178,6 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
  *                | return_type                                    -- single
  *
  * where `return_type` can itself be a function type with its own '->'.
- *
- * @par Examples
- *   -> int                         // single return
- *   -> (int, string)               // multi-return
- *   -> (x int) -> int              // function type (returns a function)
- *   -> () -> int                   // zero-parameter function type
- *   -> ((x int) -> int, string)    // multi-return with function type
- *
- * @par Detection Strategy
- *   To distinguish between multi-return `(Type, Type)` and function type
- *   `(param Type) -> Ret`, the parser:
- *   1. Looks inside the parentheses
- *   2. If it sees `IDENTIFIER` followed by a type start (parameter pattern)
- *      and later finds `->` after a complete parameter group, it parses as
- *      a function type
- *   3. Otherwise, it parses as a multi-return list
  *
  * @return ArenaSpan<TypePtr> – span of return types (empty = void function)
  *
@@ -217,19 +191,13 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
  * - Invalid type in list: skips type, continues
  */
 ArenaSpan<TypePtr> Parser::parseReturnList() {
-    // Helper to check if a token type can start a type
-    auto isTypeStart = [this](TokenType tt) -> bool {
-        return isPrimitiveTypeToken(tt) ||
-               tt == TokenType::IDENTIFIER ||
-               tt == TokenType::LBRACKET ||
-               tt == TokenType::AMPERSAND ||
-               tt == TokenType::MUL ||
-               tt == TokenType::LPAREN ||
-               tt == TokenType::TILDE;
-    };
-
-    // Case 1: No parentheses → single return type
+    // Case 1: Single return type (no parentheses)
     if (!ts_.check(TokenType::LPAREN)) {
+        // Use existing looksLikeType() to validate we have a type start
+        if (!looksLikeType()) {
+            errorAt(DiagCode::E1005, "expected return type after '->'");
+            return ArenaSpan<TypePtr>();
+        }
         TypePtr t = parseType();
         if (!t || t->isa<UnknownTypeAST>()) {
             errorAt(DiagCode::E1005, "expected return type after '->'");
@@ -242,98 +210,26 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
 
     // We have '(' - need to determine if it's a function type or multi-return
     size_t savedPos = ts_.getPos();
-    const auto& tokens = ts_.getTokens();
-    size_t tokenCount = ts_.getTokenCount();
-    
-    // Non‑consuming lookahead: try to parse as a function type
-    size_t testPos = savedPos;
-    testPos = ts_.skipCommentsFrom(testPos);
-    
-    if (testPos < tokenCount && tokens[testPos].type == TokenType::LPAREN) {
-        ++testPos;
-        testPos = ts_.skipCommentsFrom(testPos);
-        
-        bool isEmptyParen = (testPos < tokenCount && tokens[testPos].type == TokenType::RPAREN);
-        
-        if (!isEmptyParen) {
-            // Check if this looks like a parameter: IDENTIFIER followed by type start
-            bool looksLikeParameter = false;
-            if (testPos < tokenCount && tokens[testPos].type == TokenType::IDENTIFIER) {
-                size_t afterIdent = testPos + 1;
-                afterIdent = ts_.skipCommentsFrom(afterIdent);
-                if (afterIdent < tokenCount && isTypeStart(tokens[afterIdent].type)) {
-                    looksLikeParameter = true;
-                }
-            }
-            
-            if (looksLikeParameter) {
-                // Simulate parsing up to the closing ')' of the first parameter group
-                int parenDepth = 1;
-                size_t paramEnd = testPos;
-                while (paramEnd < tokenCount && parenDepth > 0) {
-                    paramEnd = ts_.skipCommentsFrom(paramEnd);
-                    if (paramEnd >= tokenCount) break;
-                    TokenType tt = tokens[paramEnd].type;
-                    if (tt == TokenType::LPAREN) ++parenDepth;
-                    else if (tt == TokenType::RPAREN) --parenDepth;
-                    ++paramEnd;
-                }
-                
-                // Check after the closing ')' for '->'
-                size_t afterParams = paramEnd;
-                afterParams = ts_.skipCommentsFrom(afterParams);
-                
-                bool hasArrow = false;
-                while (afterParams < tokenCount) {
-                    afterParams = ts_.skipCommentsFrom(afterParams);
-                    if (afterParams >= tokenCount) break;
-                    TokenType tt = tokens[afterParams].type;
-                    if (tt == TokenType::ARROW) {
-                        hasArrow = true;
-                        break;
-                    }
-                    if (tt == TokenType::LPAREN) {
-                        ++afterParams;
-                        continue;
-                    }
-                    break;
-                }
-                
-                if (hasArrow) {
-                    // This is a function type
-                    TypePtr funcType = parseFuncType();
-                    if (!funcType || funcType->isa<UnknownTypeAST>()) {
-                        errorAt(DiagCode::E1005, "expected function type");
-                        return ArenaSpan<TypePtr>();
-                    }
-                    auto builder = arena_.makeBuilder<TypePtr>();
-                    builder.push_back(std::move(funcType));
-                    return builder.build();
-                }
-            }
-        } else {
-            // Empty parentheses - check if this is a function type with zero parameters
-            size_t afterParen = testPos + 1;
-            afterParen = ts_.skipCommentsFrom(afterParen);
-            if (afterParen < tokenCount && tokens[afterParen].type == TokenType::ARROW) {
-                TypePtr funcType = parseFuncType();
-                if (!funcType || funcType->isa<UnknownTypeAST>()) {
-                    errorAt(DiagCode::E1005, "expected function type");
-                    return ArenaSpan<TypePtr>();
-                }
-                auto builder = arena_.makeBuilder<TypePtr>();
-                builder.push_back(std::move(funcType));
-                return builder.build();
-            }
+    ts_.consume(TokenType::LPAREN, "expected '(' for return list");
+
+    // Use lookahead to decide
+    if (isFunctionTypeAfterParen(ts_.getPos())) {
+        // This is a function type (the parentheses belong to the function's parameter group)
+        ts_.setPos(savedPos);
+        TypePtr funcType = parseFuncType();
+        if (!funcType || funcType->isa<UnknownTypeAST>()) {
+            errorAt(DiagCode::E1005, "expected function type");
+            return ArenaSpan<TypePtr>();
         }
+        auto builder = arena_.makeBuilder<TypePtr>();
+        builder.push_back(std::move(funcType));
+        return builder.build();
     }
-    
+
     // Not a function type → parse as multi-return list
-    ts_.setPos(savedPos);
-    ts_.advance(); // consume '('
-    
+    // We are already positioned after the '(' (from the consume above)
     std::vector<TypePtr> types;
-    
+
     while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
         if (!types.empty() && !ts_.match(TokenType::COMMA)) {
             if (ts_.check(TokenType::RPAREN)) break;
@@ -343,9 +239,9 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
             }
             continue;
         }
-        
+
         if (ts_.check(TokenType::RPAREN)) break;
-        
+
         size_t typeSavedPos = ts_.getPos();
         TypePtr t = parseType();
         if (ts_.getPos() == typeSavedPos) {
@@ -359,9 +255,9 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
             types.push_back(std::move(t));
         }
     }
-    
+
     ts_.consume(TokenType::RPAREN, "expected ')' to close return type list");
-    
+
     auto builder = arena_.makeBuilder<TypePtr>();
     for (auto& t : types) builder.push_back(std::move(t));
     return builder.build();
