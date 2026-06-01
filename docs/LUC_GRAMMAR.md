@@ -1305,15 +1305,15 @@ let strs     [*, string] = map<int, string>([1, 2, 3])(toString<int>)
 
 ### Key Differences
 
-|                             | Form 1                                          | Form 2                                   |
-| --------------------------- | ----------------------------------------------- | ---------------------------------------- |
-| Syntax                      | `(a int) -> (b int) -> int`                     | `(a int)(b int) -> int`                  |
-| Body runs at                | First group call                                | All groups provided                      |
-| Pre-computation             | ✅ Before inner function created                 | ❌ Not possible                           |
-| Capture control             | ✅ Explicit — reference what you need            | ❌ Implicit — compiler captures used vars |
-| Boilerplate                 | Higher — must write `return (...) -> T { ... }` | Lower — plain body                       |
-| Mixing logic between groups | ✅ Yes — outer body is free code                 | ❌ No — only one body for all groups      |
-| Compiler desugars to        | Itself                                          | Form 1                                   |
+| | Form 1 | Form 2 |
+|---|---|---|
+| Syntax | `(a int) -> (b int) -> int` | `(a int)(b int) -> int` |
+| Body runs at | First group call | All groups provided |
+| Pre-computation | ✅ Before inner function created | ❌ Not possible |
+| Capture control | ✅ Explicit — reference what you need | ❌ Implicit — compiler captures used vars |
+| Boilerplate | Higher — must write `return (...) -> T { ... }` | Lower — plain body |
+| Mixing logic between groups | ✅ Yes — outer body is free code | ❌ No — only one body for all groups |
+| Compiler desugars to | Itself | Form 1 |
 
 ### Partial Application — Intermediate Type Annotation Required
 
@@ -1404,13 +1404,13 @@ let process (b int) -> string = add(10) +> string
 
 ### Performance
 
-| Usage                           | Form 1                      | Form 2                       |
-| ------------------------------- | --------------------------- | ---------------------------- |
-| Full application `add(1)(2)`    | Inlined — zero overhead     | Inlined — zero overhead      |
-| Partial stored `let f = add(1)` | Heap closure                | Heap closure                 |
-| Pre-computation at partial      | ✅ Runs once at partial      | ❌ Repeats on every full call |
-| LLVM escape analysis            | Stack-alloc if non-escaping | Stack-alloc if non-escaping  |
-| Inline `add(1)(2)` in pipeline  | LLVM eliminates closure     | LLVM eliminates closure      |
+| Usage | Form 1 | Form 2 |
+|---|---|---|
+| Full application `add(1)(2)` | Inlined — zero overhead | Inlined — zero overhead |
+| Partial stored `let f = add(1)` | Heap closure | Heap closure |
+| Pre-computation at partial | ✅ Runs once at partial | ❌ Repeats on every full call |
+| LLVM escape analysis | Stack-alloc if non-escaping | Stack-alloc if non-escaping |
+| Inline `add(1)(2)` in pipeline | LLVM eliminates closure | LLVM eliminates closure |
 
 For pure functions with no setup work, both forms have identical runtime performance. Form 1 only outperforms form 2 when the outer body performs computation that should run once at the partial application boundary.
 
@@ -1611,6 +1611,44 @@ struct Container<T> {
 > }
 > ```
 
+### Independent Generics in Struct Fields
+
+Struct fields **cannot** have independent type parameters — parameters that are not declared on the struct itself. Every type parameter used in a field must be resolvable when the struct is instantiated.
+
+**Why:** Every field must have a known size at instantiation time so the compiler can compute the struct's memory layout. The struct's own type parameters (`T` in `Foo<T>`) are resolved at instantiation — `Bar<T>` becomes `Bar<int>` when you write `Foo<int>`. An independent `<U>` with no resolution site has no knowable size and cannot be laid out in memory.
+
+```luc
+struct Foo<T> {
+    value    T           -- OK: T from struct, resolved at Foo<int>
+    items    [_, T]      -- OK: T from struct, array element type resolved
+    wrapped  Bar<T>      -- OK: T from struct, Bar<int> when Foo<int>
+    process  (v T) -> T  -- OK: function field, T from struct
+                         --     function pointer is fixed size regardless of T
+
+    nested   Bar<int>    -- OK: concrete argument, fully resolved at declaration
+
+    bad      Bar<U>      -- ERROR: U is unknown — not declared on struct
+                         --        no instantiation site to resolve U
+                         --        compiler cannot determine size of this field
+}
+```
+
+**Function type fields are a special case:**
+
+A function type field stores a function pointer — fixed size (one pointer width) regardless of the function's type parameters. So `(v T) -> T` in a struct field is valid — `T` is from the struct and the pointer size is always known:
+
+```luc
+struct Transformer<T> {
+    fn  (v T) -> T      -- OK: function pointer, fixed size
+                        --     T resolved from Transformer<T> at instantiation
+}
+
+let t Transformer<int> = Transformer<int> { fn = double }
+t.fn(21)    -- 42: T = int, fn is (int) -> int
+```
+
+This is distinct from `impl` methods, which are not stored in the struct and can freely use independent generics — because methods are function pointers resolved at call time, not values laid out in memory.
+
 ---
 
 ## Member Access
@@ -1715,20 +1753,20 @@ type AsyncMaybeOp = ~async ~nullable (a int) -> int
 
 Type alias names should reflect their kind at a glance. The following conventions are recommended:
 
-| Kind                         | Convention                 | Example                        |
-| ---------------------------- | -------------------------- | ------------------------------ |
-| Slice (`[_, T]`)             | `...List` suffix           | `IntList`, `UserList`          |
-| Dynamic array (`[*, T]`)     | `...Array` suffix          | `IntArray`, `UserArray`        |
-| Fixed array (`[N, T]`)       | `...Buffer` suffix         | `ByteBuffer`, `FloatBuffer`    |
-| Generic slice (`[_, <T>]`)   | `List<T>` — no prefix      | `List<T>`, `List<User>`        |
-| Generic dynamic (`[*, <T>]`) | `Array<T>` — no prefix     | `Array<T>`, `Array<User>`      |
-| Generic fixed (`[N, <T>]`)   | `Buffer<T, N>` — no prefix | `Buffer<T, 256>`               |
-| Nullable (`T?`)              | `Maybe...` prefix          | `MaybeInt`, `MaybeUser`        |
-| Result (`T!E`)               | `...Or...` — both sides    | `IntOrString`, `UserOrDbError` |
-| Function type                | `...Fn` suffix             | `ParserFn`, `HandlerFn`        |
-| Nullable function            | `Maybe...Fn`               | `MaybeParserFn`                |
-| Async function               | `...AsyncFn` suffix        | `FetchAsyncFn`                 |
-| Parallel function            | `...ParallelFn` suffix     | `TransformParallelFn`          |
+| Kind                              | Convention                 | Example                          |
+| --------------------------------- | -------------------------- | -------------------------------- |
+| Slice (`[_, T]`)                  | `...List` suffix           | `IntList`, `UserList`            |
+| Dynamic array (`[*, T]`)          | `...Array` suffix          | `IntArray`, `UserArray`          |
+| Fixed array (`[N, T]`)            | `...Buffer` suffix         | `ByteBuffer`, `FloatBuffer`      |
+| Generic slice (`[_, <T>]`)        | `List<T>` — no prefix      | `List<T>`, `List<User>`          |
+| Generic dynamic (`[*, <T>]`)      | `Array<T>` — no prefix     | `Array<T>`, `Array<User>`        |
+| Generic fixed (`[N, <T>]`)        | `Buffer<T, N>` — no prefix | `Buffer<T, 256>`                 |
+| Nullable (`T?`)                   | `Maybe...` prefix          | `MaybeInt`, `MaybeUser`          |
+| Result (`T!E`)                    | `...Or...` — both sides    | `IntOrString`, `UserOrDbError`   |
+| Function type                     | `...Fn` suffix             | `ParserFn`, `HandlerFn`          |
+| Nullable function                 | `Maybe...Fn`               | `MaybeParserFn`                  |
+| Async function                    | `...AsyncFn` suffix        | `FetchAsyncFn`                   |
+| Parallel function                 | `...ParallelFn` suffix     | `TransformParallelFn`            |
 
 The `Or` convention for result types surfaces both the success and error type explicitly. Generic aliases follow the same base suffix as their concrete counterparts — the `<T>` already signals the kind, so no prefix like `Generic` or `T` is needed or wanted.
 
@@ -1778,6 +1816,25 @@ type ComparableList<T : Comparable> = [_, T]
 -- 'Generic' would be useless — all lists with <T> are already obviously generic
 type GenericList<T> = [_, T]    -- bad: Generic adds nothing
 ```
+
+### Independent Generics in Type Alias Bodies
+
+A type alias body may only reference type parameters declared on the alias itself. Independent parameters — ones used in the body but not declared — are a compile error. The alias body must be fully resolvable from its own declared parameters:
+
+```luc
+-- OK: T declared and used
+type Transform<T>    = (v T) -> T
+type Converter<T, U> = (v T) -> U       -- OK: both T and U declared
+
+-- ERROR: U appears in body but is not declared on the alias
+type Bad<T>          = (v T) -> U       -- ERROR: U unknown
+type AlsoBad<T>      = [_, U]           -- ERROR: U unknown
+
+-- CORRECT: declare U on the alias
+type Converter<T, U> = (v T) -> U       -- OK
+```
+
+This mirrors the struct field rule — an alias body must be fully resolvable to a concrete shape when all its declared parameters are provided. An undeclared `U` has no resolution site and produces an unresolvable shape.
 
 ### Examples
 
@@ -2201,30 +2258,6 @@ nums:last()     -- 3  — from impl Slice<T> with T = int, same target
 
 When a method needs to refer to the element type — for example returning `T` from `first()` or accepting `T` in `push()` — use the `<T>` syntax inside the bracket to declare a free type variable:
 
-> [!WARNING]
-> `[_, <T>]` is only valid as an `impl` or `from` target
-> The `<T>` syntax inside an array bracket is **not a valid type** in any other context. It cannot appear in variable declarations, function parameters, return types, or struct fields. For those contexts, use a named type alias:
->
-> ```luc
-> -- valid: impl target
-> impl [_, <T>] as s { ... }
->
-> -- valid: from target
-> from [_, <T>] {
->     sliceOf<T>    -- registers (T) -> [_, T]
-> }
->
-> -- INVALID everywhere else
-> let arr  [_, <T>]  = []         -- ERROR: not a valid variable type
-> let f    (items [_, <T>]) = {}  -- ERROR: not a valid parameter type
-> type Foo = [_, <T>]             -- ERROR: not a valid alias body
->
-> -- CORRECT for non-impl/from contexts: use a type alias
-> type Slice<T> = [_, T]
-> let arr  Slice<int>          = []
-> let f    (items Slice<int>)  = {}
-> ```
-
 ```luc
 impl [_, <T>] as s {
     first () -> T = { return s[0] }
@@ -2303,19 +2336,61 @@ An `impl` block may declare generic parameters **only when the target type is ge
 | Array type               | ✅ Yes                 | ❌ No                    | Methods apply to all arrays of that element type in scope |
 | Trait                    | ❌ No                  | N/A                     | Traits are contracts, not implementations                 |
 
-When the target type is generic but the impl declaration omits generic parameters, the compiler requires them in method signatures — you must declare the type parameters to use them.
+### Dependent vs Independent Generic Parameters in Methods
+
+`impl` methods may freely use both dependent and independent type parameters. The distinction determines how the call site provides them:
+
+**Dependent parameters** — come from the `impl` target declaration (e.g. `T` in `impl Foo<T>`). They are already resolved when the instance is declared. The compiler infers them automatically at the call site. Writing them explicitly is a compile error:
 
 ```luc
--- Invalid: T is unknown without generic parameters
-impl Box {
-    get () -> T = { return self.value }   -- ERROR: T unknown
+impl Foo<T> as f {
+    doSomething (v T) -> T = { return v }
 }
 
--- Valid: declare generic parameters to use them in method signatures
-impl Box<T> {
-    get () -> T = { return self.value }   -- OK
-}
+let a Foo<int> = Foo<int> { value = 42 }
+
+a:doSomething(42)           -- OK: T = int inferred from Foo<int>
+a:doSomething<int>(42)      -- ERROR: T is dependent, do not write explicitly
+a:doSomething<string>(42)   -- ERROR: T is dependent, contradicts Foo<int>
 ```
+
+**Independent parameters** — declared on the method itself (e.g. `<U>` in `convert<U>`). They are resolved fresh at each call site. The caller must provide them explicitly. Omitting them is a compile error:
+
+```luc
+impl Foo<T> as f {
+    convert<U> (fn (T) -> U) -> U = { return fn(f.value) }
+}
+
+let a Foo<int> = Foo<int> { value = 42 }
+
+a:convert<string>(toString<int>)    -- OK: U = string, explicit required
+a:convert(toString<int>)            -- ERROR: U is independent, must provide
+```
+
+**Mixing dependent and concrete in method assignments:**
+
+In the injection form, `func_ref<...>` may mix dependent parameters with concrete type arguments:
+
+```luc
+export const magic<A, B> (v A, fn (A) -> B) -> B = { return fn(v) }
+
+impl Foo<T> as f {
+    toInt    = magic<T, int>(f)!     -- T dependent, int concrete
+                                     -- resolved: (fn (T) -> int) -> int
+    convert<U> = magic<T, U>(f)!    -- T dependent, U independent
+                                     -- resolved: (fn (T) -> U) -> U
+}
+
+let a Foo<string> = Foo<string> { value = "hello" }
+a:toInt(str:len)                  -- OK: T=string inferred, int fixed
+a:convert<bool>(str:isEmpty)      -- OK: T=string inferred, U=bool explicit
+```
+
+**Why `impl` allows independent generics but structs do not:**
+
+`impl` only contains methods — function pointers. A function pointer has a fixed size (one pointer width) regardless of its type parameters. Independent `<U>` is resolved at the call site, not at the impl declaration. No memory layout is affected.
+
+Struct fields contain stored values. Every field must have a known size at instantiation time. An independent `<U>` with no resolution site produces unknown size — the compiler cannot lay out the struct in memory.
 
 ### Examples
 
@@ -2561,6 +2636,24 @@ let b2 Box<int>    = Box<int>("42")     -- uses rewrap<int>
 let b3 Box<string> = Box<string>("hi")  -- uses wrap<string>
 ```
 
+**Independent generics are forbidden in `from` entries:**
+
+`from` conversions are implicit — there is no syntax at the conversion site to provide an independent type argument. Every type parameter used in a `from` entry must come from the `from` target declaration. An independent `<U>` with no conversion-site slot is a compile error:
+
+```luc
+export const rewrap<T, U> (v T, fn (T) -> U) -> Box<U> = { ... }
+
+from Box<T> {
+    wrap<T>          -- OK: T from from Box<T>
+    rewrap<T, U>     -- ERROR: U is independent — no syntax to provide U at conversion site
+}
+
+-- CORRECT: fix U concretely at the from declaration
+from Box<string> {
+    rewrap<int, string>    -- OK: both T and U concrete
+}
+```
+
 **Conflict resolution** — if two `from` entries in the same block have identical source signatures, it is a compile error. Across multiple `from` blocks for the same target type, the innermost or last-declared block wins by the same scope-proximity rule as `impl`.
 
 The compiler does not chain conversions (e.g., A → B → C) — only a single direct conversion is applied.
@@ -2770,14 +2863,14 @@ pipeline_step   := IDENTIFIER
                  | anon_func
 ```
 
-| Step form      | What `\|>` does                           | Nullability                |
-| -------------- | ----------------------------------------- | -------------------------- |
-| `fn`           | calls `fn(upstream)`                      | must be non-nullable       |
-| `var:method`   | calls `method(upstream)`                  | always safe                |
-| `struct.field` | calls function stored in field            | field must be non-nullable |
-| `fn(args)!`    | calls `fn(upstream, args...)`             | must be non-nullable       |
-| `fn<T>`        | instantiates generic, calls with upstream | must be non-nullable       |
-| `anon_func`    | calls with upstream as argument           | always safe                |
+| Step form        | What `\|>` does                  | Nullability                |
+| ---------------- | -------------------------------- | -------------------------- |
+| `fn`             | calls `fn(upstream)`             | must be non-nullable       |
+| `var:method`     | calls `method(upstream)`         | always safe                |
+| `struct.field`   | calls function stored in field   | field must be non-nullable |
+| `fn(args)!`      | calls `fn(upstream, args...)`    | must be non-nullable       |
+| `fn<T>`          | instantiates generic, calls with upstream | must be non-nullable |
+| `anon_func`      | calls with upstream as argument  | always safe                |
 
 > [!NOTE]
 > `var:method` — `var` is the variable the method is dispatched on, not a type name. `:` is the method call operator in Luc (see Member Access). The upstream value is passed as the argument to the method, not as the receiver. For example, `v |> list:push` passes `v` as the argument to `push` on `list`.
@@ -4672,36 +4765,240 @@ Attribute arguments are intentionally limited to compile-time literals and type 
 
 #### Known Attributes
 
-| Attribute                | Valid on                     | Purpose                                   |
-| ------------------------ | ---------------------------- | ----------------------------------------- |
-| `@extern("sym")`         | `let`, `const` func/var      | Bind to C/OS/Vulkan symbol                |
-| `@extern("sym", "conv")` | `let`, `const` func/var      | With explicit calling convention          |
-| `@inline`                | func                         | Suggest always inline                     |
-| `@noinline`              | func                         | Prevent inlining                          |
-| `@packed`                | `struct`                     | Remove padding — all fields byte-adjacent |
-| `@deprecated("msg")`     | func, var, struct            | Emit warning at every use site            |
-| `@phantom`               | `type` alias, `struct`, func | Allow unused generic parameters           |
-| `@aot`                   | `main` only                  | Ahead-of-time compilation                 |
-| `@jit`                   | `main` only                  | JIT compilation                           |
+| Attribute                | Valid on                     | Purpose                                          |
+| ------------------------ | ---------------------------- | ------------------------------------------------ |
+| `@extern("sym")`         | `let`, `const` func/var      | Bind to C symbol by name                         |
+| `@extern("sym", "conv")` | `let`, `const` func/var      | With explicit calling convention                 |
+| `@link("lib")`           | package, file, or `const`    | Set active link context — one declaration, comma-separated paths |
+| `@inline`                | func                         | Suggest always inline                            |
+| `@noinline`              | func                         | Prevent inlining                                 |
+| `@packed`                | `struct`                     | Remove padding — all fields byte-adjacent        |
+| `@deprecated("msg")`     | func, var, struct             | Emit warning at every use site                   |
+| `@phantom`               | `type` alias, `struct`, func | Allow unused generic parameters                  |
+| `@aot`                   | `main` only                  | Ahead-of-time compilation                        |
+| `@jit`                   | `main` only                  | JIT compilation                                  |
 
 `@inline` and `@noinline` are mutually exclusive on the same declaration.
 `@aot` and `@jit` are mutually exclusive on the same declaration.
 
 #### `@extern` Rules
 
+`@extern` is a **linker directive** — not a C compiler. The Luc compiler generates an external symbol reference in LLVM IR and hands it to the linker. The linker resolves the symbol from whatever object files, static libraries, or dynamic libraries are provided at link time. The Luc compiler never sees or processes C source code.
+
+**Declaration rules:**
+
 - Requires `const`, not `let` — the linker resolves the symbol permanently.
 - Functions must have no body — the compiler emits a warning if an empty body `= {}` is supplied (it is silently ignored) and an error if a non-empty body is supplied.
 - Using `let` instead of `const` produces a warning.
+- The symbol name must match exactly what appears in the compiled binary — C functions use their plain name, no mangling.
+- `@extern` uses the active `@link` context set by the most recent `@link` declaration in the file. If no `@link` has been declared yet, the linker searches default system locations only.
+- Writing `@extern` before any `@link` is valid — it simply uses the empty context (default locations). This is intentional for universally available symbols like `malloc` and `strlen`.
+- Writing `@extern` after a `@link` that was intended for a different set of symbols is a common mistake — the sticky context applies to every `@extern` that follows, not just the next one.
 
 ```luc
+-- CASE 1: @extern before any @link — searches default locations only
+-- valid for universally available symbols
+@extern("malloc")
+const malloc (size uint64) -> *uint8?    -- OK: malloc is in libc, always available
+
+@extern("vkCreateInstance")
+const vkCreateInstance (...) -> uint32   -- PROBLEM: vulkan may not be in default locations
+                                         -- linker error if vulkan is not system-installed
+
+-- CASE 2: @extern after the correct @link — intended behavior
+@link("vulkan")
+
+@extern("vkCreateInstance")    -- searches ["vulkan"] then default — correct
+@extern("vkDestroyInstance")   -- searches ["vulkan"] then default — correct
+
+-- CASE 3: @extern after a @link intended for something else — common mistake
+@link("sqlite3")
+
+@extern("sqlite3_open")        -- searches ["sqlite3"] — correct
+
+@extern("sin")                 -- searches ["sqlite3"] FIRST, then default
+                               -- sin is in libm, not sqlite3 — found in default eventually
+                               -- but searches sqlite3 unnecessarily
+                               -- if sin were ambiguous this could resolve wrong
+
+-- CORRECT for case 3: set the right context before the @extern
+@link("m")
+
+@extern("sin")    -- searches ["m"] then default — correct
+```
+
+> [!NOTE]
+> The sticky context means `@link` placement matters. Group related `@extern` declarations together under their `@link` context. Use `@link()` to clear the context when switching to symbols that should only use default locations.
+
+**Developer workflow:**
+
+The developer is responsible for having the C library available at link time. The Luc compiler does not compile C code. Three common cases:
+
+1. **System libraries** (`libc`, `libm`, `pthread`, Vulkan, OpenGL) — already compiled and installed on the system. Declare the symbols with `@extern` and set the link context with `@link`:
+
+```luc
+@link("m")
+
+@extern("sin")
+const sin (x float64) -> float64
+
+@extern("cos")
+const cos (x float64) -> float64
+```
+
+2. **Third-party libraries** — install pre-compiled `.a` or `.so`/`.dll` via a package manager, set the link context:
+
+```luc
+@link("sqlite3")
+
+@extern("sqlite3_open")
+const sqlite3Open (filename *uint8, ppDb **SqliteDb) -> int
+
+@extern("sqlite3_exec")
+const sqlite3Exec (db *SqliteDb, sql *uint8, callback *uint8, arg *uint8, errmsg **uint8) -> int
+```
+
+3. **Own C code** — compile it separately before invoking the Luc compiler, then pass the object file directly to the linker. No `@link` needed for object files passed directly:
+
+```bash
+clang -c mybridge.c -o mybridge.o
+luc build main.luc mybridge.o
+```
+
+```luc
+-- symbols from mybridge.o — no @link needed, object passed directly
+@extern("mybridge_init")
+const mybridgeInit (config *uint8) -> int
+
+@extern("mybridge_process")
+const mybridgeProcess (data *uint8, len uint64) -> *uint8
+```
+
+**Common `@extern` examples:**
+
+```luc
+-- memory allocation (libc — always available, no @link needed)
 @extern("malloc")
 const malloc (size uint64) -> *uint8?
 
 @extern("free")
 const free (ptr *uint8)
 
+@extern("memcpy")
+const memcpy (dst *uint8, src *uint8, n uint64) -> *uint8
+
+-- variadic C function
 @extern("printf", "C")
 const printf (fmt *uint8, args ...any) -> int
+
+-- data symbol (no parameters, no return — just a pointer)
+@extern("__stack_top")
+const stackTop *uint8
+```
+
+**C++ interop — heavily limited:**
+
+C++ support is limited to functions exposed through `extern "C"` wrappers. C++ name mangling makes direct symbol binding fragile and platform-dependent. The recommended pattern is to write a thin C wrapper in C++ and declare that wrapper in Luc:
+
+```cpp
+// myclass_bridge.cpp
+extern "C" {
+    int myclass_process(int x) { return MyClass().process(x); }
+    void myclass_destroy(MyClass* obj) { delete obj; }
+}
+```
+
+```luc
+@extern("myclass_process")
+const myclassProcess (x int) -> int
+
+@extern("myclass_destroy")
+const myclassDestroy (obj *uint8)
+```
+
+Direct C++ symbol binding (mangled names or `"C++"` calling convention) is not supported. A better solution may be designed in a future version of Luc.
+
+#### `@link` Rules
+
+`@link` sets the **active link context** — an ordered list of library paths the linker searches before the default system locations. Every `@extern` that follows uses the active context until a new `@link` replaces it.
+
+**One form only — comma-separated arguments:**
+
+Multiple paths must be written as arguments in a single `@link`. Writing multiple `@link` lines is a compile error — consolidate them:
+
+```luc
+-- CORRECT: one @link, comma-separated paths
+@link("./libs/mylib.a", "./fallback/mylib.a", "mylib")
+
+-- ERROR: multiple @link lines
+@link("./libs/mylib.a")
+@link("./fallback/mylib.a")    -- ERROR: duplicate @link, use comma-separated args
+```
+
+**Sticky context — applies to all following `@extern` until replaced:**
+
+Once set, the active link context persists across every `@extern` declaration that follows in the file. A new `@link` replaces the context entirely:
+
+```luc
+-- set context: all following @extern search vulkan first
+@link("vulkan")
+
+@extern("vkCreateInstance")     -- searches ["vulkan"] then default
+@extern("vkDestroyInstance")    -- searches ["vulkan"] then default
+@extern("vkSubmitQueue")        -- searches ["vulkan"] then default
+
+-- replace context: all following @extern now search libm
+@link("m")
+
+@extern("sin")     -- searches ["m"] then default
+@extern("cos")     -- searches ["m"] then default
+@extern("sqrt")    -- searches ["m"] then default
+
+-- clear context: revert to default-only search
+@link()
+
+@extern("malloc")  -- default locations only
+@extern("free")    -- default locations only
+```
+
+**Search order:**
+
+1. Paths in the active `@link` context, left to right
+2. Default system locations (`/usr/lib`, `/usr/local/lib`, platform equivalents)
+
+If the symbol is not found in any location, the linker emits a fatal build error naming the unresolved symbol and listing the paths that were searched.
+
+**Without any `@link`:**
+
+If no `@link` has been declared before an `@extern`, the active context is empty and the linker searches default system locations only. This is fine for universally available symbols like `malloc`, `free`, `strlen`:
+
+```luc
+-- no @link needed — malloc is in libc, always available
+@extern("malloc")
+const malloc (size uint64) -> *uint8?
+```
+
+**Context is file-scoped:**
+
+The active link context does not leak across files. Each file starts with an empty context.
+
+**Grammar:**
+
+```
+attr_link       := '@link' '(' [ link_path { ',' link_path } ] ')'
+
+link_path       := STRING_LITERAL
+                   -- "name"              — system library, linker searches standard paths
+                   -- "./path/lib.a"      — relative path to static library
+                   -- "./path/lib.so"     — relative path to dynamic library
+                   -- "/absolute/lib.a"   — absolute path to static library
+```
+
+**Full example:**
+
+```luc
+-- Vulkan functions — search vulkan library
+@link("vulkan")
 
 @extern("vkCreateInstance")
 const vkCreateInstance (
@@ -4710,9 +5007,60 @@ const vkCreateInstance (
     pInstance  **VkInstance
 ) -> uint32
 
-@extern("__stack_top")
-const stackTop *uint8
+@extern("vkDestroyInstance")
+const vkDestroyInstance (instance *VkInstance, pAllocator *VkAllocationCallbacks)
+
+@extern("vkCreateDevice")
+const vkCreateDevice (
+    physDevice *VkPhysicalDevice,
+    pInfo      *VkDeviceCreateInfo,
+    pAllocator *VkAllocationCallbacks,
+    pDevice    **VkDevice
+) -> uint32
+
+-- math functions — replace context with libm
+@link("m")
+
+@extern("sin")
+const sin (x float64) -> float64
+
+@extern("cos")
+const cos (x float64) -> float64
+
+-- SQLite with fallback paths — multiple args, left-to-right search
+@link("./libs/sqlite3.a", "/usr/local/lib/libsqlite3.a", "sqlite3")
+
+@extern("sqlite3_open")
+const sqlite3Open (filename *uint8, ppDb **SqliteDb) -> int
+
+@extern("sqlite3_exec")
+const sqlite3Exec (
+    db       *SqliteDb,
+    sql      *uint8,
+    callback *uint8,
+    arg      *uint8,
+    errmsg   **uint8
+) -> int
+
+-- clear context — back to default locations only
+@link()
+
+@extern("malloc")
+const malloc (size uint64) -> *uint8?
+
+@extern("free")
+const free (ptr *uint8)
 ```
+
+Library name forms:
+
+| Form | Meaning |
+|---|---|
+| `"m"` | System library — linker searches standard paths for `libm` |
+| `"sqlite3"` | System library — linker searches for `libsqlite3` |
+| `"./libs/mylib.a"` | Relative path to static library |
+| `"./libs/libmylib.so"` | Relative path to dynamic library |
+| `"/usr/local/lib/libpng.a"` | Absolute path to static library |
 
 #### `@phantom` Rules
 
