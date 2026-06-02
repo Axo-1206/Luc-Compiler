@@ -27,17 +27,38 @@ namespace NameMangler {
                 auto nt = static_cast<NullableTypeAST*>(type);
                 return "opt_" + mangleType(nt->inner.get(), pool);
             }
-            case ASTKind::FixedArrayType: {
-                auto ft = static_cast<FixedArrayTypeAST*>(type);
-                return "arr" + std::to_string(ft->size) + "_" + mangleType(ft->element.get(), pool);
+            case ASTKind::ResultType: {
+                auto rt = static_cast<ResultTypeAST*>(type);
+                std::string res = mangleType(rt->inner.get(), pool);
+                if (rt->errorType) {
+                    res += "!" + mangleType(rt->errorType.get(), pool);
+                } else {
+                    res += "!";
+                }
+                return res;
             }
-            case ASTKind::SliceType: {
-                auto st = static_cast<SliceTypeAST*>(type);
-                return "slice_" + mangleType(st->element.get(), pool);
+            case ASTKind::ArrayType: {
+                auto at = static_cast<ArrayTypeAST*>(type);
+                std::string prefix;
+                switch (at->arrayKind) {
+                    case ArrayKind::Slice:   prefix = "slice_"; break;
+                    case ArrayKind::Dynamic: prefix = "dyn_"; break;
+                    case ArrayKind::Fixed:   prefix = "arr" + std::to_string(at->size) + "_"; break;
+                }
+                return prefix + mangleType(at->element.get(), pool);
             }
-            case ASTKind::DynamicArrayType: {
-                auto dt = static_cast<DynamicArrayTypeAST*>(type);
-                return "dyn_" + mangleType(dt->element.get(), pool);
+            case ASTKind::GenericArrayType: {
+                // For generic array types (impl target), we mangle the kind and the type variable name.
+                // This is only used internally; codegen will substitute concrete types.
+                auto gat = static_cast<GenericArrayTypeAST*>(type);
+                std::string prefix;
+                switch (gat->arrayKind) {
+                    case ArrayKind::Slice:   prefix = "slice_"; break;
+                    case ArrayKind::Dynamic: prefix = "dyn_"; break;
+                    case ArrayKind::Fixed:   prefix = "arr" + std::to_string(gat->size) + "_"; break;
+                }
+                std::string param = std::string(pool.lookup(gat->typeParamName));
+                return "generic_" + prefix + param;
             }
             case ASTKind::RefType: {
                 auto rt = static_cast<RefTypeAST*>(type);

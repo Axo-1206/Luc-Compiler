@@ -50,7 +50,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-#include "header/SemanticCollector.hpp"
+#include "SemanticCollector.hpp"
 #include "diagnostics/DiagnosticEngine.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugMacros.hpp"

@@ -15,7 +15,7 @@
  * @related SemanticAnalyzer.hpp
  */
 
-#include "header/SemanticAnalyzer.hpp"
+#include "SemanticAnalyzer.hpp"
 #include "header/SemanticCollector.hpp"
 #include "header/TypeResolver.hpp"
 #include "header/TypeChecker.hpp"

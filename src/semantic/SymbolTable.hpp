@@ -140,30 +140,3 @@ private:
     // because it avoids the struct wrapper overhead.
     std::deque<std::unordered_map<uint32_t, Symbol>> scopes_;
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SymbolTableScopeGuard — RAII helper for automatic scope management
-//
-// Usage:
-//   {
-//       SymbolTableScopeGuard guard(symbolTable);
-//       // ... declare symbols in the new scope ...
-//   } // scope automatically popped
-// ─────────────────────────────────────────────────────────────────────────────
-class SymbolTableScopeGuard {
-public:
-    explicit SymbolTableScopeGuard(SymbolTable& table) : _table(table) {
-        _table.pushScope();
-    }
-    
-    ~SymbolTableScopeGuard() {
-        _table.popScope();
-    }
-    
-    // Disable copy/move
-    SymbolTableScopeGuard(const SymbolTableScopeGuard&) = delete;
-    SymbolTableScopeGuard& operator=(const SymbolTableScopeGuard&) = delete;
-    
-private:
-    SymbolTable& _table;
-};
