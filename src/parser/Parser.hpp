@@ -346,10 +346,6 @@ private:
     StringPool& pool_;
     ASTArena& arena_;
 
-    // Context flags (used for semantic checks during parsing)
-    int loopDepth_ = 0;      ///< >0 when inside a loop (for break/continue)
-    int parallelDepth_ = 0;  ///< >0 when inside a ~parallel body
-
     // ========================================================================
     // Error handling
     // ========================================================================

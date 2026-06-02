@@ -115,10 +115,6 @@ ASTPtr<ReturnStmtAST> Parser::parseReturnStmt() {
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::RETURN, "expected 'return'");
 
-    if (parallelDepth_ > 0) {
-        error(loc, DiagCode::E1006, "'return' is not valid inside a 'parallel' body");
-    }
-
     auto node = arena_.make<ReturnStmtAST>();
     node->loc = loc;
 
@@ -186,13 +182,6 @@ ASTPtr<BreakStmtAST> Parser::parseBreakStmt() {
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::BREAK, "expected 'break'");
 
-    if (loopDepth_ == 0) {
-        error(loc, DiagCode::E1006, "'break' is only valid inside a loop body");
-    }
-    if (parallelDepth_ > 0) {
-        error(loc, DiagCode::E1006, "'break' is not valid inside a 'parallel' body");
-    }
-
     auto node = arena_.make<BreakStmtAST>();
     node->loc = loc;
     return node;
@@ -201,13 +190,6 @@ ASTPtr<BreakStmtAST> Parser::parseBreakStmt() {
 ASTPtr<ContinueStmtAST> Parser::parseContinueStmt() {
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::CONTINUE, "expected 'continue'");
-
-    if (loopDepth_ == 0) {
-        error(loc, DiagCode::E1006, "'continue' is only valid inside a loop body");
-    }
-    if (parallelDepth_ > 0) {
-        error(loc, DiagCode::E1006, "'continue' is not valid inside a 'parallel' body");
-    }
 
     auto node = arena_.make<ContinueStmtAST>();
     node->loc = loc;
