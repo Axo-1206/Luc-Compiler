@@ -100,6 +100,7 @@ add_executable(luc-comp
     src/semantic/Annotator.cpp
     src/semantic/collectors/SemanticCollector.cpp
     src/semantic/checkType/TypeChecker.cpp
+    src/semantic/helpers/SemanticContext.cpp
 
     src/semantic/checkers/declCheckers/DeclDispatcher.cpp
     src/semantic/checkers/declCheckers/checkVarDecl.cpp

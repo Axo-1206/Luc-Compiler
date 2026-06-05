@@ -8,7 +8,7 @@
 
 #include "SemanticAnalyzer.hpp"
 #include "collectors/SemanticCollector.hpp"
-#include "resolveType/TypeResolver.hpp"
+#include "resolveType/TypeDispatcher.hpp"
 #include "SymbolTable.hpp"
 #include "helpers/SemanticContext.hpp"
 #include "diagnostics/Diagnostic.hpp"
@@ -16,6 +16,7 @@
 #include "ast/DeclAST.hpp"
 #include "debug/DebugMacros.hpp"
 #include "debug/DebugUtils.hpp"
+#include "semantic/helpers/NameMangler.hpp"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -34,9 +35,12 @@ void annotateAll(std::vector<ProgramAST*>& files, SemanticContext& ctx);
 SemanticAnalyzer::SemanticAnalyzer(StringPool& pool, ASTArena& arena)
     : symbols_(),
       ctx_(pool, arena, &symbols_),           // ctx_ initialized with symbols_
-      resolver_(ctx_),                        // resolver_ gets ctx_ reference
+      dispatcher_(ctx_),                      // dispatcher_ gets ctx_ reference
       collector_() {
     LUC_LOG_SEMANTIC("SemanticAnalyzer constructed");
+    
+    // Wire up the dispatcher to the context
+    ctx_.dispatcher = &dispatcher_;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,6 +73,11 @@ bool SemanticAnalyzer::analyze(std::vector<ProgramAST*>& files) {
     LUC_LOG_SEMANTIC("\n--- Phase 2: Resolve Types ---");
     resolveTypes(files);
     LUC_LOG_SEMANTIC("Phase 2 completed (warnings may exist)");
+    
+    // Phase 2.5: Build Trait Conformance Map
+    LUC_LOG_SEMANTIC("\n--- Phase 2.5: Build Trait Conformance Map ---");
+    buildTraitConformanceMap();
+    LUC_LOG_SEMANTIC("Phase 2.5 completed");
 
     // Phase 3: Check Decls.
     LUC_LOG_SEMANTIC("\n--- Phase 3: Check Decls ---");
@@ -129,7 +138,7 @@ void SemanticAnalyzer::collectSymbols(std::vector<ProgramAST*>& files) {
         ctx_.currentFile = prog->filePath;
         collector_.collectProgram(*prog, ctx_);
     }
-    resolver_.setStructTraits(&collector_.getStructTraits());
+    
     LUC_LOG_SEMANTIC_VERBOSE("collectSymbols: symbol table built");
 }
 
@@ -174,28 +183,117 @@ void SemanticAnalyzer::resolveTypes(std::vector<ProgramAST*>& files) {
         ctx_.currentFile = prog->filePath;
         for (auto& decl : prog->decls) {
             if (decl->isa<TypeAliasDeclAST>()) {
-                resolver_.resolveTypeAlias(*decl->as<TypeAliasDeclAST>());
+                dispatcher_.resolveTypeAlias(*decl->as<TypeAliasDeclAST>());
                 resolvedCount++;
             } else if (decl->isa<StructDeclAST>()) {
-                resolver_.resolveStructFields(*decl->as<StructDeclAST>());
+                dispatcher_.resolveStructFields(*decl->as<StructDeclAST>());
                 resolvedCount++;
             } else if (decl->isa<FuncDeclAST>()) {
-                resolver_.resolveFunctionSignature(*decl->as<FuncDeclAST>());
+                dispatcher_.resolveFunctionSignature(*decl->as<FuncDeclAST>());
                 resolvedCount++;
             } else if (decl->isa<ImplDeclAST>()) {
-                resolver_.resolveImplMethods(*decl->as<ImplDeclAST>());
+                dispatcher_.resolveImplMethods(*decl->as<ImplDeclAST>());
                 resolvedCount++;
             } else if (decl->isa<FromDeclAST>()) {
-                resolver_.resolveFromEntries(*decl->as<FromDeclAST>());
+                dispatcher_.resolveFromEntries(*decl->as<FromDeclAST>());
                 resolvedCount++;
             } else if (decl->isa<VarDeclAST>()) {
-                resolver_.resolveVarType(*decl->as<VarDeclAST>());
+                dispatcher_.resolveVarType(*decl->as<VarDeclAST>());
                 resolvedCount++;
             }
         }
     }
 
     LUC_LOG_SEMANTIC_VERBOSE("resolveTypes: resolved " << resolvedCount << " type-annotated declarations");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildTraitConformanceMap  — Phase 2.5 – builds type → traits mapping
+// ─────────────────────────────────────────────────────────────────────────────
+void SemanticAnalyzer::buildTraitConformanceMap() {
+    LUC_LOG_SEMANTIC_VERBOSE("buildTraitConformanceMap: building trait conformance map");
+    
+    // Clear existing map
+    ctx_.typeTraits.clear();
+    
+    // Find all impl declarations in the symbol table
+    // Iterate through all symbols in global scope
+    const auto& globalScope = ctx_.symbols->getGlobalScope();
+    int implCount = 0;
+    int traitCount = 0;
+    
+    for (const auto& [id, sym] : globalScope) {
+        if (sym.kind != SymbolKind::Impl) continue;
+        
+        auto* impl = static_cast<ImplDeclAST*>(sym.decl);
+        if (!impl) continue;
+        
+        // Skip impls without trait conformance
+        if (!impl->traitRef) continue;
+        
+        // Resolve the target type
+        if (!impl->targetType) {
+            LUC_LOG_SEMANTIC_VERBOSE("buildTraitConformanceMap: impl has no target type");
+            continue;
+        }
+        
+        // Resolve the target type through the dispatcher
+        TypeAST* resolvedTarget = dispatcher_.resolveType(impl->targetType.get());
+        if (!resolvedTarget) {
+            ctx_.error(impl->loc, DiagCode::E2016, 
+                      "cannot resolve target type for trait conformance");
+            continue;
+        }
+        
+        // Get canonical mangled key for this type
+        // Unwrap aliases first
+        TypeAST* unwrapped = resolvedTarget;
+        while (unwrapped && unwrapped->isa<NamedTypeAST>()) {
+            auto* named = unwrapped->as<NamedTypeAST>();
+            Symbol* typeSym = ctx_.symbols->lookup(named->name);
+            if (!typeSym || typeSym->kind != SymbolKind::TypeAlias) break;
+            if (typeSym->type) {
+                unwrapped = typeSym->type;
+            } else {
+                break;
+            }
+        }
+        
+        InternedString typeKey = ctx_.pool.intern(
+            NameMangler::mangleType(unwrapped, ctx_.pool, ctx_.symbols)
+        );
+        
+        InternedString traitName = impl->traitRef->name;
+        
+        // Check for duplicate conformance
+        auto& traitList = ctx_.typeTraits[typeKey];
+        bool alreadyExists = false;
+        for (InternedString existing : traitList) {
+            if (existing == traitName) {
+                alreadyExists = true;
+                ctx_.warning(impl->loc, DiagCode::W6015,
+                            "type '" + std::string(ctx_.pool.lookup(typeKey)) + 
+                            "' already implements trait '" + 
+                            std::string(ctx_.pool.lookup(traitName)) + "'");
+                break;
+            }
+        }
+        
+        if (!alreadyExists) {
+            traitList.push_back(traitName);
+            traitCount++;
+            LUC_LOG_SEMANTIC_VERBOSE("buildTraitConformanceMap: " 
+                                     << ctx_.pool.lookup(typeKey) << " implements "
+                                     << ctx_.pool.lookup(traitName));
+        }
+        
+        implCount++;
+    }
+    
+    LUC_LOG_SEMANTIC_VERBOSE("buildTraitConformanceMap: processed " << implCount 
+                            << " impl blocks, recorded " << traitCount 
+                            << " trait conformances across " << ctx_.typeTraits.size() 
+                            << " types");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -236,6 +334,7 @@ void SemanticAnalyzer::validateEntryPoint() {
     }
 
     auto* func = static_cast<FuncDeclAST*>(mainSym->decl);
+    if (!func) return;
 
     // 1. Must be exported
     if (func->visibility != Visibility::Export) {
@@ -250,6 +349,12 @@ void SemanticAnalyzer::validateEntryPoint() {
     // 3. Parameter validation
     bool hasParams = false;
     bool isValidArgsParam = false;
+
+    // Ensure funcType exists
+    if (!func->funcType) {
+        ctx_.error(func->loc, DiagCode::E2007, "'main' function has no type signature");
+        return;
+    }
 
     const FuncSignature& sig = func->funcType->sig;
     size_t totalParams = sig.totalParamCount();
@@ -279,7 +384,8 @@ void SemanticAnalyzer::validateEntryPoint() {
     }
 
     if (hasParams && !isValidArgsParam) {
-        ctx_.error(func->loc, DiagCode::E2007, "'main' function must have no parameters or take a string slice: (args []string)");
+        ctx_.error(func->loc, DiagCode::E2007, 
+                  "'main' function must have no parameters or take a string slice: (args [_, string])");
     }
 
     // 4. Return type must be int
@@ -300,7 +406,8 @@ void SemanticAnalyzer::validateEntryPoint() {
 
     // 5. Must not be async
     if (func->funcType && func->funcType->isAsync()) {
-        ctx_.error(func->loc, DiagCode::E2007, "'main' function cannot be async (remove '~async' qualifier)");
+        ctx_.error(func->loc, DiagCode::E2007, 
+                  "'main' function cannot be async (remove '~async' qualifier)");
     }
 
     // 6. @aot / @jit validation
@@ -312,7 +419,8 @@ void SemanticAnalyzer::validateEntryPoint() {
     }
 
     if (hasAot && hasJit) {
-        ctx_.error(func->loc, DiagCode::E2013, "'@aot' and '@jit' cannot both be specified on the same declaration");
+        ctx_.error(func->loc, DiagCode::E2013, 
+                  "'@aot' and '@jit' cannot both be specified on the same declaration");
     } else if (hasAot) {
         compilationMode_ = CompilationMode::AOT;
     } else if (hasJit) {
@@ -331,6 +439,8 @@ void SemanticAnalyzer::annotate(std::vector<ProgramAST*>& files) {
     LUC_LOG_SEMANTIC_VERBOSE("annotate: annotation complete");
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// dumpSymbols  — debug output
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticAnalyzer::dumpSymbols() const {
     ctx_.symbols->dump(ctx_.pool);

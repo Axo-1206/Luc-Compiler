@@ -7,7 +7,7 @@
 
 #include "helpers/SemanticContext.hpp"
 #include "collectors/SemanticCollector.hpp"
-#include "resolveType/TypeResolver.hpp"
+#include "resolveType/TypeDispatcher.hpp"
 #include "SymbolTable.hpp"
 #include "ast/BaseAST.hpp"
 
@@ -28,7 +28,7 @@ private:
     // Owned components (order matters: ctx_ must be initialized before resolver_)
     SymbolTable symbols_;
     SemanticContext ctx_;        // ctx_ must come BEFORE resolver_
-    TypeResolver resolver_;
+    TypeDispatcher dispatcher_;
     SemanticCollector collector_;
 
     // Result of analysis
@@ -40,6 +40,8 @@ private:
     void resolveTypes(std::vector<ProgramAST*>& files);
     void checkDecls(std::vector<ProgramAST*>& files);
     void annotate(std::vector<ProgramAST*>& files);
+    
     void validateNoDuplicateSymbols();
     void validateEntryPoint();
+    void buildTraitConformanceMap();
 };

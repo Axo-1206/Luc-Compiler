@@ -2,89 +2,74 @@
  * @file TypeCloner.hpp
  * @brief Deep cloning of type AST nodes with optional generic parameter substitution.
  * 
- * This component creates deep copies of type nodes in the arena. During cloning,
- * it can optionally apply the current substitution map to replace generic parameters
- * with concrete types.
+ * This namespace provides pure functions for creating deep copies of type nodes.
+ * All functions are stateless - dependencies (arena, paramHandler) are passed as parameters.
+ * 
+ * During cloning with substitution, generic parameters (NamedTypeAST with isGenericParam=true)
+ * are replaced by their substituted types from the current GenericParamHandler.
  */
 
 #pragma once
 
 #include "ast/TypeAST.hpp"
-#include "ast/BaseAST.hpp"
+#include "ast/support/ASTArena.hpp"
+#include <cstddef>
 
 class GenericParamHandler;
 
-class TypeCloner {
-public:
-    /**
-     * @brief Construct a TypeCloner.
-     * @param arena The arena to allocate cloned nodes in
-     * @param paramHandler The generic parameter handler (for substitution lookups)
-     */
-    TypeCloner(ASTArena& arena, GenericParamHandler& paramHandler);
-    
+namespace TypeCloner {
+
     // ─────────────────────────────────────────────────────────────────────────
-    // Main Cloning Entry Points
+    // Basic Cloning (no substitution)
     // ─────────────────────────────────────────────────────────────────────────
     
     /**
      * @brief Create a deep copy of a type node.
+     * @param arena The arena to allocate the cloned node in
      * @param type The type node to clone
      * @return A newly allocated copy of the type node (or nullptr on error)
+     * 
+     * The source node's location is copied to the destination.
      */
-    TypeAST* clone(const TypeAST* type);
+    TypeAST* clone(ASTArena& arena, const TypeAST* type);
     
     /**
      * @brief Create a deep copy of a function type node.
+     * @param arena The arena to allocate the cloned node in
      * @param src The function type to clone
-     * @param loc The source location for the new node
      * @return A newly allocated copy of the function type
      */
-    FuncTypeAST* cloneFunc(const FuncTypeAST* src, const SourceLocation& loc);
+    FuncTypeAST* cloneFunc(ASTArena& arena, const FuncTypeAST* src);
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Cloning with Generic Substitution
+    // ─────────────────────────────────────────────────────────────────────────
     
     /**
      * @brief Clone a type while applying the current substitution map.
      * 
-     * This is the same as clone(), but generic parameters (e.g., NamedTypeAST
-     * with isGenericParam=true) are replaced by their substituted types.
+     * Generic parameters (NamedTypeAST with isGenericParam=true) are replaced
+     * by their substituted types from paramHandler.
      * 
+     * @param arena The arena to allocate the cloned node in
+     * @param paramHandler The generic parameter handler (for substitution lookups)
      * @param type The type node to clone with substitution
      * @return A newly allocated copy with substitutions applied
      */
-    TypeAST* cloneWithSubstitution(const TypeAST* type);
+    TypeAST* cloneWithSubstitution(ASTArena& arena, 
+                                   GenericParamHandler& paramHandler,
+                                   const TypeAST* type);
     
-private:
     // ─────────────────────────────────────────────────────────────────────────
-    // Type-Specific Clone Helpers
+    // Synthetic Node Creation
     // ─────────────────────────────────────────────────────────────────────────
-    
-    TypeAST* clonePrimitive(const PrimitiveTypeAST* src);
-    TypeAST* cloneNamed(const NamedTypeAST* src);
-    TypeAST* cloneNamedWithSubstitution(const NamedTypeAST* src);
-    TypeAST* cloneNullable(const NullableTypeAST* src);
-    TypeAST* cloneResult(const ResultTypeAST* src);
-    TypeAST* cloneArray(const ArrayTypeAST* src);
-    TypeAST* cloneRef(const RefTypeAST* src);
-    TypeAST* clonePtr(const PtrTypeAST* src);
     
     /**
-     * @brief Internal helper for cloning function types.
-     * @param dst The destination node (already allocated)
-     * @param src The source node
-     * @param loc The source location
-     * @return The cloned function type (same as dst)
+     * @brief Create a new empty function type node (for type synthesis).
+     * @param arena The arena to allocate the node in
+     * @param loc The source location (default = unknown)
+     * @return A newly allocated empty function type
      */
-    FuncTypeAST* cloneFuncInternal(FuncTypeAST* dst, const FuncTypeAST* src, const SourceLocation& loc);
+    FuncTypeAST* createFuncType(ASTArena& arena, const SourceLocation& loc = SourceLocation());
     
-    /**
-     * @brief Internal helper for cloning function types with substitution.
-     */
-    FuncTypeAST* cloneFuncWithSubstitutionInternal(FuncTypeAST* dst, const FuncTypeAST* src, const SourceLocation& loc);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Members
-    // ─────────────────────────────────────────────────────────────────────────
-    
-    ASTArena& arena_;
-    GenericParamHandler& paramHandler_;
-};
+} // namespace TypeCloner

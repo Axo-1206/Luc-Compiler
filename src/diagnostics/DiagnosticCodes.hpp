@@ -136,6 +136,7 @@ enum class DiagCode : uint32_t {
     W6012,          ///< ~nullable function called without checking result for nil.
     W6013,          ///< Constant folding overflow.
     W6014,          ///< ~nullable call without nil guard.
+    W6015,          ///< Duplication implementation for trait
 };
 
 static_assert(static_cast<uint32_t>(DiagCode::W6014) < 7000, "range check");

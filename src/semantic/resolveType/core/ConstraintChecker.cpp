@@ -6,33 +6,57 @@
 #include "ConstraintChecker.hpp"
 #include "semantic/helpers/SemanticContext.hpp"
 #include "ast/DeclAST.hpp"
+#include "semantic/helpers/NameMangler.hpp"
 #include "debug/DebugMacros.hpp"
 
+namespace ConstraintChecker {
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Construction
+// Helper Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-ConstraintChecker::ConstraintChecker(SemanticContext& ctx)
-    : ctx_(ctx) {
-    LUC_LOG_SEMANTIC("ConstraintChecker constructed");
+InternedString getTypeName(SemanticContext& ctx, TypeAST* type) {
+    if (!type) return InternedString();
+    
+    TypeAST* underlying = unwrapAliases(ctx, type);
+    
+    if (underlying->isa<NamedTypeAST>()) {
+        return underlying->as<NamedTypeAST>()->name;
+    }
+    
+    return InternedString();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Data Management
-// ─────────────────────────────────────────────────────────────────────────────
-
-void ConstraintChecker::setStructTraits(
-    const std::unordered_map<InternedString, std::vector<InternedString>>* map) {
-    structTraits_ = map;
-    LUC_LOG_SEMANTIC("ConstraintChecker::setStructTraits: map=" << (map ? "set" : "cleared"));
+TypeAST* unwrapAliases(SemanticContext& ctx, TypeAST* type) {
+    if (!type) return nullptr;
+    
+    while (type && type->isa<NamedTypeAST>()) {
+        auto* named = type->as<NamedTypeAST>();
+        Symbol* sym = ctx.symbols->lookup(named->name);
+        
+        if (!sym || sym->kind != SymbolKind::TypeAlias) {
+            break;
+        }
+        
+        TypeAST* aliased = sym->type;
+        if (!aliased) {
+            break;
+        }
+        
+        type = aliased;
+    }
+    
+    return type;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Constraint Checking
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool ConstraintChecker::satisfies(TypeAST* type, const std::vector<InternedString>& requiredTraits) const {
-    // Empty constraint list is always satisfied
+bool satisfies(SemanticContext& ctx,
+               TypeAST* type, 
+               const std::vector<InternedString>& requiredTraits) {
+    
     if (requiredTraits.empty()) {
         return true;
     }
@@ -41,33 +65,23 @@ bool ConstraintChecker::satisfies(TypeAST* type, const std::vector<InternedStrin
         return false;
     }
     
-    // Unwrap type aliases to get to the underlying type
-    TypeAST* underlying = unwrapAliases(type);
+    // Unwrap type aliases
+    TypeAST* underlying = unwrapAliases(ctx, type);
     
-    // If the type is still a generic parameter (not yet substituted),
-    // defer constraint checking to instantiation time.
+    // If still a generic parameter, defer to instantiation time
     if (underlying->isa<NamedTypeAST>() && underlying->as<NamedTypeAST>()->isGenericParam) {
         LUC_LOG_SEMANTIC("ConstraintChecker::satisfies: deferring check for generic parameter");
         return true;
     }
     
-    // Only named types (structs, enums, aliased types) can satisfy constraints
-    if (!underlying->isa<NamedTypeAST>()) {
-        LUC_LOG_SEMANTIC("ConstraintChecker::satisfies: type is not a named type");
-        return false;
-    }
+    // Get canonical mangled key for this type
+    InternedString key = ctx.pool.intern(NameMangler::mangleType(underlying, ctx.pool, ctx.symbols));
     
-    // Get the struct/trait mapping
-    if (!structTraits_) {
-        LUC_LOG_SEMANTIC("ConstraintChecker::satisfies: no struct traits map available");
-        return false;
-    }
-    
-    InternedString typeName = getTypeName(underlying);
-    auto it = structTraits_->find(typeName);
-    if (it == structTraits_->end()) {
-        LUC_LOG_SEMANTIC("ConstraintChecker::satisfies: type '" << ctx_.pool.lookup(typeName) 
-                         << "' has no implemented traits");
+    // Look up in typeTraits map
+    auto it = ctx.typeTraits.find(key);
+    if (it == ctx.typeTraits.end()) {
+        LUC_LOG_SEMANTIC("ConstraintChecker::satisfies: type '" 
+                         << ctx.pool.lookup(key) << "' has no implemented traits");
         return false;
     }
     
@@ -83,8 +97,8 @@ bool ConstraintChecker::satisfies(TypeAST* type, const std::vector<InternedStrin
             }
         }
         if (!found) {
-            LUC_LOG_SEMANTIC("ConstraintChecker::satisfies: type '" << ctx_.pool.lookup(typeName) 
-                             << "' does not implement trait '" << ctx_.pool.lookup(req) << "'");
+            LUC_LOG_SEMANTIC("ConstraintChecker::satisfies: type '" << ctx.pool.lookup(key) 
+                             << "' does not implement trait '" << ctx.pool.lookup(req) << "'");
             return false;
         }
     }
@@ -96,10 +110,10 @@ bool ConstraintChecker::satisfies(TypeAST* type, const std::vector<InternedStrin
 // Type Classification
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool ConstraintChecker::isValueType(TypeAST* type) const {
+bool isValueType(SemanticContext& ctx, TypeAST* type) {
     if (!type) return false;
     
-    TypeAST* underlying = unwrapAliases(type);
+    TypeAST* underlying = unwrapAliases(ctx, type);
     
     switch (underlying->kind) {
         case ASTKind::PrimitiveType:
@@ -107,103 +121,99 @@ bool ConstraintChecker::isValueType(TypeAST* type) const {
             
         case ASTKind::NamedType: {
             auto* named = underlying->as<NamedTypeAST>();
-            Symbol* sym = ctx_.symbols->lookup(named->name);
+            Symbol* sym = ctx.symbols->lookup(named->name);
             if (!sym) return false;
-            // Structs and enums are value types
             return (sym->kind == SymbolKind::Struct || sym->kind == SymbolKind::Enum);
         }
         
         case ASTKind::NullableType:
-            return isValueType(underlying->as<NullableTypeAST>()->inner.get());
+            return isValueType(ctx, underlying->as<NullableTypeAST>()->inner.get());
             
         case ASTKind::ArrayType:
-            return true;  // Arrays are value types (they own their data or are views)
+            return true;
             
         case ASTKind::FuncType:
-            return false;  // Function types are NOT value types (cannot be nullable directly)
+            return false;
             
         case ASTKind::RefType:
-            return false;  // References are not value types (they're borrows)
+            return false;
             
         case ASTKind::PtrType:
-            return true;   // Raw pointers can be nullable (they're just addresses)
+            return true;
             
         default:
             return false;
     }
 }
 
-bool ConstraintChecker::isStructType(TypeAST* type) const {
+bool isStructType(SemanticContext& ctx, TypeAST* type) {
     if (!type) return false;
     
-    TypeAST* underlying = unwrapAliases(type);
+    TypeAST* underlying = unwrapAliases(ctx, type);
     
     if (!underlying->isa<NamedTypeAST>()) {
         return false;
     }
     
     auto* named = underlying->as<NamedTypeAST>();
-    Symbol* sym = ctx_.symbols->lookup(named->name);
+    Symbol* sym = ctx.symbols->lookup(named->name);
     if (!sym) return false;
     
     return sym->kind == SymbolKind::Struct;
 }
 
-bool ConstraintChecker::isEnumType(TypeAST* type) const {
+bool isEnumType(SemanticContext& ctx, TypeAST* type) {
     if (!type) return false;
     
-    TypeAST* underlying = unwrapAliases(type);
+    TypeAST* underlying = unwrapAliases(ctx, type);
     
     if (!underlying->isa<NamedTypeAST>()) {
         return false;
     }
     
     auto* named = underlying->as<NamedTypeAST>();
-    Symbol* sym = ctx_.symbols->lookup(named->name);
+    Symbol* sym = ctx.symbols->lookup(named->name);
     if (!sym) return false;
     
     return sym->kind == SymbolKind::Enum;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper Methods
-// ─────────────────────────────────────────────────────────────────────────────
-
-InternedString ConstraintChecker::getTypeName(TypeAST* type) const {
-    if (!type) return InternedString();
-    
-    TypeAST* underlying = unwrapAliases(type);
-    
-    if (underlying->isa<NamedTypeAST>()) {
-        return underlying->as<NamedTypeAST>()->name;
-    }
-    
-    // For primitive types, we could return a special name, but constraints
-    // are only relevant for structs/enums, so we return empty.
-    return InternedString();
+bool isFunctionType(SemanticContext& /*ctx*/, TypeAST* type) {
+    if (!type) return false;
+    return type->isa<FuncTypeAST>();
 }
 
-TypeAST* ConstraintChecker::unwrapAliases(TypeAST* type) const {
-    if (!type) return nullptr;
+bool isReferenceType(SemanticContext& /*ctx*/, TypeAST* type) {
+    if (!type) return false;
+    return type->isa<RefTypeAST>();
+}
+
+bool isArrayType(SemanticContext& /*ctx*/, TypeAST* type) {
+    if (!type) return false;
+    return type->isa<ArrayTypeAST>();
+}
+
+bool isValidImplTarget(SemanticContext& ctx, TypeAST* type) {
+    if (!type) return false;
     
-    // Keep unwrapping while we have a named type that's a type alias
-    while (type && type->isa<NamedTypeAST>()) {
-        auto* named = type->as<NamedTypeAST>();
-        Symbol* sym = ctx_.symbols->lookup(named->name);
-        
-        // If not found or not a type alias, stop
-        if (!sym || sym->kind != SymbolKind::TypeAlias) {
-            break;
-        }
-        
-        // Get the aliased type and continue unwrapping
-        TypeAST* aliased = sym->type;
-        if (!aliased) {
-            break;
-        }
-        
-        type = aliased;
+    // Unwrap aliases
+    TypeAST* underlying = unwrapAliases(ctx, type);
+    
+    // Function types cannot be impl targets (grammar rule)
+    if (underlying->isa<FuncTypeAST>()) {
+        return false;
     }
     
-    return type;
+    // All other types are valid impl targets:
+    // - Primitives (int, string, etc.)
+    // - Structs
+    // - Enums
+    // - Arrays ([_, T], [*, T], [N, T])
+    // - References (&T)
+    // - Pointers (*T)
+    // - Nullable types (T?)
+    // - Result types (T!E)
+    return true;
 }
+
+} // namespace ConstraintChecker

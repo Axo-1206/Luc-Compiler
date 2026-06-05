@@ -28,6 +28,8 @@ bool GenericParamHandler::isParam(InternedString name) const {
         
         for (const auto& gp : *params) {
             if (gp && gp->name == name) {
+                LUC_LOG_SEMANTIC_EXTREME("GenericParamHandler::isParam: found " 
+                                         << static_cast<uint32_t>(name.id));
                 return true;
             }
         }
@@ -64,6 +66,8 @@ TypeAST* GenericParamHandler::lookupSubst(InternedString name) const {
         
         auto found = map->find(name);
         if (found != map->end()) {
+            LUC_LOG_SEMANTIC_EXTREME("GenericParamHandler::lookupSubst: found substitution for "
+                                     << static_cast<uint32_t>(name.id));
             return found->second;
         }
     }

@@ -1,10 +1,6 @@
 /**
  * @file SemanticCollector.cpp
- * @responsibility Implements Phase 1 of semantic analysis: collecting top‑level declarations into the symbol table.
- *
- * This file contains the SemanticCollector implementation, which now uses
- * switch‑case dispatch on ASTKind instead of the visitor pattern. All state
- * is passed via SemanticContext.
+ * @brief Phase 1: collects top‑level declarations into the symbol table.
  */
 
 #include "SemanticCollector.hpp"
@@ -16,12 +12,11 @@
 #include <string>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// collectProgram  —  Main entry point: collects all top‑level symbols.
+// collectProgram
 // ─────────────────────────────────────────────────────────────────────────────
 void SemanticCollector::collectProgram(ProgramAST& program, SemanticContext& ctx) {
     LUC_LOG_SEMANTIC("SemanticCollector::collectProgram: file=" << ctx.pool.lookup(program.filePath));
 
-    // Ensure global scope exists
     if (ctx.symbols->currentDepth() == 0) {
         ctx.symbols->pushScope();
     }
@@ -58,7 +53,6 @@ void SemanticCollector::collectProgram(ProgramAST& program, SemanticContext& ctx
                 collectTypeAliasDecl(*decl->as<TypeAliasDeclAST>(), ctx);
                 break;
             default:
-                // Unknown or error recovery node – ignore
                 break;
         }
     }
@@ -75,14 +69,14 @@ void SemanticCollector::declareSymbol(const Symbol& sym, SemanticContext& ctx) {
     if (ctx.symbols->lookupLocal(sym.name)) {
         std::string_view nameStr = ctx.pool.lookup(sym.name);
         ctx.error(sym.loc, DiagCode::E2005,
-                  {"duplicate declaration of '" + std::string(nameStr) + "'"});
+                  "duplicate declaration of '" + std::string(nameStr) + "'");
         return;
     }
 
     if (!ctx.symbols->declare(sym)) {
         std::string_view nameStr = ctx.pool.lookup(sym.name);
         ctx.error(sym.loc, DiagCode::E2005,
-                  {"failed to declare symbol '" + std::string(nameStr) + "'"});
+                  "failed to declare symbol '" + std::string(nameStr) + "'");
     }
 }
 
@@ -104,11 +98,10 @@ void SemanticCollector::extractExternMetadata(const ArenaSpan<AttributePtr>& att
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Declaration Collectors (each corresponds to a specific ASTKind)
+// Declaration Collectors
 // ─────────────────────────────────────────────────────────────────────────────
 
 void SemanticCollector::collectUseDecl(UseDeclAST& node, SemanticContext& ctx) {
-    // Build full path for mangling (optional, but kept for consistency)
     std::string fullPath;
     for (size_t i = 0; i < node.path.size(); ++i) {
         if (i > 0) fullPath += ".";
@@ -203,7 +196,7 @@ void SemanticCollector::collectTraitDecl(TraitDeclAST& node, SemanticContext& ct
     sym.loc = node.loc;
     declareSymbol(sym, ctx);
 
-    // Trait methods
+    // Trait methods (mangled for lookup)
     std::string_view traitName = ctx.pool.lookup(node.name);
     for (const auto& method : node.methods) {
         if (!method) continue;
@@ -222,53 +215,50 @@ void SemanticCollector::collectTraitDecl(TraitDeclAST& node, SemanticContext& ct
 }
 
 void SemanticCollector::collectImplDecl(ImplDeclAST& node, SemanticContext& ctx) {
-    // Extract struct name from target type (must be NamedTypeAST)
-    InternedString structName;
-    if (node.targetType && node.targetType->isa<NamedTypeAST>()) {
-        structName = node.targetType->as<NamedTypeAST>()->name;
-    } else {
-        ctx.error(node.loc, DiagCode::E2016, {"impl target must be a named type (struct, enum, or type alias)"});
-        return;
-    }
-
-    // Record trait conformance for later use (e.g., in type resolution)
-    if (node.traitRef) {
-        structTraits_[structName].push_back(node.traitRef->name);
-    }
-
-    // Methods
-    std::string_view structNameStr = ctx.pool.lookup(structName);
-    for (const auto& method : node.methods) {
-        if (!method) continue;
-        std::string mangled = NameMangler::mangleMethod(structNameStr, ctx.pool.lookup(method->name));
-        InternedString mangledInterned = ctx.pool.intern(mangled);
-
-        Symbol msym;
-        msym.name = mangledInterned;
-        msym.kind = SymbolKind::Method;
-        msym.visibility = node.visibility;
-        msym.type = nullptr;
-        msym.decl = method.get();
-        msym.loc = method->loc;
-        declareSymbol(msym, ctx);
-    }
+    LUC_LOG_SEMANTIC("SemanticCollector::collectImplDecl");
+    
+    // Phase 1: ONLY record that this impl block exists.
+    // NO trait conformance recording - defer to Phase 2.
+    // NO target type validation - defer to Phase 2.
+    
+    // Create a unique name for this impl block
+    std::string implName = "__impl_" + std::to_string(implCounter_++);
+    InternedString implInterned = ctx.pool.intern(implName);
+    
+    Symbol sym;
+    sym.name = implInterned;
+    sym.kind = SymbolKind::Impl;
+    sym.visibility = node.visibility;
+    sym.type = nullptr;
+    sym.decl = &node;
+    sym.loc = node.loc;
+    declareSymbol(sym, ctx);
+    
+    // Methods will be recorded in Phase 2 when we know the fully resolved target type
+    // For now, they remain only in the AST
 }
 
 void SemanticCollector::collectFromDecl(FromDeclAST& node, SemanticContext& ctx) {
-    // Extract target type name
+    LUC_LOG_SEMANTIC("SemanticCollector::collectFromDecl");
+    
+    // Phase 1: Record from entries for lookup
+    // Type validation happens in Phase 2
+    
     InternedString targetName;
     if (node.targetType && node.targetType->isa<NamedTypeAST>()) {
         targetName = node.targetType->as<NamedTypeAST>()->name;
-    } else {
-        ctx.error(node.loc, DiagCode::E2016, {"from target must be a named type (struct, enum, or type alias)"});
+    }
+    
+    if (!targetName.isValid()) {
+        ctx.error(node.loc, DiagCode::E2016, 
+                  "from target must be a named type (struct, enum, or type alias)");
         return;
     }
-
+    
     std::string_view targetStr = ctx.pool.lookup(targetName);
     for (const auto& entry : node.entries) {
         if (!entry) continue;
 
-        // Get the type of the first parameter (source type)
         TypeAST* firstParamType = nullptr;
         if (entry->sig.totalParamCount() > 0 && entry->sig.groupCount() > 0) {
             auto group = entry->sig.getGroup(0);

@@ -138,6 +138,7 @@ std::string_view getMessage(DiagCode code) {
         case DiagCode::W6012: return "'~nullable' function called without checking result for nil.";
         case DiagCode::W6013: return "Constant folding overflow.";
         case DiagCode::W6014: return "'~nullable' call without nil guard.";
+        case DiagCode::W6015: return "'Duplication implementation of trait: %s, for type: %s";
 
         default: return "Unknown diagnostic code.";
     }

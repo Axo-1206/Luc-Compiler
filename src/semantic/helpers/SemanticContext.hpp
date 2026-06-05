@@ -1,10 +1,6 @@
 /**
  * @file SemanticContext.hpp
  * @brief Plain data container for all semantic analysis state.
- *
- * SemanticContext holds references and flags needed during semantic passes.
- * It is passed by reference to every semantic function. It does NOT own
- * any components; ownership remains with SemanticAnalyzer.
  */
 
 #pragma once
@@ -13,17 +9,30 @@
 #include "ast/support/ASTArena.hpp"
 #include "diagnostics/Diagnostic.hpp"
 #include "semantic/SymbolTable.hpp"
-// #include "semantic/resolveType/TypeResolver.hpp"
 #include <utility>
 #include <string>
 #include <sstream>
+#include <unordered_map>
+#include <vector>
+
+class TypeDispatcher;
 
 struct SemanticContext {
     // ── References to shared resources ──────────────────────────────────────
     StringPool&   pool;      // String pool (for name demangling)
     ASTArena&     arena;     // Arena for temporary type synthesis
     SymbolTable*  symbols;   // Symbol table (non‑owning, owned by SemanticAnalyzer)
-    // TypeResolver* resolver;  // Type resolver (non‑owning, owned by SemanticAnalyzer)
+    TypeDispatcher* dispatcher = nullptr;  // Type dispatcher (set after construction)
+    
+    // ── Type → Traits Mapping (built in Phase 2, read-only thereafter) ──────
+    //
+    // This map records which types implement which traits.
+    // Key: Canonical mangled type string (e.g., "prim5" for int, "slice_int" for [_, int])
+    // Value: List of trait names that the type implements
+    //
+    // Built by TraitResolver in Phase 2 after all type resolution is complete.
+    // Used by ConstraintChecker::satisfies() to verify generic constraints.
+    std::unordered_map<InternedString, std::vector<InternedString>> typeTraits;
 
     // ── Per‑file state (set before processing each file) ────────────────────
     InternedString currentFile;
@@ -110,4 +119,7 @@ struct SemanticContext {
     void exitParallel() { --parallelDepth; }
     void enterExtern()  { insideExtern = true; }
     void exitExtern()   { insideExtern = false; }
+    
+    // ── Trait helper ────────────────────────────────────────────────────────
+    bool implementsTrait(TypeAST* type, InternedString traitName) const;
 };

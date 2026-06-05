@@ -1,96 +1,212 @@
+/**
+ * @file NameMangler.hpp
+ * @brief Name mangling for symbols, types, and methods.
+ */
+
 #pragma once
 
 #include "ast/support/StringPool.hpp"
 #include "ast/TypeAST.hpp"
+#include "ast/DeclAST.hpp"
+#include "semantic/SymbolTable.hpp"
 #include <string>
 #include <string_view>
 
 namespace NameMangler {
 
-    // Helper to get a stable string representation of a type for mangling
-    inline std::string mangleType(TypeAST* type, StringPool& pool) {
-        if (!type) return "unknown";
-        switch (type->kind) {
-            case ASTKind::PrimitiveType: {
-                auto pt = static_cast<PrimitiveTypeAST*>(type);
-                return "prim" + std::to_string(static_cast<int>(pt->primitiveKind));
-            }
-            case ASTKind::NamedType: {
-                auto nt = static_cast<NamedTypeAST*>(type);
-                std::string res = std::string(pool.lookup(nt->name));
-                for (const auto& arg : nt->genericArgs) {
-                    res += "_" + mangleType(arg.get(), pool);
-                }
-                return res;
-            }
-            case ASTKind::NullableType: {
-                auto nt = static_cast<NullableTypeAST*>(type);
-                return "opt_" + mangleType(nt->inner.get(), pool);
-            }
-            case ASTKind::ResultType: {
-                auto rt = static_cast<ResultTypeAST*>(type);
-                std::string res = mangleType(rt->inner.get(), pool);
-                if (rt->errorType) {
-                    res += "!" + mangleType(rt->errorType.get(), pool);
-                } else {
-                    res += "!";
-                }
-                return res;
-            }
-            case ASTKind::ArrayType: {
-                auto at = static_cast<ArrayTypeAST*>(type);
-                std::string prefix;
-                switch (at->arrayKind) {
-                    case ArrayKind::Slice:   prefix = "slice_"; break;
-                    case ArrayKind::Dynamic: prefix = "dyn_"; break;
-                    case ArrayKind::Fixed:   prefix = "arr" + std::to_string(at->size) + "_"; break;
-                }
-                return prefix + mangleType(at->element.get(), pool);
-            }
-            case ASTKind::GenericArrayType: {
-                // For generic array types (impl target), we mangle the kind and the type variable name.
-                // This is only used internally; codegen will substitute concrete types.
-                auto gat = static_cast<GenericArrayTypeAST*>(type);
-                std::string prefix;
-                switch (gat->arrayKind) {
-                    case ArrayKind::Slice:   prefix = "slice_"; break;
-                    case ArrayKind::Dynamic: prefix = "dyn_"; break;
-                    case ArrayKind::Fixed:   prefix = "arr" + std::to_string(gat->size) + "_"; break;
-                }
-                std::string param = std::string(pool.lookup(gat->typeParamName));
-                return "generic_" + prefix + param;
-            }
-            case ASTKind::RefType: {
-                auto rt = static_cast<RefTypeAST*>(type);
-                return "ref_" + mangleType(rt->inner.get(), pool);
-            }
-            case ASTKind::PtrType: {
-                auto pt = static_cast<PtrTypeAST*>(type);
-                return "ptr_" + mangleType(pt->inner.get(), pool);
-            }
-            case ASTKind::FuncType:
-                return "func";
-            default:
-                return "type";
+    // Forward declaration with context
+    inline std::string mangleType(TypeAST* type, StringPool& pool, SymbolTable* symbols);
+    
+    // Helper to unwrap type aliases
+    inline TypeAST* unwrapAliases(TypeAST* type, SymbolTable* symbols) {
+        if (!type || !symbols) return type;
+        
+        while (type && type->isa<NamedTypeAST>()) {
+            auto* named = type->as<NamedTypeAST>();
+            Symbol* sym = symbols->lookup(named->name);
+            if (!sym || sym->kind != SymbolKind::TypeAlias) break;
+            if (!sym->type) break;
+            type = sym->type;
+        }
+        return type;
+    }
+    
+    // Get primitive kind string
+    inline std::string primitiveKindToString(PrimitiveKind kind) {
+        switch (kind) {
+            case PrimitiveKind::Bool:     return "bool";
+            case PrimitiveKind::Byte:     return "byte";
+            case PrimitiveKind::Short:    return "short";
+            case PrimitiveKind::Int:      return "int";
+            case PrimitiveKind::Long:     return "long";
+            case PrimitiveKind::Ubyte:    return "ubyte";
+            case PrimitiveKind::Ushort:   return "ushort";
+            case PrimitiveKind::Uint:     return "uint";
+            case PrimitiveKind::Ulong:    return "ulong";
+            case PrimitiveKind::Int8:     return "int8";
+            case PrimitiveKind::Int16:    return "int16";
+            case PrimitiveKind::Int32:    return "int32";
+            case PrimitiveKind::Int64:    return "int64";
+            case PrimitiveKind::Uint8:    return "uint8";
+            case PrimitiveKind::Uint16:   return "uint16";
+            case PrimitiveKind::Uint32:   return "uint32";
+            case PrimitiveKind::Uint64:   return "uint64";
+            case PrimitiveKind::Float:    return "float";
+            case PrimitiveKind::Double:   return "double";
+            case PrimitiveKind::Decimal:  return "decimal";
+            case PrimitiveKind::String:   return "string";
+            case PrimitiveKind::Char:     return "char";
+            case PrimitiveKind::Any:      return "any";
+            default:                      return "unknown";
         }
     }
-
-    // For instance methods (impl blocks): "Type::method"
+    
+    // Main type mangling function
+    inline std::string mangleType(TypeAST* type, StringPool& pool, SymbolTable* symbols) {
+        if (!type) return "unknown";
+        
+        // Unwrap aliases if we have symbol table
+        TypeAST* underlying = type;
+        if (symbols) {
+            underlying = unwrapAliases(type, symbols);
+        }
+        
+        switch (underlying->kind) {
+            case ASTKind::PrimitiveType: {
+                auto pt = static_cast<PrimitiveTypeAST*>(underlying);
+                return "P" + primitiveKindToString(pt->primitiveKind);
+            }
+            
+            case ASTKind::NamedType: {
+                auto nt = static_cast<NamedTypeAST*>(underlying);
+                std::string res = "N" + std::string(pool.lookup(nt->name));
+                if (!nt->genericArgs.empty()) {
+                    res += "<";
+                    for (size_t i = 0; i < nt->genericArgs.size(); ++i) {
+                        if (i > 0) res += ",";
+                        res += mangleType(nt->genericArgs[i].get(), pool, symbols);
+                    }
+                    res += ">";
+                }
+                return res;
+            }
+            
+            case ASTKind::NullableType: {
+                auto nt = static_cast<NullableTypeAST*>(underlying);
+                return "O" + mangleType(nt->inner.get(), pool, symbols);
+            }
+            
+            case ASTKind::ResultType: {
+                auto rt = static_cast<ResultTypeAST*>(underlying);
+                std::string res = "R" + mangleType(rt->inner.get(), pool, symbols);
+                if (rt->errorType) {
+                    res += "E" + mangleType(rt->errorType.get(), pool, symbols);
+                } else {
+                    res += "N";  // nil error
+                }
+                return res;
+            }
+            
+            case ASTKind::ArrayType: {
+                auto at = static_cast<ArrayTypeAST*>(underlying);
+                std::string prefix;
+                switch (at->arrayKind) {
+                    case ArrayKind::Slice:   prefix = "A"; break;
+                    case ArrayKind::Dynamic: prefix = "D"; break;
+                    case ArrayKind::Fixed:   prefix = "F" + std::to_string(at->size); break;
+                }
+                return prefix + mangleType(at->element.get(), pool, symbols);
+            }
+            
+            case ASTKind::RefType: {
+                auto rt = static_cast<RefTypeAST*>(underlying);
+                return "Rf" + mangleType(rt->inner.get(), pool, symbols);
+            }
+            
+            case ASTKind::PtrType: {
+                auto pt = static_cast<PtrTypeAST*>(underlying);
+                return "Pp" + mangleType(pt->inner.get(), pool, symbols);
+            }
+            
+            case ASTKind::FuncType: {
+                auto ft = static_cast<FuncTypeAST*>(underlying);
+                std::string res = "Fn";
+                
+                // Add qualifiers
+                if (ft->isAsync()) res += "A";
+                if (ft->isNullable()) res += "N";
+                if (ft->isParallel()) res += "P";
+                
+                res += "(";
+                // Parameters - flatten all groups
+                for (const auto& param : ft->sig.allParams) {
+                    if (param && param->type) {
+                        res += mangleType(param->type.get(), pool, symbols);
+                    } else {
+                        res += "void";
+                    }
+                }
+                res += ")";
+                
+                // Return types
+                if (ft->sig.returnTypes.empty()) {
+                    res += "V";
+                } else if (ft->sig.returnTypes.size() == 1) {
+                    res += mangleType(ft->sig.returnTypes[0].get(), pool, symbols);
+                } else {
+                    res += "M";
+                    for (const auto& ret : ft->sig.returnTypes) {
+                        res += mangleType(ret.get(), pool, symbols);
+                    }
+                }
+                return res;
+            }
+            
+            default:
+                return "Unknown";
+        }
+    }
+    
+    // Overload without symbol table (for contexts where aliases are already resolved)
+    inline std::string mangleType(TypeAST* type, StringPool& pool) {
+        return mangleType(type, pool, nullptr);
+    }
+    
+    // Method mangling: Type::method
     inline std::string mangleMethod(std::string_view parent, std::string_view method) {
-        return std::string(parent) + "::" + std::string(method);
+        std::string result;
+        result.reserve(parent.size() + method.size() + 2);
+        result.append(parent);
+        result.append("::");
+        result.append(method);
+        return result;
     }
-
-    // For enum variants: "EnumName::variantName"
+    
+    // Enum variant mangling: EnumName::variantName
     inline std::string mangleEnumVariant(std::string_view enumName, std::string_view variant) {
-        return std::string(enumName) + "::" + std::string(variant);
+        std::string result;
+        result.reserve(enumName.size() + variant.size() + 2);
+        result.append(enumName);
+        result.append("::");
+        result.append(variant);
+        return result;
     }
-
-    // For from blocks (conversions): "TargetType::from::ParamType"
+    
+    // From entry mangling: TargetType::from::SourceType
     inline std::string mangleFrom(std::string_view target, TypeAST* paramType, StringPool& pool) {
-        return std::string(target) + "::from::" + mangleType(paramType, pool);
+        std::string result;
+        result.reserve(target.size() + 16);
+        result.append(target);
+        result.append("::from::");
+        if (paramType) {
+            result.append(mangleType(paramType, pool));
+        } else {
+            result.append("void");
+        }
+        return result;
     }
-
-    // Used by TypeChecker to prefix-search "TargetType::from::"
+    
+    // Prefix for from lookup
     inline std::string getFromPrefix(std::string_view target) {
         return std::string(target) + "::from::";
     }

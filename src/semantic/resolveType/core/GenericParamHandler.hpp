@@ -2,12 +2,21 @@
  * @file GenericParamHandler.hpp
  * @brief Manages generic parameter stacks and substitution maps during type resolution.
  * 
- * This component maintains two stacks:
+ * This component maintains two LIFO stacks:
  * 1. Generic parameter stack - tracks in-scope generic parameters (e.g., T in Box<T>)
  * 2. Substitution map stack - tracks concrete type substitutions (e.g., T -> int)
  * 
- * Both stacks are LIFO to support nested generic contexts like generic functions
- * inside generic structs.
+ * Both stacks support nested generic contexts like generic functions inside generic structs.
+ * 
+ * Example usage:
+ * @code
+ * GenericParamHandler handler;
+ * handler.pushParams(&structGenericParams);
+ * handler.pushSubstMap(&substitutionMap);
+ * // ... resolve types ...
+ * handler.popSubstMap();
+ * handler.popParams();
+ * @endcode
  */
 
 #pragma once

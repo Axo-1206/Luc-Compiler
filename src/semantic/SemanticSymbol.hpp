@@ -94,7 +94,8 @@ enum class SymbolKind {
     Field,
     Method,
     EnumVariant,
-    Casting
+    Casting,
+    Impl
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
