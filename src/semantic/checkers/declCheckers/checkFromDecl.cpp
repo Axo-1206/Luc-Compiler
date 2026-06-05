@@ -7,6 +7,7 @@
 #include "semantic/resolveType/TypeDispatcher.hpp"
 #include "semantic/checkType/TypeChecker.hpp"
 #include "semantic/helpers/SemanticContext.hpp"
+#include "semantic/helpers/NameMangler.hpp"
 #include "semantic/checkers/SemanticChecker.hpp"
 #include "semantic/checkers/declCheckers/DeclHelpers.hpp"
 #include <vector>
@@ -27,16 +28,20 @@
 //     any nested scope (standard lexical scoping).
 // ─────────────────────────────────────────────────────────────────────────────
 void checkFromDecl(FromDeclAST& node, SemanticContext& ctx, bool isLocal) {
-    // Extract target type name from targetType (must be NamedTypeAST)
-    InternedString targetTypeName;
-    if (node.targetType && node.targetType->isa<NamedTypeAST>()) {
-        targetTypeName = node.targetType->as<NamedTypeAST>()->name;
-    } else {
-        ctx.error(node.loc, DiagCode::E2016, "from block target must be a named type (struct, enum, or alias)");
+    if (!node.targetType) {
+        ctx.error(node.loc, DiagCode::E2016, "from target type is missing");
         return;
     }
 
-    LUC_LOG_SEMANTIC("checkFromDecl: target=" << ctx.pool.lookup(targetTypeName)
+    TypeAST* targetType = ctx.dispatcher ? ctx.dispatcher->resolveType(node.targetType.get()) : node.targetType.get();
+    if (!targetType) {
+        ctx.error(node.loc, DiagCode::E2016, "cannot resolve from target type");
+        return;
+    }
+
+    std::string targetNameStr = NameMangler::mangleType(targetType, ctx.pool, ctx.symbols);
+
+    LUC_LOG_SEMANTIC("checkFromDecl: target=" << targetNameStr
                      << ", entries=" << node.entries.size()
                      << ", isLocal=" << isLocal);
 
@@ -49,23 +54,8 @@ void checkFromDecl(FromDeclAST& node, SemanticContext& ctx, bool isLocal) {
     bool attrIsExtern = false;
     std::string attrExternSym, attrCallingConv;
     checkAttributes(node.attributes, static_cast<uint32_t>(AttributeContext::From),
-                    std::string(ctx.pool.lookup(targetTypeName)), DeclKeyword::Let,
+                    targetNameStr, DeclKeyword::Let,
                     ctx, attrIsExtern, attrExternSym, attrCallingConv);
-
-    // ── Verify target struct exists (lookup in symbol table) ─────────────────
-    Symbol* targetSym = ctx.symbols->lookup(targetTypeName);
-    if (!targetSym || targetSym->kind != SymbolKind::Struct) {
-        ctx.error(node.loc, DiagCode::E2001,
-                  "from block target '", ctx.pool.lookup(targetTypeName),
-                  "' is not a declared struct in the current scope");
-        return;
-    }
-    auto* structDecl = targetSym->decl->as<StructDeclAST>();
-    TypeAST* targetType = structDecl->selfType.get();
-    if (!targetType) {
-        ctx.error(node.loc, DiagCode::E2001, "from block target type not resolved");
-        return;
-    }
 
     // ── Push generic parameters (from block can be generic: from Wrapper<T>) ──
     if (!node.genericParams.empty() && ctx.dispatcher) {
@@ -80,23 +70,18 @@ void checkFromDecl(FromDeclAST& node, SemanticContext& ctx, bool isLocal) {
 
         LUC_LOG_SEMANTIC_EXTREME("\tchecking from entry");
 
-        // Resolve return type (should be target struct type)
-        TypeAST* entryReturnType = entry->returnType.get();
+        // Resolve return type (should be target type)
+        TypeAST* entryReturnType = ctx.dispatcher ? ctx.dispatcher->resolveType(entry->returnType.get()) : entry->returnType.get();
         if (!entryReturnType) {
-            if (ctx.dispatcher) {
-                entryReturnType = ctx.dispatcher->resolveType(entry->returnType.get());
-            }
-            if (!entryReturnType) {
-                ctx.error(entry->loc, DiagCode::E2001, "from entry: cannot resolve return type");
-                continue;
-            }
+            ctx.error(entry->loc, DiagCode::E2001, "from entry: cannot resolve return type");
+            continue;
         }
 
-        // Verify return type matches target struct
+        // Verify return type matches target type
         if (!TypeChecker::isEqual(entryReturnType, targetType, ctx)) {
             ctx.error(entry->loc, DiagCode::E2002,
-                      "from entry return type must be '", ctx.pool.lookup(targetTypeName),
-                      "', got '", LucDebug::kindToString(entryReturnType->kind), "'");
+                      "from entry return type must be target type, got '",
+                      LucDebug::kindToString(entryReturnType->kind), "'");
             continue;
         }
 
@@ -108,17 +93,12 @@ void checkFromDecl(FromDeclAST& node, SemanticContext& ctx, bool isLocal) {
         for (const auto& param : entry->sig.allParams) {
             if (!param) continue;
 
-            TypeAST* paramType = param->type.get();
+            TypeAST* paramType = ctx.dispatcher ? ctx.dispatcher->resolveType(param->type.get()) : param->type.get();
             if (!paramType) {
-                if (ctx.dispatcher) {
-                    paramType = ctx.dispatcher->resolveType(param->type.get());
-                }
-                if (!paramType) {
-                    ctx.error(param->loc, DiagCode::E2001,
-                              "cannot resolve parameter type for '", ctx.pool.lookup(param->name), "'");
-                    paramError = true;
-                    continue;
-                }
+                ctx.error(param->loc, DiagCode::E2001,
+                          "cannot resolve parameter type for '", ctx.pool.lookup(param->name), "'");
+                paramError = true;
+                continue;
             }
 
             Symbol ps;
@@ -167,7 +147,9 @@ void checkFromDecl(FromDeclAST& node, SemanticContext& ctx, bool isLocal) {
                     break;
                 }
                 for (size_t p = 0; p < group1.size(); ++p) {
-                    if (!TypeChecker::isEqual(group1[p]->type.get(), group2[p]->type.get(), ctx)) {
+                    TypeAST* type1 = ctx.dispatcher ? ctx.dispatcher->resolveType(group1[p]->type.get()) : group1[p]->type.get();
+                    TypeAST* type2 = ctx.dispatcher ? ctx.dispatcher->resolveType(group2[p]->type.get()) : group2[p]->type.get();
+                    if (!TypeChecker::isEqual(type1, type2, ctx)) {
                         match = false;
                         break;
                     }
@@ -194,6 +176,6 @@ void checkFromDecl(FromDeclAST& node, SemanticContext& ctx, bool isLocal) {
     }
 
     LUC_LOG_SEMANTIC_VERBOSE("checkFromDecl: complete for "
-                             << ctx.pool.lookup(targetTypeName)
+                             << targetNameStr
                              << " with " << verifiedEntries.size() << " valid entries");
 }

@@ -7,73 +7,71 @@ The Luc semantic analyzer runs a multi-phase pipeline over parsed ASTs. `Semanti
 ```
 src/semantic/
 ├── SemanticAnalyzer.hpp                # Orchestrator: analyze(), phase methods, CompilationMode
-├── SemanticAnalyzer.cpp                # Phase 0–4 pipeline, entry-point validation, duplicate-symbol check
+├── SemanticAnalyzer.cpp                # Phase 0–4 pipeline, trait map, entry-point validation
 ├── SemanticSymbol.hpp                  # Symbol, SymbolKind, SymbolUtils
 ├── SymbolTable.hpp                     # Scope stack, declare/lookup
 ├── SymbolTable.cpp
 ├── Annotator.cpp                       # Phase 4: ASTVisitor, stamps isConst / isBehaviorMember
 │
 ├── helpers/
-│   ├── SemanticContext.hpp             # Shared state: pool, arena, symbols, dispatcher, depth flags, diagnostics
-│   └── NameMangler.hpp                 # mangleType, mangleFunc (linker / trait names)
+│   ├── SemanticContext.hpp             # Shared state: pool, arena, symbols, dispatcher, typeTraits
+│   ├── SemanticContext.cpp             # implementsTrait()
+│   ├── NameMangler.hpp                 # mangleType, mangleFunc, mangleMethod (canonical type keys)
+│   └── ResolverHelpers.hpp             # isStructType, isEnumType, type classification helpers
 │
 ├── collectors/                         # Phase 1: symbol collection
 │   ├── SemanticCollector.hpp           # collectProgram, per-decl collect* methods
 │   └── SemanticCollector.cpp
 │
 ├── resolveType/                        # Phase 2: type annotation resolution
+│   ├── TypeDispatcher.hpp              # Main entry point; owns all resolvers
+│   ├── TypeDispatcher.cpp              # resolveType dispatch + decl-level forwarding
 │   │
-│   ├── TypeDispatcher.hpp              # Main entry point (renamed from TypeResolver)
-│   ├── TypeDispatcher.cpp              # resolveType dispatch only
-│   │
-│   ├── core/                           # Shared foundational components
-│   │   ├── GenericParamHandler.hpp
+│   ├── core/
+│   │   ├── GenericParamHandler.hpp       # Generic param + substitution stacks
 │   │   ├── GenericParamHandler.cpp
-│   │   ├── TypeCloner.hpp
+│   │   ├── TypeCloner.hpp              # Deep clone of type AST nodes
 │   │   ├── TypeCloner.cpp
-│   │   ├── ConstraintChecker.hpp
+│   │   ├── ConstraintChecker.hpp       # namespace ConstraintChecker: satisfies, type queries
 │   │   └── ConstraintChecker.cpp
 │   │
-│   ├── primitive/                      # Primitive type (trivial)
-│   │   └── PrimitiveResolver.hpp
+│   ├── primitive/
+│   │   └── PrimitiveResolver.hpp         # Primitive type resolution (header-only)
 │   │
-│   ├── named/                          # Named type (complex)
+│   ├── named/
 │   │   ├── NamedResolver.hpp
-│   │   └── NamedResolver.cpp
+│   │   └── NamedResolver.cpp           # User-defined / generic named types
 │   │
-│   ├── composite/                      # Composite type resolvers
+│   ├── composite/
 │   │   ├── NullableResolver.hpp
 │   │   ├── NullableResolver.cpp
-│   │   ├── ResultResolver.hpp          # Inline (simple)
-│   │   ├── ArrayResolver.hpp           # Inline (simple)
-│   │   ├── RefResolver.hpp             # Inline (simple)
-│   │   ├── PtrResolver.hpp             # Inline (simple)
+│   │   ├── ResultResolver.hpp          # T!E nesting validation (header-only)
+│   │   ├── ArrayResolver.hpp           # [_, T], [*, T], [N, T] (header-only)
+│   │   ├── RefResolver.hpp             # &T (header-only)
+│   │   ├── PtrResolver.hpp             # *T (header-only)
 │   │   ├── FuncResolver.hpp
-│   │   └── FuncResolver.cpp
+│   │   └── FuncResolver.cpp            # Function types (qualifiers, params, returns)
 │   │
-│   ├── decl/                           # Declaration-level resolvers
-│   │   ├── TypeAliasResolver.hpp       # Inline (simple)
+│   ├── decl/
+│   │   ├── TypeAliasResolver.hpp       # Generic alias RHS (header-only)
 │   │   ├── StructResolver.hpp
-│   │   ├── StructResolver.cpp
-│   │   ├── FuncSignatureResolver.hpp   # Inline (simple)
+│   │   ├── StructResolver.cpp          # Field types, self-type
+│   │   ├── FuncSignatureResolver.hpp   # Function signature (header-only)
 │   │   ├── ImplResolver.hpp
-│   │   ├── ImplResolver.cpp
+│   │   ├── ImplResolver.cpp            # Impl target, generics, method resolution
 │   │   ├── FromResolver.hpp
-│   │   ├── FromResolver.cpp
-│   │   └── VarResolver.hpp             # Inline (simple)
+│   │   ├── FromResolver.cpp            # From entry resolution (inline and path)
+│   │   └── VarResolver.hpp             # Variable declared type (header-only)
 │   │
-│   ├── injection/                      # Injection form transformation
+│   ├── injection/
 │   │   ├── InjectionTransformer.hpp
-│   │   └── InjectionTransformer.cpp
+│   │   └── InjectionTransformer.cpp    # Injection form `!` type transformation
 │   │
-│   ├── callable/                       # Function reference extraction
-│   │   ├── CallableExtractor.hpp
-│   │   └── CallableExtractor.cpp
-│   │
-│   └── helpers/                        # Shared utilities
-│       └── ResolverHelpers.hpp
+│   └── callable/
+│       ├── CallableExtractor.hpp
+│       └── CallableExtractor.cpp       # Function reference extraction from callables
 │
-├── checkType/                          # Type compatibility (moved from resolveType)
+├── checkType/                          # Type compatibility (Phase 3 helpers)
 │   ├── TypeChecker.hpp                 # namespace TypeChecker: isEqual, isAssignable, unify, …
 │   └── TypeChecker.cpp
 │
@@ -136,7 +134,7 @@ src/semantic/
         │
         └── match/
             ├── MatchChecker.cpp        # checkMatchExpr
-            └── PatternChecker.cpp      # checkPattern (static, used from match arms)
+            └── PatternChecker.cpp      # checkPattern (per-pattern validation)
 ```
 
 ## Analysis pipeline
@@ -151,9 +149,11 @@ analyze
 │   └── collectProgram → collect* per decl kind
 ├── Phase 1.5: validateNoDuplicateSymbols  [SemanticAnalyzer.cpp]
 │   └── cross-file duplicate symbol names in global scope
-├── Phase 2: resolveTypes                  [TypeDispatcher.cpp]
+├── Phase 2: resolveTypes                  [resolveType/TypeDispatcher.cpp]
 │   └── per top-level decl: resolveTypeAlias | resolveStructFields |
 │       resolveFunctionSignature | resolveImplMethods | resolveFromEntries | resolveVarType
+├── Phase 2.5: buildTraitConformanceMap    [SemanticAnalyzer.cpp]
+│   └── scan impl symbols → ctx.typeTraits (mangled type key → trait names)
 ├── Phase 3: checkDecls                    [declCheckers/DeclDispatcher.cpp]
 │   └── checkTopLevelDecl per declaration
 ├── Phase 3.5: validateEntryPoint          [SemanticAnalyzer.cpp]
@@ -162,7 +162,7 @@ analyze
     └── annotateAll → Annotator ASTVisitor (isConst, isBehaviorMember)
 ```
 
-`SemanticContext` is passed by reference through every phase. `TypeDispatcher` receives the struct→trait map from `SemanticCollector::getStructTraits()` after Phase 1.
+`SemanticContext` is passed by reference through every phase. After construction, `ctx_.dispatcher` is wired to the owned `TypeDispatcher` so checkers can resolve types during Phase 3.
 
 ## Phase 1: Symbol collection (`SemanticCollector`)
 
@@ -173,18 +173,20 @@ collectProgram                               [collectors/SemanticCollector.cpp]
     ├── VarDecl        → collectVarDecl
     ├── FuncDecl       → collectFuncDecl
     ├── StructDecl     → collectStructDecl
-    ├── EnumDecl       → collectEnumDecl
-    ├── TraitDecl      → collectTraitDecl
-    ├── ImplDecl       → collectImplDecl      (records structTraits_)
+    ├── EnumDecl       → collectEnumDecl     (+ mangled enum variant symbols)
+    ├── TraitDecl      → collectTraitDecl    (+ mangled trait method symbols)
+    ├── ImplDecl       → collectImplDecl     (unique `__impl_N` symbol; no trait map yet)
     ├── FromDecl       → collectFromDecl
     └── TypeAliasDecl  → collectTypeAliasDecl
 ```
 
-Each `collect*` builds a `Symbol` and calls `declareSymbol` (local duplicate check via `lookupLocal`). `@extern` metadata is extracted in `extractExternMetadata`.
-
-### Dependency Flow Diagram
+Each `collect*` builds a `Symbol` and calls `declareSymbol` (local duplicate check via `lookupLocal`). `@extern` metadata is extracted in `extractExternMetadata`. Trait conformance is deferred to Phase 2.5.
 
 ## Phase 2: Type resolution (`TypeDispatcher`)
+
+`TypeDispatcher` owns all specialized resolvers as `unique_ptr` members. Construction order matters: `NullableResolver` receives `FuncResolver` after both are built; `ImplResolver` and `FromResolver` depend on `InjectionTransformer` and `CallableExtractor`.
+
+### Resolver dependency graph
 
 ```
                     ┌─────────────────┐
@@ -196,7 +198,7 @@ Each `collect*` builds a `Symbol` and calls `declareSymbol` (local duplicate che
         ▼                    ▼                    ▼
 ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
 │GenericParam   │    │  TypeCloner   │    │Constraint     │
-│Handler        │◄───│               │    │Checker        │
+│Handler        │    │               │    │Checker        │
 └───────────────┘    └───────────────┘    └───────────────┘
         │                    │                    │
         └────────────────────┼────────────────────┘
@@ -204,9 +206,9 @@ Each `collect*` builds a `Symbol` and calls `declareSymbol` (local duplicate che
         ┌────────────────────┼────────────────────┬────────────────────┐
         │                    │                    │                    │
         ▼                    ▼                    ▼                    ▼
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+┌───────────────┐    ┌───────────────┐    ┌────────────────┐   ┌───────────────┐
 │NamedResolver  │    │ FuncResolver  │    │NullableResolver│   │ArrayResolver  │
-└───────────────┘    └───────────────┘    └───────────────┘    └───────────────┘
+└───────────────┘    └───────────────┘    └────────────────┘   └───────────────┘
         │                    │                    │
         └────────────────────┼────────────────────┘
                              │
@@ -224,12 +226,12 @@ Each `collect*` builds a `Symbol` and calls `declareSymbol` (local duplicate che
 ```
 resolveTypes                                 [SemanticAnalyzer.cpp]
 └── per top-level decl
-    ├── TypeAliasDecl  → resolveTypeAlias
-    ├── StructDecl     → resolveStructFields
-    ├── FuncDecl       → resolveFunctionSignature
-    ├── ImplDecl       → resolveImplMethods
-    ├── FromDecl       → resolveFromEntries
-    └── VarDecl        → resolveVarType
+    ├── TypeAliasDecl  → dispatcher.resolveTypeAlias      → TypeAliasResolver
+    ├── StructDecl     → dispatcher.resolveStructFields   → StructResolver
+    ├── FuncDecl       → dispatcher.resolveFunctionSignature → FuncSignatureResolver
+    ├── ImplDecl       → dispatcher.resolveImplMethods    → ImplResolver
+    ├── FromDecl       → dispatcher.resolveFromEntries    → FromResolver
+    └── VarDecl        → dispatcher.resolveVarType        → VarResolver
 ```
 
 ### Type node dispatch (`TypeDispatcher::resolveType`)
@@ -247,55 +249,55 @@ resolveType                                  [resolveType/TypeDispatcher.cpp]
     └── FuncType       → FuncResolver::resolve
 ```
 
-### Component Architecture
-
-The type resolver is decomposed into focused components:
+### Component responsibilities
 
 | Component               | Responsibility                                             | Location                 |
 | ----------------------- | ---------------------------------------------------------- | ------------------------ |
 | `GenericParamHandler`   | Generic parameter stack, substitution maps                 | `resolveType/core/`      |
 | `TypeCloner`            | Deep cloning of type AST nodes                             | `resolveType/core/`      |
-| `ConstraintChecker`     | Trait constraint satisfaction                              | `resolveType/core/`      |
-| `PrimitiveResolver`     | Primitive type resolution (trivial)                        | `resolveType/primitive/` |
-| `NamedResolver`         | User-defined type resolution (complex)                     | `resolveType/named/`     |
-| `NullableResolver`      | `T?` resolution with validation                            | `resolveType/composite/` |
+| `ConstraintChecker`     | Trait constraint satisfaction, type classification         | `resolveType/core/`      |
+| `PrimitiveResolver`     | Primitive type resolution                                  | `resolveType/primitive/` |
+| `NamedResolver`         | User-defined and generic named type resolution             | `resolveType/named/`     |
+| `NullableResolver`      | `T?` resolution (depends on `FuncResolver`)                | `resolveType/composite/` |
 | `ResultResolver`        | `T!E` resolution with nesting validation                   | `resolveType/composite/` |
 | `ArrayResolver`         | `[_, T]`, `[*, T]`, `[N, T]` resolution                    | `resolveType/composite/` |
 | `RefResolver`           | `&T` reference resolution                                  | `resolveType/composite/` |
 | `PtrResolver`           | `*T` pointer resolution                                    | `resolveType/composite/` |
 | `FuncResolver`          | Function type resolution (qualifiers, parameters, returns) | `resolveType/composite/` |
-| `TypeAliasResolver`     | Type alias RHS resolution                                  | `resolveType/decl/`      |
-| `StructResolver`        | Struct field type resolution, self-type creation           | `resolveType/decl/`      |
-| `FuncSignatureResolver` | Function signature resolution                              | `resolveType/decl/`      |
-| `ImplResolver`          | Impl target, generic arity, method resolution (complex)    | `resolveType/decl/`      |
+| `TypeAliasResolver`     | Type alias generic scope setup                             | `resolveType/decl/`      |
+| `StructResolver`        | Struct field types, self-type creation                     | `resolveType/decl/`      |
+| `FuncSignatureResolver` | Function signature generic scope setup                     | `resolveType/decl/`      |
+| `ImplResolver`          | Impl target, generic arity, method resolution              | `resolveType/decl/`      |
 | `FromResolver`          | From entry resolution (inline and path)                    | `resolveType/decl/`      |
-| `VarResolver`           | Variable type resolution                                   | `resolveType/decl/`      |
+| `VarResolver`           | Variable declared type binding on symbol                   | `resolveType/decl/`      |
 | `InjectionTransformer`  | Injection form `!` type transformation                     | `resolveType/injection/` |
 | `CallableExtractor`     | Function reference extraction from callable expressions    | `resolveType/callable/`  |
-| `ResolverHelpers`       | Shared utilities (type classification, name extraction)    | `resolveType/helpers/`   |
+| `ResolverHelpers`       | Type classification helpers used by resolvers                | `helpers/`               |
 
-### Generic Parameter and Substitution Management
+### Generic parameter and substitution management
 
-Generic parameters and substitution maps use internal stacks managed by `GenericParamHandler`:
-
-```cpp
-// In GenericParamHandler
-void pushParams(const ArenaSpan<GenericParamPtr>* params);
-void popParams();
-bool isParam(InternedString name) const;
-
-void pushSubstMap(const std::unordered_map<InternedString, TypeAST*>* map);
-void popSubstMap();
-TypeAST* lookupSubst(InternedString name) const;
-```
-
-Constraint satisfaction uses `ConstraintChecker`:
+Stacks live in `GenericParamHandler`; `TypeDispatcher` forwards to them:
 
 ```cpp
-// In ConstraintChecker
-bool satisfies(TypeAST* type, const std::vector<InternedString>& requiredTraits) const;
-void setStructTraits(const std::unordered_map<InternedString, std::vector<InternedString>>* map);
+// Via TypeDispatcher (or ctx.dispatcher in checkers)
+pushGenericParams / popGenericParams
+pushSubstitutionMap / popSubstitutionMap
+lookupSubstitution / isGenericParam
 ```
+
+### Phase 2.5: Trait conformance map
+
+```
+buildTraitConformanceMap                     [SemanticAnalyzer.cpp]
+└── for each SymbolKind::Impl in global scope
+    ├── skip impls without traitRef
+    ├── resolve target type via dispatcher.resolveType
+    ├── unwrap type aliases
+    ├── key = NameMangler::mangleType(unwrapped, pool, symbols)
+    └── ctx.typeTraits[key].push_back(traitName)
+```
+
+`ConstraintChecker::satisfies(ctx, type, requiredTraits)` and `SemanticContext::implementsTrait` both look up `ctx.typeTraits` using the same mangled type key. The map is built after all type resolution completes and is read-only during Phase 3.
 
 ### Type compatibility (stateless helpers)
 
@@ -311,7 +313,7 @@ void setStructTraits(const std::unordered_map<InternedString, std::vector<Intern
 
 ## Phase 3: Checking
 
-Phase 3 walks top-level declarations, then recursively checks bodies via `checkStmt` and `checkExpr`. Expression checkers return `TypeAST*` and cache it on `node->resolvedType` in `ExprDispatcher.cpp`.
+Phase 3 walks top-level declarations, then recursively checks bodies via `checkStmt` and `checkExpr`. Expression checkers return `TypeAST*` and cache it on `node->resolvedType` in `ExprDispatcher.cpp`. Late type resolution uses `ctx.dispatcher->resolveType`.
 
 ### Top-level declaration dispatch (`checkTopLevelDecl`)
 
@@ -341,6 +343,7 @@ checkFuncDecl                                [declCheckers/checkFuncDecl.cpp]
 └── checkStmt(body, expectedReturn)          [stmtCheckers/StmtDispatcher.cpp]
 
 checkImplDecl                                [declCheckers/checkImplDecl.cpp]
+├── pushSubstitutionMap (if generic impl)
 └── checkImplMethod per method               [DeclHelpers.hpp]
     ├── injectReceiverSymbol
     ├── declare method parameters
@@ -411,10 +414,10 @@ checkMatchExpr                               [exprCheckers/match/MatchChecker.cp
 └── per arm: pattern binding + checkExpr(body) → unify arm types
 
 checkPattern                                 [exprCheckers/match/PatternChecker.cpp]
-├── BindPattern      → introduce symbol in scope
+├── BindPattern      → accept (introduces binding in match scope)
 ├── WildcardPattern  → accept
 ├── LiteralPattern   → compare to subject type
-├── TypePattern      → `is` check against subject
+├── TypePattern      → resolve check type, validate against subject
 └── StructPattern    → field patterns (recursive checkPattern)
 ```
 
@@ -436,7 +439,9 @@ checkAttributes        → AttributeRegistry validation, @extern metadata   [Dec
 isConstExpr            → compile-time constant detection                   [DeclHelpers.hpp]
 injectReceiverSymbol   → impl `self` / receiver alias                    [DeclHelpers.hpp]
 checkImplMethod        → impl method scope + body                        [DeclHelpers.hpp]
-NameMangler::mangleType / mangleFunc                                       [helpers/NameMangler.hpp]
+NameMangler::mangleType / mangleFunc / mangleMethod                       [helpers/NameMangler.hpp]
+ResolverHelpers        → isStructType, isEnumType, type queries          [helpers/ResolverHelpers.hpp]
+ctx.implementsTrait    → trait lookup via ctx.typeTraits                 [helpers/SemanticContext.cpp]
 ctx.enterLoop / exitLoop / enterParallel / exitParallel                    [helpers/SemanticContext.hpp]
 ctx.error / ctx.warning / ctx.note                                         [helpers/SemanticContext.hpp]
 ```
@@ -450,21 +455,9 @@ SymbolTable symbols_
 SemanticContext ctx_(pool, arena, &symbols_)   // ctx before dispatcher
 TypeDispatcher dispatcher_(ctx_)
 SemanticCollector collector_
+
+// In constructor:
+ctx_.dispatcher = &dispatcher_;
 ```
 
-`ctx_.dispatcher` is wired so checkers can call `ctx.dispatcher->resolveType` for late or local type resolution inside Phase 3.
-
-## Key Changes from Previous Structure
-
-| Previous                           | New                                        |
-| ---------------------------------- | ------------------------------------------ |
-| `TypeResolver` monolithic class    | `TypeDispatcher` with delegated components |
-| `TypeResolver.hpp/cpp` single file | 30 files across 9 subdirectories           |
-| All resolve logic in one file      | Per-type resolvers in dedicated files      |
-| `TypeChecker` in `resolveType/`    | `TypeChecker` moved to `checkType/`        |
-| Generic params as member variables | `GenericParamHandler` component            |
-| Clone methods inline               | `TypeCloner` component                     |
-| Constraint checking inline         | `ConstraintChecker` component              |
-| Injection transform inline         | `InjectionTransformer` component           |
-| Callable extraction inline         | `CallableExtractor` component              |
-```
+`ctx.dispatcher` is non-owning; checkers call `ctx.dispatcher->resolveType`, `pushGenericParams`, and `pushSubstitutionMap` for late or local type resolution inside Phase 3.

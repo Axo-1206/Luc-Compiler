@@ -6,6 +6,7 @@
 #include "TypeChecker.hpp"
 #include "semantic/helpers/SemanticContext.hpp"
 #include "semantic/helpers/NameMangler.hpp"
+#include "semantic/resolveType/TypeDispatcher.hpp"
 #include "debug/DebugUtils.hpp"
 
 #include <iostream>
@@ -576,11 +577,10 @@ bool TypeChecker::isValidSliceBound(ExprAST* boundExpr, const std::string& bound
 
 Symbol* TypeChecker::isFromCastable(TypeAST* src, TypeAST* target, SemanticContext& ctx) {
     if (!src || !target) return nullptr;
-    if (!target->isa<NamedTypeAST>()) return nullptr;
     if (!ctx.symbols) return nullptr;
 
-    std::string_view targetName = ctx.pool.lookup(target->as<NamedTypeAST>()->name);
-    std::string prefix = NameMangler::getFromPrefix(targetName);
+    std::string targetMangled = NameMangler::mangleType(target, ctx.pool, ctx.symbols);
+    std::string prefix = NameMangler::getFromPrefix(targetMangled);
 
     std::vector<Symbol*> candidates = ctx.symbols->findSymbolsByPrefix(prefix, ctx.pool);
 
@@ -593,7 +593,9 @@ Symbol* TypeChecker::isFromCastable(TypeAST* src, TypeAST* target, SemanticConte
         if (entry->sig.groupCount() == 0) continue;
         auto firstGroup = entry->sig.getGroup(0);
         if (firstGroup.empty()) continue;
-        TypeAST* firstParamType = firstGroup[0]->type.get();
+        
+        // Resolve parameter type for comparison
+        TypeAST* firstParamType = ctx.dispatcher ? ctx.dispatcher->resolveType(firstGroup[0]->type.get()) : firstGroup[0]->type.get();
         if (!firstParamType) continue;
 
         if (isAssignable(src, firstParamType, ctx)) {

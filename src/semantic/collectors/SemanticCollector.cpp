@@ -244,18 +244,12 @@ void SemanticCollector::collectFromDecl(FromDeclAST& node, SemanticContext& ctx)
     // Phase 1: Record from entries for lookup
     // Type validation happens in Phase 2
     
-    InternedString targetName;
-    if (node.targetType && node.targetType->isa<NamedTypeAST>()) {
-        targetName = node.targetType->as<NamedTypeAST>()->name;
-    }
-    
-    if (!targetName.isValid()) {
-        ctx.error(node.loc, DiagCode::E2016, 
-                  "from target must be a named type (struct, enum, or type alias)");
+    if (!node.targetType) {
+        ctx.error(node.loc, DiagCode::E2016, "from target type is missing");
         return;
     }
     
-    std::string_view targetStr = ctx.pool.lookup(targetName);
+    std::string targetStr = NameMangler::mangleType(node.targetType.get(), ctx.pool, ctx.symbols);
     for (const auto& entry : node.entries) {
         if (!entry) continue;
 

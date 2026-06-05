@@ -68,14 +68,11 @@ void checkTraitDecl(TraitDeclAST& node, SemanticContext& ctx, bool isLocal) {
         for (const auto& param : sig.allParams) {
             if (!param) continue;
             if (param->type) {
-                TypeAST* paramType = param->type.get();
-                if (!paramType && ctx.dispatcher) {
-                    paramType = ctx.dispatcher->resolveType(param->type.get());
-                    if (!paramType) {
-                        ctx.error(param->loc, DiagCode::E2001,
-                                  "cannot resolve type for parameter '", ctx.pool.lookup(param->name),
-                                  "' in trait method '", methodName, "'");
-                    }
+                TypeAST* paramType = ctx.dispatcher ? ctx.dispatcher->resolveType(param->type.get()) : param->type.get();
+                if (!paramType) {
+                    ctx.error(param->loc, DiagCode::E2001,
+                              "cannot resolve type for parameter '", ctx.pool.lookup(param->name),
+                              "' in trait method '", methodName, "'");
                 }
             }
         }
@@ -83,13 +80,10 @@ void checkTraitDecl(TraitDeclAST& node, SemanticContext& ctx, bool isLocal) {
         // Resolve return types
         for (auto& retType : sig.returnTypes) {
             if (retType) {
-                TypeAST* resolvedRet = retType.get();
-                if (!resolvedRet && ctx.dispatcher) {
-                    resolvedRet = ctx.dispatcher->resolveType(retType.get());
-                    if (!resolvedRet) {
-                        ctx.error(method->loc, DiagCode::E2001,
-                                  "cannot resolve return type for trait method '", methodName, "'");
-                    }
+                TypeAST* resolvedRet = ctx.dispatcher ? ctx.dispatcher->resolveType(retType.get()) : retType.get();
+                if (!resolvedRet) {
+                    ctx.error(method->loc, DiagCode::E2001,
+                              "cannot resolve return type for trait method '", methodName, "'");
                 }
             }
         }

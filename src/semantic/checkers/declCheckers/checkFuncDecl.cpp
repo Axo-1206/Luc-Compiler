@@ -83,14 +83,11 @@ void checkFuncDecl(FuncDeclAST& node, SemanticContext& ctx, bool isLocal) {
         for (const auto& param : sig.allParams) {
             if (!param) continue;
 
-            TypeAST* paramType = param->type.get();
-            if (!paramType && ctx.dispatcher) {
-                paramType = ctx.dispatcher->resolveType(param->type.get());
-                if (!paramType) {
-                    ctx.error(param->loc, DiagCode::E2001,
-                              "cannot resolve type for parameter '", ctx.pool.lookup(param->name), "'");
-                    continue;
-                }
+            TypeAST* paramType = ctx.dispatcher ? ctx.dispatcher->resolveType(param->type.get()) : param->type.get();
+            if (!paramType) {
+                ctx.error(param->loc, DiagCode::E2001,
+                          "cannot resolve type for parameter '", ctx.pool.lookup(param->name), "'");
+                continue;
             }
 
             Symbol sym;
