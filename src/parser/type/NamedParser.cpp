@@ -33,26 +33,36 @@
 // ============================================================================
 
 TypePtr Parser::parseNamedType() {
-    LUC_LOG_TYPE_EXTREME("parseNamedType: entering");
-    SourceLocation loc = ts_.currentLoc();
+    LUC_LOG_TYPE_VERBOSE("parseNamedType: entering at line " << ts_.currentLoc().line()
+                         << ", col " << ts_.currentLoc().column());
     
     if (!ts_.check(TokenType::IDENTIFIER)) {
-        LUC_LOG_TYPE("parseNamedType: ERROR - expected type name, got '" << ts_.peek().value << "'");
-        errorAt(DiagCode::E1003, "expected type name");
+        LUC_LOG_TYPE("parseNamedType: ERROR - expected identifier at line " 
+                     << ts_.peek().line << ", col " << ts_.peek().column);
+        errorAt(DiagCode::E1003, "expected identifier for named type");
         return arena_.make<UnknownTypeAST>();
     }
-    
-    InternedString name = pool_.intern(ts_.advance().value);
-    LUC_LOG_TYPE_EXTREME("parseNamedType: name = " << pool_.lookup(name));
-    
-    auto node = arena_.make<NamedTypeAST>(name);
-    node->loc = loc;
 
+    SourceLocation loc = ts_.currentLoc();
+    Token nameToken = ts_.advance();
+    LUC_LOG_TYPE("parseNamedType: found identifier '" << nameToken.value 
+                 << "' at line " << nameToken.line << ", col " << nameToken.column);
+    
+    auto type = arena_.make<NamedTypeAST>(pool_.intern(nameToken.value));
+    type->loc = loc;
+    type->name = pool_.intern(nameToken.value);
+
+    // Check for generic arguments
     if (ts_.check(TokenType::LESS)) {
-        LUC_LOG_TYPE_EXTREME("parseNamedType: parsing generic arguments");
-        node->genericArgs = parseGenericArgs();
-        LUC_LOG_TYPE_EXTREME("parseNamedType: found " << node->genericArgs.size() << " generic argument(s)");
+        LUC_LOG_TYPE("parseNamedType: found '<' for generic arguments at line " 
+                     << ts_.peek().line << ", col " << ts_.peek().column);
+        type->genericArgs = parseGenericArgs();
+        LUC_LOG_TYPE("parseNamedType: parsed " << type->genericArgs.size() 
+                     << " generic argument(s)");
+        LUC_LOG_TYPE("After parsing generic args, next token: " 
+                     << LucDebug::tokenToString(ts_.peek())
+                     << " at line " << ts_.peek().line << ", col " << ts_.peek().column);
     }
 
-    return node;
+    return type;
 }

@@ -59,8 +59,6 @@ ASTPtr<TraitDeclAST> Parser::parseTraitDecl(Visibility vis) {
     int methodCount = 0;
     
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
-        ts_.match(TokenType::SEMICOLON);
-        ts_.match(TokenType::COMMA);
         if (ts_.check(TokenType::RBRACE)) break;
 
         size_t savedPos = ts_.getPos();
@@ -103,19 +101,90 @@ TraitMethodPtr Parser::parseTraitMethod() {
     method->name = pool_.intern(ts_.advance().value);
     LUC_LOG_DECL_EXTREME("parseTraitMethod: method name = " << pool_.lookup(method->name));
     
-    // ... rest of existing code ...
+    // Create a FuncTypeAST to hold signature and qualifiers
+    auto funcType = arena_.make<FuncTypeAST>();
+    funcType->loc = loc;
+
+    // Parse raw qualifiers and build bitmask
+    std::vector<InternedString> rawQuals;
+    uint32_t qualMask = 0;
+    while (ts_.check(TokenType::TILDE)) {
+        ts_.advance();
+        if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_DECL("parseTraitMethod: ERROR - expected qualifier name after '~'");
+            errorAt(DiagCode::E1003, "expected qualifier name after '~'");
+            break;
+        }
+        InternedString q = pool_.intern(ts_.advance().value);
+        rawQuals.push_back(q);
+        std::string_view qstr = pool_.lookup(q);
+        if (qstr == "async") qualMask |= QualifierBits::Async;
+        else if (qstr == "nullable") qualMask |= QualifierBits::Nullable;
+        else if (qstr == "parallel") qualMask |= QualifierBits::Parallel;
+    }
+    auto qBuilder = arena_.makeBuilder<InternedString>();
+    for (auto& q : rawQuals) qBuilder.push_back(std::move(q));
+    funcType->rawQualifiers = qBuilder.build();
+    funcType->qualifiers = qualMask;
+
+    // Parameter groups: flat accumulation
+    std::vector<ParamPtr> allParams;
+    std::vector<size_t> groupSizes;
+    
+    if (!ts_.check(TokenType::LPAREN)) {
+        LUC_LOG_DECL("parseTraitMethod: ERROR - expected '(' for trait method parameters");
+        errorAt(DiagCode::E1001, "expected '(' for trait method parameters");
+        return nullptr;
+    }
+    
+    int groupCount = 0;
+    while (ts_.check(TokenType::LPAREN)) {
+        groupCount++;
+        ParamGroup group = parseParamGroup();
+        groupSizes.push_back(group.size());
+        LUC_LOG_DECL_EXTREME("parseTraitMethod: group #" << groupCount 
+                             << " has " << group.size() << " parameter(s)");
+        for (auto& p : group) {
+            allParams.push_back(std::move(p));
+        }
+    }
+    
+    auto paramsBuilder = arena_.makeBuilder<ParamPtr>();
+    for (auto& p : allParams) paramsBuilder.push_back(std::move(p));
+    funcType->sig.allParams = paramsBuilder.build();
+
+    auto gsBuilder = arena_.makeBuilder<size_t>();
+    for (auto& sz : groupSizes) gsBuilder.push_back(sz);
+    funcType->sig.groupSizes = gsBuilder.build();
+    
+    LUC_LOG_DECL_EXTREME("parseTraitMethod: total " << allParams.size() << " parameters");
+
+    // Return types
+    if (ts_.match(TokenType::ARROW)) {
+        LUC_LOG_DECL_EXTREME("parseTraitMethod: parsing return types");
+        funcType->sig.returnTypes = parseReturnList();
+        LUC_LOG_DECL_EXTREME("parseTraitMethod: " << funcType->sig.returnTypes.size() << " return type(s)");
+    }
+
+    method->funcType = std::move(funcType);
     
     LUC_LOG_DECL_EXTREME("parseTraitMethod: success");
     return method;
 }
 
 TraitRefPtr Parser::parseTraitRef() {
-    LUC_LOG_DECL_EXTREME("parseTraitRef: entering");
+    LUC_LOG_DECL_EXTREME("parseTraitRef: entering at line " << ts_.currentLoc().line() 
+                         << ", col " << ts_.currentLoc().column());
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::COLON, "expected ':' before trait name");
 
+    LUC_LOG_DECL("parseTraitRef: after consuming ':', token is " 
+                 << LucDebug::tokenToString(ts_.peek())
+                 << " at line " << ts_.peek().line << ", col " << ts_.peek().column);
+
     if (!ts_.check(TokenType::IDENTIFIER)) {
-        LUC_LOG_DECL("parseTraitRef: ERROR - expected trait name after ':'");
+        LUC_LOG_DECL("parseTraitRef: ERROR - expected trait name after ':' at line " 
+                     << ts_.peek().line << ", col " << ts_.peek().column);
         errorAt(DiagCode::E1003, "expected trait name after ':'");
         return nullptr;
     }
@@ -125,10 +194,76 @@ TraitRefPtr Parser::parseTraitRef() {
     ref->name = pool_.intern(ts_.advance().value);
     LUC_LOG_DECL_EXTREME("parseTraitRef: trait name = " << pool_.lookup(ref->name));
 
+    LUC_LOG_DECL("After reading trait name, next token: " 
+                 << LucDebug::tokenToString(ts_.peek())
+                 << " at line " << ts_.peek().line << ", col " << ts_.peek().column);
+
+    // Parse generic arguments if present
     if (ts_.check(TokenType::LESS)) {
-        LUC_LOG_DECL_EXTREME("parseTraitRef: parsing generic arguments");
-        ref->genericArgs = parseGenericArgs();
-        LUC_LOG_DECL_EXTREME("parseTraitRef: " << ref->genericArgs.size() << " generic argument(s)");
+        LUC_LOG_DECL_EXTREME("parseTraitRef: parsing generic arguments at line " 
+                             << ts_.peek().line << ", col " << ts_.peek().column);
+        
+        // Consume the '<'
+        ts_.advance();
+        
+        std::vector<TypePtr> genericArgs;
+        
+        // Parse comma-separated type arguments
+        do {
+            if (ts_.check(TokenType::GREATER)) {
+                // Empty generic arguments list is allowed
+                break;
+            }
+            
+            LUC_LOG_DECL_EXTREME("parseTraitRef: parsing generic argument at line " 
+                                 << ts_.peek().line << ", col " << ts_.peek().column);
+            
+            // Parse a type argument (can be primitive, named, etc.)
+            TypePtr argType = parseType();
+            if (!argType || argType->isa<UnknownTypeAST>()) {
+                LUC_LOG_DECL("parseTraitRef: ERROR - failed to parse generic argument");
+                errorAt(DiagCode::E1005, "expected type as generic argument");
+                // Skip to the closing '>' to recover
+                while (!ts_.isAtEnd() && !ts_.check(TokenType::GREATER)) {
+                    ts_.advance();
+                }
+                break;
+            }
+            genericArgs.push_back(std::move(argType));
+            
+        } while (ts_.match(TokenType::COMMA));
+        
+        // Expect closing '>'
+        if (!ts_.check(TokenType::GREATER)) {
+            LUC_LOG_DECL("parseTraitRef: ERROR - expected '>' to close generic arguments, got " 
+                         << LucDebug::tokenToString(ts_.peek()));
+            errorAt(DiagCode::E1001, "expected '>' to close generic arguments");
+            // Try to recover by consuming until we find '>'
+            while (!ts_.isAtEnd() && !ts_.check(TokenType::GREATER)) {
+                ts_.advance();
+            }
+        }
+        
+        // Consume the '>'
+        if (ts_.check(TokenType::GREATER)) {
+            ts_.advance();
+        }
+        
+        // Build the generic arguments span
+        auto builder = arena_.makeBuilder<TypePtr>();
+        for (auto& arg : genericArgs) {
+            builder.push_back(std::move(arg));
+        }
+        ref->genericArgs = builder.build();
+        
+        LUC_LOG_DECL_EXTREME("parseTraitRef: parsed " << ref->genericArgs.size() << " generic argument(s)");
+        LUC_LOG_DECL("After parsing generic args, at token: " 
+                     << LucDebug::tokenToString(ts_.peek())
+                     << " line " << ts_.peek().line << ", col " << ts_.peek().column);
+    } else {
+        LUC_LOG_DECL("No generic arguments for trait, next token: " 
+                     << LucDebug::tokenToString(ts_.peek())
+                     << " at line " << ts_.peek().line << ", col " << ts_.peek().column);
     }
 
     return ref;

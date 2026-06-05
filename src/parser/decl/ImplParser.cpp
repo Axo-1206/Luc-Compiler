@@ -92,7 +92,8 @@
  * @return ASTPtr<ImplDeclAST> – impl node on success, nullptr on error
  */
 ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
-    LUC_LOG_DECL_VERBOSE("parseImplDecl: entering");
+    LUC_LOG_DECL_VERBOSE("parseImplDecl: entering at line " << ts_.currentLoc().line() 
+                         << ", col " << ts_.currentLoc().column());
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::IMPL, "expected 'impl'");
 
@@ -100,12 +101,19 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
     node->loc = loc;
     node->visibility = vis;
 
+    // Log current token before parsing target type
+    LUC_LOG_DECL("Current token before parsing target: " 
+                 << LucDebug::tokenToString(ts_.peek()) 
+                 << " at line " << ts_.peek().line 
+                 << ", col " << ts_.peek().column);
+
     // Determine the target type
     TypePtr targetType;
 
     // Case 1: Array target (concrete or generic)
     if (ts_.check(TokenType::LBRACKET)) {
-        LUC_LOG_DECL_EXTREME("parseImplDecl: array target");
+        LUC_LOG_DECL_EXTREME("parseImplDecl: array target at " 
+                             << ts_.peek().line << ":" << ts_.peek().column);
         if (looksLikeGenericArray()) {
             LUC_LOG_DECL_EXTREME("parseImplDecl: generic array target");
             targetType = parseGenericArray();
@@ -114,24 +122,41 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
         }
         
         if (!targetType || targetType->isa<UnknownTypeAST>()) {
-            LUC_LOG_DECL("parseImplDecl: ERROR - invalid array target");
+            LUC_LOG_DECL("parseImplDecl: ERROR - invalid array target at line " 
+                         << loc.line());
             errorAt(DiagCode::E1005, "invalid array target in impl block");
             return nullptr;
         }
     }
     // Case 2: Primitive type
     else if (isPrimitiveTypeToken(ts_.peekType())) {
-        LUC_LOG_DECL_EXTREME("parseImplDecl: primitive type target");
+        LUC_LOG_DECL_EXTREME("parseImplDecl: primitive type target at " 
+                             << ts_.peek().line << ":" << ts_.peek().column);
+        LUC_LOG_DECL("Primitive type token: " 
+                     << LucDebug::tokenToString(ts_.peek())
+                     << " at line " << ts_.peek().line << ", col " << ts_.peek().column);
         targetType = parsePrimitiveType();
+        LUC_LOG_DECL("After parsePrimitiveType, at token: " 
+                     << LucDebug::tokenToString(ts_.peek())
+                     << " line " << ts_.peek().line << ", col " << ts_.peek().column);
     }
     // Case 3: Named type (struct, enum, type alias)
     else if (ts_.check(TokenType::IDENTIFIER)) {
-        LUC_LOG_DECL_EXTREME("parseImplDecl: named type target");
+        LUC_LOG_DECL_EXTREME("parseImplDecl: named type target at " 
+                             << ts_.peek().line << ":" << ts_.peek().column);
+        LUC_LOG_DECL("Named type identifier: '" << ts_.peek().value 
+                     << "' at line " << ts_.peek().line << ", col " << ts_.peek().column);
         targetType = parseNamedType();
+        LUC_LOG_DECL("After parseNamedType, at token: " 
+                     << LucDebug::tokenToString(ts_.peek())
+                     << " line " << ts_.peek().line << ", col " << ts_.peek().column);
     }
     // Case 4: Error
     else {
-        LUC_LOG_DECL("parseImplDecl: ERROR - expected target type after 'impl'");
+        LUC_LOG_DECL("parseImplDecl: ERROR - expected target type after 'impl' at line " 
+                     << ts_.peek().line << ", col " << ts_.peek().column);
+        LUC_LOG_DECL("Current token: " << LucDebug::tokenToString(ts_.peek())
+                     << " at line " << ts_.peek().line << ", col " << ts_.peek().column);
         errorAt(DiagCode::E1003, 
                 "expected target type after 'impl' (primitive, identifier, or '[')");
         return nullptr;
@@ -143,7 +168,9 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
         return nullptr;
     }
     node->targetType = std::move(targetType);
-    LUC_LOG_DECL_EXTREME("parseImplDecl: target type parsed");
+    LUC_LOG_DECL_EXTREME("parseImplDecl: target type parsed, current token: " 
+                         << LucDebug::tokenToString(ts_.peek())
+                         << " at line " << ts_.peek().line << ", col " << ts_.peek().column);
 
     // For generic array targets, the type variable is already stored in the node.
     // The impl should NOT have additional generic parameters.
@@ -151,14 +178,16 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
 
     // Parse impl-level generic parameters (only for generic structs/aliases)
     if (!isGenericArray && ts_.check(TokenType::LESS)) {
-        LUC_LOG_DECL_EXTREME("parseImplDecl: parsing generic parameters");
+        LUC_LOG_DECL_EXTREME("parseImplDecl: parsing generic parameters at line " 
+                             << ts_.peek().line << ", col " << ts_.peek().column);
         node->genericParams = parseGenericParams();
         LUC_LOG_DECL_EXTREME("parseImplDecl: " << node->genericParams.size() << " generic parameter(s)");
     }
 
     // Parse 'as' alias (optional)
     if (ts_.match(TokenType::AS)) {
-        LUC_LOG_DECL_EXTREME("parseImplDecl: parsing 'as' alias");
+        LUC_LOG_DECL_EXTREME("parseImplDecl: parsing 'as' alias at " 
+                             << ts_.peek().line << ":" << ts_.peek().column);
         if (!ts_.check(TokenType::IDENTIFIER)) {
             LUC_LOG_DECL("parseImplDecl: ERROR - expected identifier after 'as'");
             errorAt(DiagCode::E1003, "expected identifier after 'as' for receiver alias");
@@ -170,14 +199,21 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
 
     // Parse trait conformance (optional)
     if (ts_.check(TokenType::COLON)) {
-        LUC_LOG_DECL_EXTREME("parseImplDecl: parsing trait conformance");
+        LUC_LOG_DECL_EXTREME("parseImplDecl: parsing trait conformance at line " 
+                             << ts_.peek().line << ", col " << ts_.peek().column);
+        LUC_LOG_DECL("Found ':' at line " << ts_.peek().line 
+                     << ", col " << ts_.peek().column << ", parsing trait reference");
         node->traitRef = parseTraitRef();
         if (node->traitRef) {
             LUC_LOG_DECL_EXTREME("parseImplDecl: trait = " << pool_.lookup(node->traitRef->name));
+            LUC_LOG_DECL("After parsing trait ref, at token: " 
+                         << LucDebug::tokenToString(ts_.peek())
+                         << " line " << ts_.peek().line << ", col " << ts_.peek().column);
         }
     }
 
     // Parse impl body
+    LUC_LOG_DECL("Expecting '{' at line " << ts_.peek().line << ", col " << ts_.peek().column);
     ts_.consume(TokenType::LBRACE, "expected '{' to open impl body");
 
     std::vector<MethodDeclPtr> methods;

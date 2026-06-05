@@ -84,7 +84,7 @@ impl int as i {
 -- ============================================================
 
 impl Circle : Drawable {
-    draw   () = { /* ... */ }
+    draw   () = { /- ... -/ }
     bounds () -> Rect = { return Rect { w = 10.0, h = 10.0 } }
 }
 

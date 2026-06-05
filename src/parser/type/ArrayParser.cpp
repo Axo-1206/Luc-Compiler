@@ -80,13 +80,15 @@ TypePtr Parser::parseArrayType() {
         LUC_LOG_TYPE_EXTREME("parseArrayType: dynamic array [*, T]");
         arrayKind = ArrayKind::Dynamic;
         ts_.advance();
-        ts_.consume(TokenType::RBRACKET, "expected ']' after '*'");
+        // Consume comma, NOT closing bracket
+        ts_.consume(TokenType::COMMA, "expected ',' after '*' in array type");
         TypePtr elem = parseType();
         if (!elem) {
             LUC_LOG_TYPE("parseArrayType: ERROR - missing element type after '[*]'");
             errorAt(DiagCode::E1005, "expected element type after '[*]'");
             return arena_.make<UnknownTypeAST>();
         }
+        ts_.consume(TokenType::RBRACKET, "expected ']' after element type");
         auto node = arena_.make<ArrayTypeAST>(arrayKind, 0, std::move(elem));
         node->loc = loc;
         LUC_LOG_TYPE_VERBOSE("parseArrayType: created dynamic array");
@@ -97,14 +99,16 @@ TypePtr Parser::parseArrayType() {
     if (ts_.check(TokenType::WILDCARD)) {
         LUC_LOG_TYPE_EXTREME("parseArrayType: slice [_, T]");
         arrayKind = ArrayKind::Slice;
-        ts_.advance();
-        ts_.consume(TokenType::RBRACKET, "expected ']' after '_'");
+        ts_.advance();  // consumes '_'
+        // Consume comma, NOT closing bracket
+        ts_.consume(TokenType::COMMA, "expected ',' after '_' in slice type");
         TypePtr elem = parseType();
         if (!elem) {
             LUC_LOG_TYPE("parseArrayType: ERROR - missing element type after '[_, '");
             errorAt(DiagCode::E1005, "expected element type after '[_, '");
             return arena_.make<UnknownTypeAST>();
         }
+        ts_.consume(TokenType::RBRACKET, "expected ']' after element type");
         auto node = arena_.make<ArrayTypeAST>(arrayKind, 0, std::move(elem));
         node->loc = loc;
         LUC_LOG_TYPE_VERBOSE("parseArrayType: created slice");
@@ -127,13 +131,15 @@ TypePtr Parser::parseArrayType() {
             fixedSize = 0;
         }
         
-        ts_.consume(TokenType::RBRACKET, "expected ']' after array size");
+        // Consume comma, NOT closing bracket
+        ts_.consume(TokenType::COMMA, "expected ',' after array size");
         TypePtr elem = parseType();
         if (!elem) {
             LUC_LOG_TYPE("parseArrayType: ERROR - missing element type after '[" << sizeTok.value << ", '");
             errorAt(DiagCode::E1005, "expected element type after '[" + sizeTok.value + ", '");
             return arena_.make<UnknownTypeAST>();
         }
+        ts_.consume(TokenType::RBRACKET, "expected ']' after element type");
         auto node = arena_.make<ArrayTypeAST>(arrayKind, fixedSize, std::move(elem));
         node->loc = loc;
         LUC_LOG_TYPE_VERBOSE("parseArrayType: created fixed array with size " << fixedSize);
