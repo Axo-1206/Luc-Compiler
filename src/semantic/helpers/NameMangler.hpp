@@ -14,23 +14,23 @@
 
 namespace NameMangler {
 
-    // Forward declaration with context
-    inline std::string mangleType(TypeAST* type, StringPool& pool, SymbolTable* symbols);
-    
-    // Helper to unwrap type aliases
-    inline TypeAST* unwrapAliases(TypeAST* type, SymbolTable* symbols) {
+    // Forward declaration with const-correctness
+    inline std::string mangleType(const TypeAST* type, const StringPool& pool, const SymbolTable* symbols);
+
+    // Helper to unwrap type aliases (const version)
+    inline const TypeAST* unwrapAliases(const TypeAST* type, const SymbolTable* symbols) {
         if (!type || !symbols) return type;
-        
+
         while (type && type->isa<NamedTypeAST>()) {
-            auto* named = type->as<NamedTypeAST>();
-            Symbol* sym = symbols->lookup(named->name);
+            const auto* named = static_cast<const NamedTypeAST*>(type);
+            const Symbol* sym = symbols->lookup(named->name);
             if (!sym || sym->kind != SymbolKind::TypeAlias) break;
             if (!sym->type) break;
             type = sym->type;
         }
         return type;
     }
-    
+
     // Get primitive kind string
     inline std::string primitiveKindToString(PrimitiveKind kind) {
         switch (kind) {
@@ -60,25 +60,24 @@ namespace NameMangler {
             default:                      return "unknown";
         }
     }
-    
-    // Main type mangling function
-    inline std::string mangleType(TypeAST* type, StringPool& pool, SymbolTable* symbols) {
+
+    // Main type mangling function (const-correct)
+    inline std::string mangleType(const TypeAST* type, const StringPool& pool, const SymbolTable* symbols) {
         if (!type) return "unknown";
-        
-        // Unwrap aliases if we have symbol table
-        TypeAST* underlying = type;
+
+        const TypeAST* underlying = type;
         if (symbols) {
             underlying = unwrapAliases(type, symbols);
         }
-        
+
         switch (underlying->kind) {
             case ASTKind::PrimitiveType: {
-                auto pt = static_cast<PrimitiveTypeAST*>(underlying);
+                const auto* pt = static_cast<const PrimitiveTypeAST*>(underlying);
                 return "P" + primitiveKindToString(pt->primitiveKind);
             }
-            
+
             case ASTKind::NamedType: {
-                auto nt = static_cast<NamedTypeAST*>(underlying);
+                const auto* nt = static_cast<const NamedTypeAST*>(underlying);
                 std::string res = "N" + std::string(pool.lookup(nt->name));
                 if (!nt->genericArgs.empty()) {
                     res += "<";
@@ -90,14 +89,14 @@ namespace NameMangler {
                 }
                 return res;
             }
-            
+
             case ASTKind::NullableType: {
-                auto nt = static_cast<NullableTypeAST*>(underlying);
+                const auto* nt = static_cast<const NullableTypeAST*>(underlying);
                 return "O" + mangleType(nt->inner.get(), pool, symbols);
             }
-            
+
             case ASTKind::ResultType: {
-                auto rt = static_cast<ResultTypeAST*>(underlying);
+                const auto* rt = static_cast<const ResultTypeAST*>(underlying);
                 std::string res = "R" + mangleType(rt->inner.get(), pool, symbols);
                 if (rt->errorType) {
                     res += "E" + mangleType(rt->errorType.get(), pool, symbols);
@@ -106,9 +105,9 @@ namespace NameMangler {
                 }
                 return res;
             }
-            
+
             case ASTKind::ArrayType: {
-                auto at = static_cast<ArrayTypeAST*>(underlying);
+                const auto* at = static_cast<const ArrayTypeAST*>(underlying);
                 std::string prefix;
                 switch (at->arrayKind) {
                     case ArrayKind::Slice:   prefix = "A"; break;
@@ -117,19 +116,19 @@ namespace NameMangler {
                 }
                 return prefix + mangleType(at->element.get(), pool, symbols);
             }
-            
+
             case ASTKind::RefType: {
-                auto rt = static_cast<RefTypeAST*>(underlying);
+                const auto* rt = static_cast<const RefTypeAST*>(underlying);
                 return "Rf" + mangleType(rt->inner.get(), pool, symbols);
             }
-            
+
             case ASTKind::PtrType: {
-                auto pt = static_cast<PtrTypeAST*>(underlying);
+                const auto* pt = static_cast<const PtrTypeAST*>(underlying);
                 return "Pp" + mangleType(pt->inner.get(), pool, symbols);
             }
-            
+
             case ASTKind::FuncType: {
-                auto ft = static_cast<FuncTypeAST*>(underlying);
+                const auto* ft = static_cast<const FuncTypeAST*>(underlying);
                 std::string res = "Fn";
                 
                 // Add qualifiers
@@ -161,17 +160,17 @@ namespace NameMangler {
                 }
                 return res;
             }
-            
+
             default:
                 return "Unknown";
         }
     }
-    
+
     // Overload without symbol table (for contexts where aliases are already resolved)
-    inline std::string mangleType(TypeAST* type, StringPool& pool) {
+    inline std::string mangleType(const TypeAST* type, const StringPool& pool) {
         return mangleType(type, pool, nullptr);
     }
-    
+
     // Method mangling: Type::method
     inline std::string mangleMethod(std::string_view parent, std::string_view method) {
         std::string result;
@@ -181,7 +180,7 @@ namespace NameMangler {
         result.append(method);
         return result;
     }
-    
+
     // Enum variant mangling: EnumName::variantName
     inline std::string mangleEnumVariant(std::string_view enumName, std::string_view variant) {
         std::string result;
@@ -191,9 +190,9 @@ namespace NameMangler {
         result.append(variant);
         return result;
     }
-    
+
     // From entry mangling: TargetType::from::SourceType
-    inline std::string mangleFrom(std::string_view target, TypeAST* paramType, StringPool& pool) {
+    inline std::string mangleFrom(std::string_view target, const TypeAST* paramType, const StringPool& pool) {
         std::string result;
         result.reserve(target.size() + 16);
         result.append(target);
@@ -205,7 +204,7 @@ namespace NameMangler {
         }
         return result;
     }
-    
+
     // Prefix for from lookup
     inline std::string getFromPrefix(std::string_view target) {
         return std::string(target) + "::from::";

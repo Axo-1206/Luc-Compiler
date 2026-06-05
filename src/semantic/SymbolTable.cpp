@@ -80,6 +80,22 @@ Symbol* SymbolTable::lookup(InternedString name) {
     return nullptr;
 }
 
+const Symbol* SymbolTable::lookup(InternedString name) const {
+    uint32_t id = name.id;
+    
+    for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+        auto found = it->find(id);
+        if (found != it->end()) {
+            LUC_LOG_SEMANTIC_EXTREME("SymbolTable::lookup (const): found id=" << id 
+                                     << " at scope depth=" << (scopes_.size() - 1 - (it - scopes_.rbegin())));
+            return &found->second;
+        }
+    }
+    
+    LUC_LOG_SEMANTIC_EXTREME("SymbolTable::lookup (const): id=" << id << " not found");
+    return nullptr;
+}
+
 Symbol* SymbolTable::lookupLocal(InternedString name) {
     if (scopes_.empty()) return nullptr;
     

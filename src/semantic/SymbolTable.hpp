@@ -99,6 +99,9 @@ public:
     // Look up a symbol by its interned name, searching from innermost to outermost scope.
     // Returns nullptr if no symbol with that name is found in any accessible scope.
     Symbol* lookup(InternedString name);
+
+    // Const version – returns const pointer, does not modify table.
+    const Symbol* lookup(InternedString name) const;
     
     // Look up a symbol only in the current (innermost) scope.
     // Returns nullptr if not found in the current scope.
