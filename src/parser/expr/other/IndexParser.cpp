@@ -30,6 +30,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Index Expression Parser
@@ -83,11 +84,13 @@
  *   - Result type: element T for element access, slice `[_, T]` for slice access
  */
 ExprPtr Parser::parseIndexExpr(ExprPtr target) {
+    LUC_LOG_EXPR_VERBOSE("parseIndexExpr: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LBRACKET, "expected '['");
 
     ExprPtr startExpr = parseExpr();
     if (!startExpr) {
+        LUC_LOG_EXPR("parseIndexExpr: ERROR - expected index expression");
         errorAt(DiagCode::E1008, "expected index expression");
         return arena_.make<UnknownExprAST>();
     }
@@ -98,11 +101,15 @@ ExprPtr Parser::parseIndexExpr(ExprPtr target) {
 
     // Check for slice syntax: start .. end or start ..< end
     if (ts_.check(TokenType::RANGE)) {
+        LUC_LOG_EXPR_EXTREME("parseIndexExpr: slice access");
         ts_.advance();  // consume '..'
         bool isExclusive = ts_.match(TokenType::LESS);
         
+        LUC_LOG_EXPR_EXTREME("parseIndexExpr: range is " << (isExclusive ? "exclusive" : "inclusive"));
+        
         ExprPtr endExpr = parseExpr();
         if (!endExpr) {
+            LUC_LOG_EXPR("parseIndexExpr: ERROR - expected end of slice range after '..'");
             errorAt(DiagCode::E1008, "expected end of slice range after '..'");
             return arena_.make<UnknownExprAST>();
         }
@@ -113,10 +120,14 @@ ExprPtr Parser::parseIndexExpr(ExprPtr target) {
         node->isExclusive = isExclusive;
     } else {
         // Simple element access: [ index ]
+        LUC_LOG_EXPR_EXTREME("parseIndexExpr: element access");
         node->index = std::move(startExpr);
         node->kind = IndexKind::Element;
     }
 
     ts_.consume(TokenType::RBRACKET, "expected ']' to close index expression");
+    
+    LUC_LOG_EXPR_VERBOSE("parseIndexExpr: success, kind=" 
+                         << (node->kind == IndexKind::Element ? "element" : "slice"));
     return node;
 }

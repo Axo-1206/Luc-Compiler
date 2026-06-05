@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Block Statement
@@ -38,10 +39,12 @@
 // ============================================================================
 
 ASTPtr<BlockStmtAST> Parser::parseBlock() {
+    LUC_LOG_STMT_VERBOSE("parseBlock: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LBRACE, "expected '{'");
 
     std::vector<StmtPtr> stmts;
+    int stmtCount = 0;
     
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
         if (ts_.match(TokenType::SEMICOLON)) continue;
@@ -50,12 +53,18 @@ ASTPtr<BlockStmtAST> Parser::parseBlock() {
         StmtPtr stmt = parseStmt();
 
         if (ts_.getPos() == savedPos) {
+            LUC_LOG_STMT("parseBlock: WARNING - no progress in parseStmt, advancing");
             if (!ts_.isAtEnd()) ts_.advance();
             while (ts_.match(TokenType::SEMICOLON)) {}
             continue;
         }
 
-        if (stmt) stmts.push_back(std::move(stmt));
+        if (stmt) {
+            stmtCount++;
+            LUC_LOG_STMT_EXTREME("parseBlock: parsed statement #" << stmtCount 
+                                 << " (" << LucDebug::kindToString(stmt->kind) << ")");
+            stmts.push_back(std::move(stmt));
+        }
     }
 
     ts_.consume(TokenType::RBRACE, "expected '}' to close block");
@@ -67,5 +76,6 @@ ASTPtr<BlockStmtAST> Parser::parseBlock() {
     for (auto& s : stmts) builder.push_back(std::move(s));
     block->stmts = builder.build();
     
+    LUC_LOG_STMT_VERBOSE("parseBlock: parsed block with " << stmtCount << " statements");
     return block;
 }

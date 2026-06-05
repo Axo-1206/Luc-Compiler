@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Await Expression
@@ -30,16 +31,20 @@
 // ============================================================================
 
 ExprPtr Parser::parseAwaitExpr(bool allowStructLiteral) {
+    LUC_LOG_EXPR_VERBOSE("parseAwaitExpr: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::AWAIT, "expected 'await'");
 
     ExprPtr inner = parsePrattExpr(PREC_NONE, allowStructLiteral);
     if (!inner) {
+        LUC_LOG_EXPR("parseAwaitExpr: ERROR - expected expression after 'await'");
         errorAt(DiagCode::E1008, "expected expression after 'await'");
         return arena_.make<UnknownExprAST>();
     }
 
     auto node = arena_.make<AwaitExprAST>(std::move(inner));
     node->loc = loc;
+    
+    LUC_LOG_EXPR_EXTREME("parseAwaitExpr: success");
     return node;
 }

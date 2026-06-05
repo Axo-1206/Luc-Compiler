@@ -52,26 +52,34 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Pipeline Expression
 // ============================================================================
 
 ExprPtr Parser::parsePipelineExpr(ExprPtr seed) {
+    LUC_LOG_EXPR_VERBOSE("parsePipelineExpr: entering");
+    
     if (!seed) {
+        LUC_LOG_EXPR("parsePipelineExpr: ERROR - expected pipeline seed before '|>'");
         errorAt(DiagCode::E1008, "expected pipeline seed before '|>'");
         return arena_.make<UnknownExprAST>();
     }
 
     std::vector<PipelineStepPtr> steps;
+    int stepCount = 0;
 
     while (ts_.check(TokenType::PIPELINE)) {
+        LUC_LOG_EXPR_EXTREME("parsePipelineExpr: found '|>' operator #" << stepCount + 1);
         ts_.advance();  // consume '|>'
-        steps.push_back(parsePipelineStep());  // always returns a step
+        steps.push_back(parsePipelineStep());
+        stepCount++;
     }
 
     if (steps.empty()) {
         // No '|>' operators were found – this is not a pipeline
+        LUC_LOG_EXPR_EXTREME("parsePipelineExpr: no pipeline steps, returning seed");
         return seed;
     }
 
@@ -83,6 +91,7 @@ ExprPtr Parser::parsePipelineExpr(ExprPtr seed) {
     for (auto& s : steps) builder.push_back(std::move(s));
     node->steps = builder.build();
 
+    LUC_LOG_EXPR_VERBOSE("parsePipelineExpr: parsed " << stepCount << " step(s)");
     return node;
 }
 
@@ -91,8 +100,11 @@ ExprPtr Parser::parsePipelineExpr(ExprPtr seed) {
 // ============================================================================
 
 PipelineStepPtr Parser::parsePipelineStep() {
+    LUC_LOG_EXPR_EXTREME("parsePipelineStep: entering");
+    
     // 1. Anonymous function step
     if (looksLikeAnonFunc()) {
+        LUC_LOG_EXPR_EXTREME("parsePipelineStep: anonymous function step");
         auto step = arena_.make<PipelineStepAST>();
         step->loc = ts_.currentLoc();
         step->callable = parseAnonFuncExpr();
@@ -104,6 +116,7 @@ PipelineStepPtr Parser::parsePipelineStep() {
 
     // 3. Handle parse failure
     if (!callable || callable->isa<UnknownExprAST>()) {
+        LUC_LOG_EXPR("parsePipelineStep: ERROR - expected function reference or anonymous function");
         errorAt(DiagCode::E1002,
                 "expected function name, method reference, or anonymous function");
 
@@ -128,18 +141,23 @@ PipelineStepPtr Parser::parsePipelineStep() {
     auto step = arena_.make<PipelineStepAST>();
     step->loc = callable->loc;
     step->callable = std::move(callable);
+    
+    LUC_LOG_EXPR_EXTREME("parsePipelineStep: callable parsed");
 
     // 5. Optional argument pack: '(' arg_list ')' '!'
     if (ts_.check(TokenType::LPAREN)) {
+        LUC_LOG_EXPR_EXTREME("parsePipelineStep: parsing argument pack");
         ts_.advance();
 
         std::vector<ExprPtr> packArgs;
         int consecutiveErrors = 0;
         const int MAX_CONSECUTIVE_ERRORS = 5;
+        int argCount = 0;
 
         // Parse comma‑separated expressions until closing ')'
         while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
             if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                LUC_LOG_EXPR("parsePipelineStep: ERROR - too many consecutive errors in argument pack");
                 errorAt(DiagCode::E1002, "too many consecutive errors in argument pack; skipping to ')'");
                 while (!ts_.isAtEnd() && !ts_.check(TokenType::RPAREN)) ts_.advance();
                 break;
@@ -149,6 +167,7 @@ PipelineStepPtr Parser::parsePipelineStep() {
             ExprPtr arg = parseExpr();
 
             if (ts_.getPos() == savedPos) {
+                LUC_LOG_EXPR("parsePipelineStep: ERROR - expected argument expression");
                 errorAt(DiagCode::E1008, "expected argument expression");
                 if (!ts_.isAtEnd()) ts_.advance();
                 consecutiveErrors++;
@@ -157,10 +176,13 @@ PipelineStepPtr Parser::parsePipelineStep() {
             }
 
             consecutiveErrors = 0;
+            argCount++;
+            LUC_LOG_EXPR_EXTREME("parsePipelineStep: argument #" << argCount);
             packArgs.push_back(std::move(arg));
 
             if (ts_.check(TokenType::RPAREN)) break;
             if (!ts_.match(TokenType::COMMA)) {
+                LUC_LOG_EXPR("parsePipelineStep: ERROR - expected ',' after argument");
                 errorAt(DiagCode::E1001, "expected ',' after argument");
                 while (!ts_.isAtEnd() && !ts_.check(TokenType::COMMA) && !ts_.check(TokenType::RPAREN)) {
                     ts_.advance();
@@ -173,6 +195,7 @@ PipelineStepPtr Parser::parsePipelineStep() {
         ts_.consume(TokenType::RPAREN, "expected ')'");
 
         if (!ts_.match(TokenType::BANG)) {
+            LUC_LOG_EXPR("parsePipelineStep: ERROR - expected '!' after arguments");
             errorAt(DiagCode::E1001,
                     "expected '!' after arguments for argument pack");
             // Still return the step – it just won't have packArgs
@@ -182,6 +205,8 @@ PipelineStepPtr Parser::parsePipelineStep() {
         auto builder = arena_.makeBuilder<ExprPtr>();
         for (auto& a : packArgs) builder.push_back(std::move(a));
         step->packArgs = builder.build();
+        
+        LUC_LOG_EXPR_EXTREME("parsePipelineStep: argument pack with " << argCount << " argument(s)");
     }
 
     return step;

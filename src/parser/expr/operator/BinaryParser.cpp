@@ -44,17 +44,23 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Assignment Operator
 // ============================================================================
 
 ExprPtr Parser::parseInfixAssign(ExprPtr lhs, bool allowStructLiteral) {
-    TokenType opTok = ts_.advance().type;
+    Token opToken = ts_.advance();
+    TokenType opTok = opToken.type;
     AssignOp op = tokenToAssignOp(opTok);
+    
+    LUC_LOG_EXPR_VERBOSE("parseInfixAssign: operator = " << opToken.value 
+                         << " (" << LucDebug::tokenTypeToString(opTok) << ")");
     
     ExprPtr rhs = parsePrattExpr(PREC_ASSIGN - 1, allowStructLiteral);
     if (!rhs) {
+        LUC_LOG_EXPR("parseInfixAssign: ERROR - expected expression after assignment operator");
         errorAt(DiagCode::E1008, "expected expression after assignment operator");
         return lhs;
     }
@@ -64,6 +70,8 @@ ExprPtr Parser::parseInfixAssign(ExprPtr lhs, bool allowStructLiteral) {
     node->op = op;
     node->lhs = std::move(lhs);
     node->rhs = std::move(rhs);
+    
+    LUC_LOG_EXPR_EXTREME("parseInfixAssign: success");
     return node;
 }
 
@@ -72,9 +80,12 @@ ExprPtr Parser::parseInfixAssign(ExprPtr lhs, bool allowStructLiteral) {
 // ============================================================================
 
 ExprPtr Parser::parseInfixIs(ExprPtr lhs) {
+    LUC_LOG_EXPR_VERBOSE("parseInfixIs: parsing 'is' operator");
     ts_.advance();  // consume 'is'
+    
     TypePtr checkType = parseType();
     if (!checkType) {
+        LUC_LOG_EXPR("parseInfixIs: ERROR - expected type after 'is'");
         errorAt(DiagCode::E1005, "expected type after 'is'");
         return lhs;
     }
@@ -83,6 +94,8 @@ ExprPtr Parser::parseInfixIs(ExprPtr lhs) {
     node->loc = lhs->loc;
     node->expr = std::move(lhs);
     node->checkType = std::move(checkType);
+    
+    LUC_LOG_EXPR_EXTREME("parseInfixIs: type check parsed");
     return node;
 }
 
@@ -91,10 +104,12 @@ ExprPtr Parser::parseInfixIs(ExprPtr lhs) {
 // ============================================================================
 
 ExprPtr Parser::parseInfixNullCoalesce(ExprPtr lhs, bool allowStructLiteral) {
+    LUC_LOG_EXPR_VERBOSE("parseInfixNullCoalesce: parsing '\?\?' operator");
     ts_.advance();  // consume '??'
     
     ExprPtr fallback = parsePrattExpr(PREC_NULLCOAL - 1, allowStructLiteral);
     if (!fallback) {
+        LUC_LOG_EXPR("parseInfixNullCoalesce: ERROR - expected expression after '\?\?'");
         errorAt(DiagCode::E1008, "expected expression after '\?\?'");
         return lhs;
     }
@@ -103,6 +118,8 @@ ExprPtr Parser::parseInfixNullCoalesce(ExprPtr lhs, bool allowStructLiteral) {
     node->loc = lhs->loc;
     node->value = std::move(lhs);
     node->fallback = std::move(fallback);
+    
+    LUC_LOG_EXPR_EXTREME("parseInfixNullCoalesce: success");
     return node;
 }
 
@@ -111,11 +128,15 @@ ExprPtr Parser::parseInfixNullCoalesce(ExprPtr lhs, bool allowStructLiteral) {
 // ============================================================================
 
 ExprPtr Parser::parseInfixBinary(ExprPtr lhs, TokenType opTok, int prec, bool allowStructLiteral) {
+    std::string opStr = LucDebug::tokenTypeToString(opTok);
+    LUC_LOG_EXPR_VERBOSE("parseInfixBinary: operator = " << opStr << ", precedence = " << prec);
+    
     ts_.advance();  // consume operator
     
     int nextPrec = (opTok == TokenType::POW) ? prec - 1 : prec;
     ExprPtr rhs = parsePrattExpr(nextPrec, allowStructLiteral);
     if (!rhs) {
+        LUC_LOG_EXPR("parseInfixBinary: ERROR - expected right-hand side of binary expression");
         errorAt(DiagCode::E1008, "expected right-hand side of binary expression");
         return lhs;
     }
@@ -138,6 +159,7 @@ ExprPtr Parser::parseInfixBinary(ExprPtr lhs, TokenType opTok, int prec, bool al
     };
 
     if (isComparisonOp(opTok) && isComparisonOp(ts_.peekType())) {
+        LUC_LOG_EXPR("parseInfixBinary: ERROR - chained comparisons not allowed");
         errorAt(DiagCode::E1002, "chained comparisons not allowed; use 'and' explicitly");
     }
 
@@ -146,5 +168,7 @@ ExprPtr Parser::parseInfixBinary(ExprPtr lhs, TokenType opTok, int prec, bool al
     node->op = tokenToBinaryOp(opTok);
     node->left = std::move(lhs);
     node->right = std::move(rhs);
+    
+    LUC_LOG_EXPR_EXTREME("parseInfixBinary: success");
     return node;
 }

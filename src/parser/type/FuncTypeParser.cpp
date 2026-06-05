@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Function Type
@@ -43,6 +44,7 @@
 // ============================================================================
 
 TypePtr Parser::parseFuncType() {
+    LUC_LOG_TYPE_VERBOSE("parseFuncType: entering");
     SourceLocation loc = ts_.currentLoc();
     auto funcType = arena_.make<FuncTypeAST>();
     funcType->loc = loc;
@@ -50,20 +52,30 @@ TypePtr Parser::parseFuncType() {
     // Parse raw qualifiers and build bitmask
     std::vector<InternedString> rawQuals;
     uint32_t qualMask = 0;
+    int qualifierCount = 0;
     while (ts_.check(TokenType::TILDE)) {
         ts_.advance();
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_TYPE("parseFuncType: ERROR - expected qualifier name after '~'");
             errorAt(DiagCode::E1003, "expected qualifier name after '~'");
             break;
         }
         InternedString q = pool_.intern(ts_.advance().value);
         rawQuals.push_back(q);
         std::string_view qstr = pool_.lookup(q);
+        LUC_LOG_TYPE_EXTREME("parseFuncType: found qualifier '" << qstr << "'");
+        
         if (qstr == "async") qualMask |= QualifierBits::Async;
         else if (qstr == "nullable") qualMask |= QualifierBits::Nullable;
         else if (qstr == "parallel") qualMask |= QualifierBits::Parallel;
         // Other qualifiers are ignored here; semantic pass will report errors
+        qualifierCount++;
     }
+    
+    if (qualifierCount > 0) {
+        LUC_LOG_TYPE_EXTREME("parseFuncType: found " << qualifierCount << " qualifiers");
+    }
+    
     auto qBuilder = arena_.makeBuilder<InternedString>();
     for (auto& q : rawQuals) qBuilder.push_back(std::move(q));
     funcType->rawQualifiers = qBuilder.build();
@@ -72,19 +84,27 @@ TypePtr Parser::parseFuncType() {
     // Parameter groups: flat accumulation
     std::vector<ParamPtr> allParams;
     std::vector<size_t> groupSizes;
+    int groupCount = 0;
     
     if (!ts_.check(TokenType::LPAREN)) {
+        LUC_LOG_TYPE("parseFuncType: ERROR - expected '(' for function type parameters, got '" << ts_.peek().value << "'");
         errorAt(DiagCode::E1001, "expected '(' for function type parameters");
         return arena_.make<UnknownTypeAST>();
     }
     
     while (ts_.check(TokenType::LPAREN)) {
+        LUC_LOG_TYPE_EXTREME("parseFuncType: parsing parameter group " << groupCount + 1);
         ParamGroup group = parseParamGroup();
         groupSizes.push_back(group.size());
+        LUC_LOG_TYPE_EXTREME("parseFuncType: group " << groupCount << " has " << group.size() << " parameters");
+        
         for (size_t i = 0; i < group.size(); ++i) {
             allParams.push_back(std::move(const_cast<ParamPtr&>(group[i])));
         }
+        groupCount++;
     }
+    
+    LUC_LOG_TYPE_VERBOSE("parseFuncType: parsed " << groupCount << " parameter groups with " << allParams.size() << " total parameters");
     
     auto paramsBuilder = arena_.makeBuilder<ParamPtr>();
     for (auto& p : allParams) paramsBuilder.push_back(std::move(p));
@@ -96,8 +116,13 @@ TypePtr Parser::parseFuncType() {
 
     // Return types
     if (ts_.match(TokenType::ARROW)) {
+        LUC_LOG_TYPE_EXTREME("parseFuncType: parsing return list");
         funcType->sig.returnTypes = parseReturnList();
+        LUC_LOG_TYPE_VERBOSE("parseFuncType: found " << funcType->sig.returnTypes.size() << " return type(s)");
+    } else {
+        LUC_LOG_TYPE_EXTREME("parseFuncType: no return types (void)");
     }
 
+    LUC_LOG_TYPE_VERBOSE("parseFuncType: success");
     return funcType;
 }

@@ -21,6 +21,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Generic Parameters – Full List
@@ -50,24 +51,38 @@
  * - Unbalanced brackets: returns empty span after recovery
  */
 ArenaSpan<GenericParamPtr> Parser::parseGenericParams() {
-    if (!ts_.match(TokenType::LESS)) return ArenaSpan<GenericParamPtr>();
+    LUC_LOG_DECL_EXTREME("parseGenericParams: entering");
+    
+    if (!ts_.match(TokenType::LESS)) {
+        LUC_LOG_DECL_EXTREME("parseGenericParams: no generic parameters");
+        return ArenaSpan<GenericParamPtr>();
+    }
     
     if (ts_.check(TokenType::GREATER)) {
+        LUC_LOG_DECL_EXTREME("parseGenericParams: empty generic parameter list");
         ts_.advance();
         return ArenaSpan<GenericParamPtr>();
     }
     
     std::vector<GenericParamPtr> params;
+    int paramCount = 0;
+    
     do {
         if (ts_.match(TokenType::COMMA)) continue;
         GenericParamPtr gp = parseGenericParam();
-        if (gp) params.push_back(std::move(gp));
+        if (gp) {
+            paramCount++;
+            LUC_LOG_DECL_EXTREME("parseGenericParams: parsed parameter #" << paramCount);
+            params.push_back(std::move(gp));
+        }
     } while (!ts_.check(TokenType::GREATER) && !ts_.isAtEnd());
     
     ts_.consume(TokenType::GREATER, "expected '>' after generic parameters");
     
     auto builder = arena_.makeBuilder<GenericParamPtr>();
     for (auto& p : params) builder.push_back(std::move(p));
+    
+    LUC_LOG_DECL_VERBOSE("parseGenericParams: parsed " << paramCount << " generic parameter(s)");
     return builder.build();
 }
 
@@ -95,26 +110,43 @@ ArenaSpan<GenericParamPtr> Parser::parseGenericParams() {
  * - Missing trait name after ':' or '+': reports error, stops parsing constraints
  */
 GenericParamPtr Parser::parseGenericParam() {
+    LUC_LOG_DECL_EXTREME("parseGenericParam: entering");
+    
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_DECL("parseGenericParam: ERROR - expected generic parameter name");
         errorAt(DiagCode::E1003, "expected generic parameter name");
         return nullptr;
     }
     InternedString name = pool_.intern(ts_.advance().value);
+    LUC_LOG_DECL_EXTREME("parseGenericParam: name = " << pool_.lookup(name));
+    
     auto gp = arena_.make<GenericParamAST>(name);
     
     if (ts_.match(TokenType::COLON)) {
+        LUC_LOG_DECL_EXTREME("parseGenericParam: parsing constraints");
         std::vector<InternedString> constraints;
+        int constraintCount = 0;
+        
         while (true) {
             if (!ts_.check(TokenType::IDENTIFIER)) {
+                LUC_LOG_DECL("parseGenericParam: ERROR - expected trait name in constraint");
                 errorAt(DiagCode::E1003, "expected trait name in constraint");
                 break;
             }
-            constraints.push_back(pool_.intern(ts_.advance().value));
+            InternedString trait = pool_.intern(ts_.advance().value);
+            constraints.push_back(trait);
+            constraintCount++;
+            LUC_LOG_DECL_EXTREME("parseGenericParam: constraint #" << constraintCount 
+                                 << " = " << pool_.lookup(trait));
+            
             if (!ts_.match(TokenType::PLUS)) break;
         }
+        
         auto builder = arena_.makeBuilder<InternedString>();
         for (auto& c : constraints) builder.push_back(std::move(c));
         gp->constraints = builder.build();
+        
+        LUC_LOG_DECL_EXTREME("parseGenericParam: " << constraintCount << " constraint(s)");
     }
     
     return gp;

@@ -52,25 +52,32 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Composition Expression
 // ============================================================================
 
 ExprPtr Parser::parseComposeExpr(ExprPtr lhs) {
+    LUC_LOG_EXPR_VERBOSE("parseComposeExpr: entering");
+    
     auto node = arena_.make<ComposeExprAST>();
     node->loc = lhs->loc;
     node->left = std::move(lhs);
 
     std::vector<ComposeOperandPtr> operands;
+    int operandCount = 0;
 
     while (ts_.check(TokenType::COMPOSE)) {
+        LUC_LOG_EXPR_EXTREME("parseComposeExpr: found '+>' operator #" << operandCount + 1);
         ts_.advance();  // consume '+>'
-        operands.push_back(parseComposeOperand());  // always returns a node
+        operands.push_back(parseComposeOperand());
+        operandCount++;
     }
 
     // If no operands were parsed, this wasn't actually a composition.
     if (operands.empty()) {
+        LUC_LOG_EXPR_EXTREME("parseComposeExpr: no operands, returning left expression");
         return std::move(node->left);
     }
 
@@ -79,6 +86,7 @@ ExprPtr Parser::parseComposeExpr(ExprPtr lhs) {
     for (auto& op : operands) builder.push_back(std::move(op));
     node->operands = builder.build();
 
+    LUC_LOG_EXPR_VERBOSE("parseComposeExpr: parsed " << operandCount << " operand(s)");
     return node;
 }
 
@@ -87,6 +95,8 @@ ExprPtr Parser::parseComposeExpr(ExprPtr lhs) {
 // ============================================================================
 
 ComposeOperandPtr Parser::parseComposeOperand() {
+    LUC_LOG_EXPR_EXTREME("parseComposeOperand: entering");
+    
     // Parse a function reference using the shared helper.
     ExprPtr callable = parseFuncRef();
 
@@ -95,6 +105,7 @@ ComposeOperandPtr Parser::parseComposeOperand() {
 
     // Check for parse failure
     if (!callable || callable->isa<UnknownExprAST>()) {
+        LUC_LOG_EXPR("parseComposeOperand: ERROR - expected function reference after '+>'");
         errorAt(DiagCode::E1002,
                 "expected function name, method reference, or dotted path after '+>'");
         operand->callable = arena_.make<UnknownExprAST>();
@@ -112,6 +123,7 @@ ComposeOperandPtr Parser::parseComposeOperand() {
         return operand;
     }
 
+    LUC_LOG_EXPR_EXTREME("parseComposeOperand: success");
     operand->callable = std::move(callable);
     return operand;
 }

@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Primitive Type
@@ -34,6 +35,9 @@
 TypePtr Parser::parsePrimitiveType() {
     SourceLocation loc = ts_.currentLoc();
     Token tok = ts_.advance();
+    
+    LUC_LOG_TYPE_EXTREME("parsePrimitiveType: token = '" << tok.value << "' (" 
+                         << LucDebug::tokenTypeToString(tok.type) << ")");
 
     PrimitiveKind kind;
     switch (tok.type) {
@@ -62,11 +66,14 @@ TypePtr Parser::parsePrimitiveType() {
         case TokenType::TYPE_ANY:    kind = PrimitiveKind::Any; break;
         default:
             // Use E1002: "Unexpected token" (parsing error)
+            LUC_LOG_TYPE("parsePrimitiveType: ERROR - internal error: expected primitive type, got '" 
+                         << tok.value << "'");
             errorAt(DiagCode::E1002, "internal error: expected primitive type");
             return arena_.make<UnknownTypeAST>();
     }
 
     auto node = arena_.make<PrimitiveTypeAST>(kind);
     node->loc = loc;
+    LUC_LOG_TYPE_EXTREME("parsePrimitiveType: parsed " << LucDebug::primitiveKindToString(kind));
     return node;
 }

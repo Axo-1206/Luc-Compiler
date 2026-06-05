@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // If Expression (Expression Form)
@@ -37,33 +38,46 @@
 // ============================================================================
 
 ExprPtr Parser::parseIfExpr(bool allowStructLiteral) {
+    LUC_LOG_EXPR_VERBOSE("parseIfExpr: entering (expression form)");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::IF, "expected 'if'");
 
     ExprPtr condition = parsePrattExpr(PREC_NULLCOAL, allowStructLiteral);
     if (!condition) {
+        LUC_LOG_EXPR("parseIfExpr: ERROR - expected condition after 'if'");
         errorAt(DiagCode::E1008, "expected condition after 'if'");
         return arena_.make<UnknownExprAST>();
     }
+    LUC_LOG_EXPR_EXTREME("parseIfExpr: condition parsed");
 
     if (!ts_.match(TokenType::QUESTION_QUESTION)) {
+        LUC_LOG_EXPR("parseIfExpr: ERROR - expected '\?\?' after condition");
         errorAt(DiagCode::E1001, "expected '\?\?' after if condition in expression form");
         return arena_.make<UnknownExprAST>();
     }
+    LUC_LOG_EXPR_EXTREME("parseIfExpr: '\?\?' separator found");
 
     ExprPtr thenBranch = parseExpr();
     if (!thenBranch) {
+        LUC_LOG_EXPR("parseIfExpr: ERROR - expected expression after '\?\?'");
         errorAt(DiagCode::E1008, "expected expression after '\?\?'");
+    } else {
+        LUC_LOG_EXPR_EXTREME("parseIfExpr: then branch parsed");
     }
 
     if (!ts_.match(TokenType::ELSE)) {
+        LUC_LOG_EXPR("parseIfExpr: ERROR - expression-form 'if' requires 'else' branch");
         errorAt(DiagCode::E1006, "expression-form 'if' requires an 'else' branch");
         return arena_.make<UnknownExprAST>();
     }
+    LUC_LOG_EXPR_EXTREME("parseIfExpr: 'else' keyword found");
 
     ExprPtr elseBranch = parseExpr();
     if (!elseBranch) {
+        LUC_LOG_EXPR("parseIfExpr: ERROR - expected expression after 'else'");
         errorAt(DiagCode::E1008, "expected expression after 'else'");
+    } else {
+        LUC_LOG_EXPR_EXTREME("parseIfExpr: else branch parsed");
     }
 
     auto node = arena_.make<IfExprAST>();
@@ -71,5 +85,7 @@ ExprPtr Parser::parseIfExpr(bool allowStructLiteral) {
     node->condition = std::move(condition);
     node->thenBranch = std::move(thenBranch);
     node->elseBranch = std::move(elseBranch);
+    
+    LUC_LOG_EXPR_VERBOSE("parseIfExpr: success");
     return node;
 }

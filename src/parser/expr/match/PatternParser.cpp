@@ -2,14 +2,18 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Pattern Dispatcher
 // ============================================================================
 
 ASTPtr<PatternAST> Parser::parsePattern() {
+    LUC_LOG_EXPR_EXTREME("parsePattern: entering, token=" << ts_.peek().value);
+    
     // Wildcard
     if (ts_.check(TokenType::WILDCARD)) {
+        LUC_LOG_EXPR_EXTREME("parsePattern: wildcard pattern");
         return parseWildcardPattern();
     }
 
@@ -26,6 +30,7 @@ ASTPtr<PatternAST> Parser::parsePattern() {
         case TokenType::FALSE:
         case TokenType::NIL:
         case TokenType::MINUS:
+            LUC_LOG_EXPR_EXTREME("parsePattern: literal/range pattern");
             return parseLiteralOrRangePattern();
         default:
             break;
@@ -37,20 +42,24 @@ ASTPtr<PatternAST> Parser::parsePattern() {
 
         // Type pattern: IDENTIFIER 'is' type
         if (ts_.peekNextType() == TokenType::IS) {
+            LUC_LOG_EXPR_EXTREME("parsePattern: type pattern for '" << name << "'");
             ts_.advance(); // consume IDENTIFIER
             return parseTypePattern(pool_.intern(name));
         }
 
         // Struct pattern: IDENTIFIER '{'
         if (ts_.peekNextType() == TokenType::LBRACE) {
+            LUC_LOG_EXPR_EXTREME("parsePattern: struct pattern for '" << name << "'");
             ts_.advance(); // consume IDENTIFIER
             return parseStructPattern(pool_.intern(name));
         }
 
         // Qualified constant pattern: IDENTIFIER '.' ...
         if (ts_.peekNextType() == TokenType::DOT) {
+            LUC_LOG_EXPR_EXTREME("parsePattern: qualified constant pattern");
             ExprPtr expr = parseExpr();
             if (!expr) {
+                LUC_LOG_EXPR("parsePattern: ERROR - expected expression after '.'");
                 errorAt(DiagCode::E1002, "expected expression after '.' in pattern");
                 return nullptr;
             }
@@ -58,8 +67,10 @@ ASTPtr<PatternAST> Parser::parsePattern() {
         }
 
         // Simple bind pattern
+        LUC_LOG_EXPR_EXTREME("parsePattern: bind pattern for '" << name << "'");
         ts_.advance(); // consume IDENTIFIER
         if (ts_.check(TokenType::RANGE)) {
+            LUC_LOG_EXPR("parsePattern: ERROR - bind pattern cannot be range bound");
             errorAt(DiagCode::E1002, "bind patterns cannot be used as range bounds");
             ts_.advance(); // consume '..'
             parseLiteralOrRangePattern(); // recover
@@ -67,6 +78,7 @@ ASTPtr<PatternAST> Parser::parsePattern() {
         return parseBindPattern(pool_.intern(name));
     }
 
+    LUC_LOG_EXPR("parsePattern: ERROR - expected pattern, got '" << ts_.peek().value << "'");
     errorAt(DiagCode::E1002, "expected pattern");
     return nullptr;
 }
@@ -76,6 +88,7 @@ ASTPtr<PatternAST> Parser::parsePattern() {
 // ============================================================================
 
 ASTPtr<PatternAST> Parser::parseLiteralOrRangePattern() {
+    LUC_LOG_EXPR_EXTREME("parseLiteralOrRangePattern: entering");
     SourceLocation loc = ts_.currentLoc();
 
     // Handle unary minus for negative literals
@@ -83,6 +96,7 @@ ASTPtr<PatternAST> Parser::parseLiteralOrRangePattern() {
     if (ts_.check(TokenType::MINUS)) {
         negative = true;
         ts_.advance();
+        LUC_LOG_EXPR_EXTREME("parseLiteralOrRangePattern: negative literal");
     }
 
     Token tok = ts_.advance();
@@ -99,15 +113,18 @@ ASTPtr<PatternAST> Parser::parseLiteralOrRangePattern() {
         case TokenType::FALSE:              kind = LiteralKind::False; break;
         case TokenType::NIL:                kind = LiteralKind::Nil; break;
         default:
+            LUC_LOG_EXPR("parseLiteralOrRangePattern: ERROR - expected literal");
             errorAt(DiagCode::E1007, "expected literal value in pattern");
             return nullptr;
     }
 
     std::string rawValue = negative ? ("-" + tok.value) : tok.value;
     InternedString internedValue = pool_.intern(rawValue);
+    LUC_LOG_EXPR_EXTREME("parseLiteralOrRangePattern: value = " << rawValue);
 
     // Check for range: lo '..' [ '<' ] hi
     if (ts_.check(TokenType::RANGE)) {
+        LUC_LOG_EXPR_EXTREME("parseLiteralOrRangePattern: range pattern");
         ts_.advance(); // consume '..'
         bool isExclusive = ts_.match(TokenType::LESS);
 
@@ -118,12 +135,14 @@ ASTPtr<PatternAST> Parser::parseLiteralOrRangePattern() {
         }
 
         if (!ts_.checkAny({TokenType::INT_LITERAL, TokenType::HEX_LITERAL, TokenType::FLOAT_LITERAL})) {
+            LUC_LOG_EXPR("parseLiteralOrRangePattern: ERROR - expected literal after '..'");
             errorAt(DiagCode::E1007, "expected literal after '..' in range pattern");
             return nullptr;
         }
         Token hiTok = ts_.advance();
         std::string hiRaw = negHi ? ("-" + hiTok.value) : hiTok.value;
         InternedString hiInterned = pool_.intern(hiRaw);
+        LUC_LOG_EXPR_EXTREME("parseLiteralOrRangePattern: range hi = " << hiRaw);
 
         LiteralKind hiKind;
         switch (hiTok.type) {
@@ -147,6 +166,7 @@ ASTPtr<PatternAST> Parser::parseLiteralOrRangePattern() {
     }
 
     // Simple literal pattern
+    LUC_LOG_EXPR_EXTREME("parseLiteralOrRangePattern: simple literal pattern");
     auto lit = arena_.make<LiteralExprAST>(kind, internedValue);
     lit->loc = loc;
     return arena_.make<PatternExprAST>(std::move(lit));
@@ -157,6 +177,7 @@ ASTPtr<PatternAST> Parser::parseLiteralOrRangePattern() {
 // ============================================================================
 
 ASTPtr<BindPatternAST> Parser::parseBindPattern(InternedString name) {
+    LUC_LOG_EXPR_EXTREME("parseBindPattern: name = " << pool_.lookup(name));
     SourceLocation loc = ts_.currentLoc();
     auto pat = arena_.make<BindPatternAST>(name);
     pat->loc = loc;
@@ -168,11 +189,13 @@ ASTPtr<BindPatternAST> Parser::parseBindPattern(InternedString name) {
 // ============================================================================
 
 ASTPtr<TypePatternAST> Parser::parseTypePattern(InternedString bindName) {
+    LUC_LOG_EXPR_EXTREME("parseTypePattern: bindName = " << pool_.lookup(bindName));
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::IS, "expected 'is' in type pattern");
 
     TypePtr checkType = parseType();
     if (!checkType) {
+        LUC_LOG_EXPR("parseTypePattern: ERROR - expected type after 'is'");
         errorAt(DiagCode::E1005, "expected type after 'is' in type pattern");
         return nullptr;
     }
@@ -189,6 +212,7 @@ ASTPtr<TypePatternAST> Parser::parseTypePattern(InternedString bindName) {
 // ============================================================================
 
 ASTPtr<WildcardPatternAST> Parser::parseWildcardPattern() {
+    LUC_LOG_EXPR_EXTREME("parseWildcardPattern");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::WILDCARD, "expected '_'");
     auto pat = arena_.make<WildcardPatternAST>();
@@ -201,6 +225,7 @@ ASTPtr<WildcardPatternAST> Parser::parseWildcardPattern() {
 // ============================================================================
 
 ASTPtr<StructPatternAST> Parser::parseStructPattern(InternedString typeName) {
+    LUC_LOG_EXPR_EXTREME("parseStructPattern: typeName = " << pool_.lookup(typeName));
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LBRACE, "expected '{' in struct pattern");
 
@@ -209,6 +234,7 @@ ASTPtr<StructPatternAST> Parser::parseStructPattern(InternedString typeName) {
     pat->typeName = typeName;
 
     std::vector<FieldPatternPtr> fields;
+    int fieldCount = 0;
 
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
         ts_.match(TokenType::COMMA);
@@ -217,9 +243,12 @@ ASTPtr<StructPatternAST> Parser::parseStructPattern(InternedString typeName) {
         size_t savedPos = ts_.getPos();
         FieldPatternPtr fp = parseFieldPattern();
         if (fp) {
+            fieldCount++;
+            LUC_LOG_EXPR_EXTREME("parseStructPattern: field #" << fieldCount);
             fields.push_back(std::move(fp));
         } else {
             if (ts_.getPos() == savedPos && !ts_.isAtEnd()) {
+                LUC_LOG_EXPR("parseStructPattern: ERROR - expected field name");
                 errorAt(DiagCode::E1003, "expected field name in struct pattern");
                 ts_.advance();
             }
@@ -231,6 +260,8 @@ ASTPtr<StructPatternAST> Parser::parseStructPattern(InternedString typeName) {
     pat->fields = builder.build();
 
     ts_.consume(TokenType::RBRACE, "expected '}' to close struct pattern");
+    
+    LUC_LOG_EXPR_EXTREME("parseStructPattern: " << fieldCount << " field(s)");
     return pat;
 }
 
@@ -239,13 +270,16 @@ ASTPtr<StructPatternAST> Parser::parseStructPattern(InternedString typeName) {
 // ============================================================================
 
 FieldPatternPtr Parser::parseFieldPattern() {
+    LUC_LOG_EXPR_EXTREME("parseFieldPattern: entering");
     SourceLocation loc = ts_.currentLoc();
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_EXPR("parseFieldPattern: ERROR - expected field name");
         errorAt(DiagCode::E1003, "expected field name in struct pattern");
         return nullptr;
     }
     InternedString fieldName = pool_.intern(ts_.advance().value);
+    LUC_LOG_EXPR_EXTREME("parseFieldPattern: fieldName = " << pool_.lookup(fieldName));
 
     auto fp = arena_.make<FieldPatternAST>();
     fp->loc = loc;
@@ -254,8 +288,10 @@ FieldPatternPtr Parser::parseFieldPattern() {
     // Full form: 'fieldName : sub_pattern'
     if (ts_.check(TokenType::COLON)) {
         ts_.advance(); // consume ':'
+        LUC_LOG_EXPR_EXTREME("parseFieldPattern: with sub-pattern");
         fp->subPattern = parsePattern();
         if (!fp->subPattern) {
+            LUC_LOG_EXPR("parseFieldPattern: ERROR - expected sub-pattern after ':'");
             errorAt(DiagCode::E1002, "expected sub-pattern after ':' in field pattern");
         }
     }

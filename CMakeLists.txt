@@ -322,7 +322,7 @@ add_executable(luc-comp
 # | -DLUC_DEBUG_PARSE_RESULT=ON   | Enable parse result logging      | OFF     |
 # | -DLUC_DEBUG_TYPE=ON           | Enable type parsing logging      | OFF     |
 # | -DLUC_DEBUG_SEMANTIC=ON       | Enable semantic analysis logging | OFF     |
-# | -LUC_DEBUG_DUMP_SYMBOL=ON     | Enable symbol collection result  | OFF     |
+# | -DLUC_DEBUG_DUMP_SYMBOL=ON     | Enable symbol collection result  | OFF     |
 # | -DLUC_DEBUG_CODEGEN=ON        | Enable codegen logging           | OFF     |
 # | -DLUC_DEBUG_VERBOSITY=LEVEL   | Output detail (MINIMAL/NORMAL/   | NORMAL  |
 # |                               | VERBOSE/EXTREME)                 |         |
@@ -384,6 +384,7 @@ if(NOT LUC_DEBUG_MASTER)
     message(STATUS "  Parse Result: ${LUC_DEBUG_PARSE_RESULT}")
     message(STATUS "  Type:    ${LUC_DEBUG_TYPE}")
     message(STATUS "  Semantic: ${LUC_DEBUG_SEMANTIC}")
+    message(STATUS "  Symbol Dump: ${LUC_DEBUG_DUMP_SYMBOL}")
     message(STATUS "  CodeGen: ${LUC_DEBUG_CODEGEN}")
 endif()
 
@@ -472,7 +473,14 @@ llvm_map_components_to_libnames(llvm_libs
 )
 
 if(MSVC)
+    # Existing flag
     set_property(TARGET luc-comp APPEND_STRING PROPERTY LINK_FLAGS " /ignore:4199")
+    
+    # Force sequential PDB writes for parallel builds
+    target_compile_options(luc-comp PRIVATE /FS)
+    
+    # Optional: Enable multi-processor compilation
+    target_compile_options(luc-comp PRIVATE /MP)
 endif()
 
 # Link everything

@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Pointer Type (Sealed Conduit)
@@ -33,15 +34,21 @@
 // ============================================================================
 
 TypePtr Parser::parsePtrType() {
+    LUC_LOG_TYPE_EXTREME("parsePtrType: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::MUL, "expected '*'");
+    
+    LUC_LOG_TYPE_EXTREME("parsePtrType: parsing inner type");
     TypePtr inner = parseBaseType();
     if (!inner) {
+        LUC_LOG_TYPE("parsePtrType: ERROR - expected type after '*'");
         // Use E1005: "Expected type annotation" (parsing error)
         errorAt(DiagCode::E1005, "expected type after '*'");
         return arena_.make<UnknownTypeAST>();
     }
+    
     auto node = arena_.make<PtrTypeAST>(std::move(inner));
     node->loc = loc;
+    LUC_LOG_TYPE_EXTREME("parsePtrType: success");
     return node;
 }

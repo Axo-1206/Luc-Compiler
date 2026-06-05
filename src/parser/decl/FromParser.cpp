@@ -36,6 +36,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // 1. FROM DECLARATION
@@ -93,6 +94,7 @@
  * @return ASTPtr<FromDeclAST> – from node on success, nullptr on error
  */
 ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
+    LUC_LOG_DECL_VERBOSE("parseFromDecl: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::FROM, "expected 'from'");
 
@@ -105,14 +107,17 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
 
     // Case 1: Array target (concrete or generic)
     if (ts_.check(TokenType::LBRACKET)) {
+        LUC_LOG_DECL_EXTREME("parseFromDecl: array target");
         // Check if this is a generic array target (contains '<' after kind)
         if (looksLikeGenericArray()) {
+            LUC_LOG_DECL_EXTREME("parseFromDecl: generic array target");
             targetType = parseGenericArray();
         } else {
             targetType = parseArrayType();
         }
         
         if (!targetType || targetType->isa<UnknownTypeAST>()) {
+            LUC_LOG_DECL("parseFromDecl: ERROR - invalid array target");
             errorAt(DiagCode::E1005, "invalid array target in from block");
             return nullptr;
         }
@@ -124,10 +129,12 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
              looksLikeGenericTypeInstantiation()) {
         
         InternedString typeName = pool_.intern(ts_.advance().value);
+        LUC_LOG_DECL_EXTREME("parseFromDecl: generic struct target " << pool_.lookup(typeName));
         
         // Parse generic parameters (these are declarations, not arguments)
         ArenaSpan<GenericParamPtr> genericParams = parseGenericParams();
         node->genericParams = genericParams;
+        LUC_LOG_DECL_EXTREME("parseFromDecl: parsed " << genericParams.size() << " generic parameter(s)");
         
         // Build the target type as a NamedTypeAST with NO generic arguments
         auto namedType = arena_.make<NamedTypeAST>(typeName);
@@ -137,8 +144,10 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
     }
     // Case 3: Normal type (primitive, named, or concrete array via parseType)
     else if (looksLikeType()) {
+        LUC_LOG_DECL_EXTREME("parseFromDecl: normal type target");
         targetType = parseType();
         if (!targetType || targetType->isa<UnknownTypeAST>()) {
+            LUC_LOG_DECL("parseFromDecl: ERROR - invalid target type");
             errorAt(DiagCode::E1005, "invalid target type in from block");
             return nullptr;
         }
@@ -146,6 +155,7 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
     }
     // Case 4: Error
     else {
+        LUC_LOG_DECL("parseFromDecl: ERROR - expected target type");
         errorAt(DiagCode::E1005, "expected target type in from block");
         return nullptr;
     }
@@ -154,6 +164,8 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
     ts_.consume(TokenType::LBRACE, "expected '{' to open from block");
 
     std::vector<FromEntryPtr> entries;
+    int entryCount = 0;
+    
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
         ts_.match(TokenType::SEMICOLON);
         ts_.match(TokenType::COMMA);
@@ -164,8 +176,11 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
         // Parse a from entry (inline or path)
         FromEntryPtr entry = parseFromEntry();
         if (entry) {
+            entryCount++;
+            LUC_LOG_DECL_EXTREME("parseFromDecl: parsed entry #" << entryCount);
             entries.push_back(std::move(entry));
         } else {
+            LUC_LOG_DECL("parseFromDecl: ERROR - failed to parse from entry");
             // Error recovery: skip to next entry or closing brace
             if (ts_.getPos() == entrySavedPos && !ts_.isAtEnd()) ts_.advance();
             while (!ts_.isAtEnd() && !ts_.check(TokenType::RBRACE) && 
@@ -180,6 +195,8 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
     node->entries = builder.build();
 
     ts_.consume(TokenType::RBRACE, "expected '}' to close from block");
+    
+    LUC_LOG_DECL_VERBOSE("parseFromDecl: parsed " << entryCount << " entry(s)");
     return node;
 }
 
@@ -223,23 +240,31 @@ ASTPtr<FromDeclAST> Parser::parseFromDecl(Visibility vis) {
  * - Path entry missing function reference: reports error, returns nullptr
  */
 FromEntryPtr Parser::parseFromEntry() {
+    LUC_LOG_DECL_EXTREME("parseFromEntry: entering");
     SourceLocation loc = ts_.currentLoc();
     auto entry = arena_.make<FromEntryAST>();
     entry->loc = loc;
 
     // Determine if this is an inline entry (starts with '(') or path entry
     if (ts_.check(TokenType::LPAREN)) {
+        LUC_LOG_DECL_EXTREME("parseFromEntry: inline entry");
         // ---------- Inline Entry ----------
         // Parameter groups: flat accumulation
         std::vector<ParamPtr> allParams;
         std::vector<size_t> groupSizes;
+        int groupCount = 0;
+        
         while (ts_.check(TokenType::LPAREN)) {
+            groupCount++;
             ParamGroup group = parseParamGroup();
             groupSizes.push_back(group.size());
+            LUC_LOG_DECL_EXTREME("parseFromEntry: parameter group #" << groupCount 
+                                 << " has " << group.size() << " parameter(s)");
             for (auto& p : group) {
                 allParams.push_back(std::move(p));
             }
         }
+        
         auto paramsBuilder = arena_.makeBuilder<ParamPtr>();
         for (auto& p : allParams) paramsBuilder.push_back(std::move(p));
         entry->sig.allParams = paramsBuilder.build();
@@ -247,9 +272,12 @@ FromEntryPtr Parser::parseFromEntry() {
         auto gsBuilder = arena_.makeBuilder<size_t>();
         for (auto& sz : groupSizes) gsBuilder.push_back(sz);
         entry->sig.groupSizes = gsBuilder.build();
+        
+        LUC_LOG_DECL_EXTREME("parseFromEntry: total " << allParams.size() << " parameters");
 
         // Expect '->'
         if (!ts_.check(TokenType::ARROW)) {
+            LUC_LOG_DECL("parseFromEntry: ERROR - expected '->' before return type");
             errorAt(DiagCode::E1001, "expected '->' before return type for conversion entry");
             return nullptr;
         }
@@ -258,13 +286,16 @@ FromEntryPtr Parser::parseFromEntry() {
         // Parse return type
         TypePtr returnType = parseType();
         if (!returnType) {
+            LUC_LOG_DECL("parseFromEntry: ERROR - expected return type after '->'");
             errorAt(DiagCode::E1005, "expected return type after '->'");
             return nullptr;
         }
         entry->returnType = std::move(returnType);
+        LUC_LOG_DECL_EXTREME("parseFromEntry: return type parsed");
 
         // Expect '='
         if (!ts_.check(TokenType::ASSIGN)) {
+            LUC_LOG_DECL("parseFromEntry: ERROR - expected '=' before body");
             errorAt(DiagCode::E1001, "expected '=' before body for conversion entry");
             return nullptr;
         }
@@ -272,11 +303,14 @@ FromEntryPtr Parser::parseFromEntry() {
 
         // Parse body (block or expression)
         if (ts_.check(TokenType::LBRACE)) {
+            LUC_LOG_DECL_EXTREME("parseFromEntry: block body");
             entry->body = parseBlock();
         } else {
+            LUC_LOG_DECL_EXTREME("parseFromEntry: expression body (will be wrapped)");
             SourceLocation bodyLoc = ts_.currentLoc();
             ExprPtr expr = parseExpr();
             if (!expr) {
+                LUC_LOG_DECL("parseFromEntry: ERROR - expected expression after '='");
                 errorAt(DiagCode::E1008, "expected expression after '=' in conversion entry");
                 return nullptr;
             }
@@ -302,13 +336,16 @@ FromEntryPtr Parser::parseFromEntry() {
         }
     } else {
         // ---------- Path Entry ----------
+        LUC_LOG_DECL_EXTREME("parseFromEntry: path entry");
         // Parse function reference (may include generic instantiation)
         ExprPtr funcRef = parseFuncRef();
         if (!funcRef || funcRef->isa<UnknownExprAST>()) {
+            LUC_LOG_DECL("parseFromEntry: ERROR - expected function reference");
             errorAt(DiagCode::E1008, "expected function reference in from entry");
             return nullptr;
         }
         entry->path = std::move(funcRef);
+        LUC_LOG_DECL_EXTREME("parseFromEntry: path entry parsed");
         // For path entries, signature and return type are read from the function
         // by the semantic pass. Body remains null.
     }

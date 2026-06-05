@@ -56,6 +56,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // 1. DECLARATION DISPATCH
@@ -66,7 +67,14 @@
 // ============================================================================
 
 DeclPtr Parser::parseTopLevelDecl() {
-    return parseDeclaration(DeclContext::TopLevel);
+    LUC_LOG_PARSER_VERBOSE("parseTopLevelDecl: entering");
+    DeclPtr result = parseDeclaration(DeclContext::TopLevel);
+    if (result) {
+        LUC_LOG_PARSER_VERBOSE("parseTopLevelDecl: parsed " << LucDebug::kindToString(result->kind));
+    } else {
+        LUC_LOG_PARSER_VERBOSE("parseTopLevelDecl: returned nullptr");
+    }
+    return result;
 }
 
 /**
@@ -88,11 +96,18 @@ DeclPtr Parser::parseTopLevelDecl() {
  * @param ctx TopLevel or Local (affects visibility and allowed declarations)
  */
 DeclPtr Parser::parseDeclaration(DeclContext ctx) {
+    LUC_LOG_PARSER_VERBOSE("parseDeclaration: ctx=" << (ctx == DeclContext::TopLevel ? "TopLevel" : "Local")
+                           << ", current token=" << ts_.peek().value);
+    
     std::vector<AttributePtr> attrs = parseAttributes();
 
     Visibility vis = Visibility::Private;
     if (ctx == DeclContext::TopLevel) {
         vis = parseVisibility();
+        if (vis != Visibility::Private) {
+            LUC_LOG_PARSER_EXTREME("parseDeclaration: visibility=" 
+                                   << (vis == Visibility::Package ? "pub" : "export"));
+        }
     } else {
         if (ts_.checkAny({TokenType::PUB, TokenType::EXPORT})) {
             errorAt(DiagCode::E1014, "visibility modifier not allowed in local declaration");
@@ -103,6 +118,7 @@ DeclPtr Parser::parseDeclaration(DeclContext ctx) {
     DeclPtr decl;
     
     if (ts_.check(TokenType::USE)) {
+        LUC_LOG_PARSER_VERBOSE("parseDeclaration: dispatching to parseUseDecl");
         if (ctx == DeclContext::Local) {
             errorAt(DiagCode::E1006, "'use' declaration is not allowed inside a block");
             ts_.advance();
@@ -115,37 +131,50 @@ DeclPtr Parser::parseDeclaration(DeclContext ctx) {
         }
         decl = parseUseDecl(vis);
     } else if (ts_.check(TokenType::STRUCT)) {
+        LUC_LOG_PARSER_VERBOSE("parseDeclaration: dispatching to parseStructDecl");
         decl = parseStructDecl(vis);
     } else if (ts_.check(TokenType::ENUM)) {
+        LUC_LOG_PARSER_VERBOSE("parseDeclaration: dispatching to parseEnumDecl");
         decl = parseEnumDecl(vis);
     } else if (ts_.check(TokenType::TRAIT)) {
+        LUC_LOG_PARSER_VERBOSE("parseDeclaration: dispatching to parseTraitDecl");
         decl = parseTraitDecl(vis);
     } else if (ts_.check(TokenType::IMPL)) {
+        LUC_LOG_PARSER_VERBOSE("parseDeclaration: dispatching to parseImplDecl");
         decl = parseImplDecl(vis);
     } else if (ts_.check(TokenType::FROM)) {
+        LUC_LOG_PARSER_VERBOSE("parseDeclaration: dispatching to parseFromDecl");
         decl = parseFromDecl(vis);
     } else if (ts_.check(TokenType::TYPE)) {
+        LUC_LOG_PARSER_VERBOSE("parseDeclaration: dispatching to parseTypeAliasDecl");
         decl = parseTypeAliasDecl(vis);
     } else if (ts_.checkAny({TokenType::LET, TokenType::CONST})) {
         Token kwTok = ts_.advance();
         DeclKeyword kw = (kwTok.type == TokenType::LET) ? DeclKeyword::Let : DeclKeyword::Const;
-        if (looksLikeFuncDecl()) {
+        bool looksLikeFunc = looksLikeFuncDecl();
+        LUC_LOG_PARSER_VERBOSE("parseDeclaration: LET/CONST, looksLikeFuncDecl=" << looksLikeFunc
+                               << ", dispatching to " << (looksLikeFunc ? "parseFuncDecl" : "parseVarDecl"));
+        if (looksLikeFunc) {
             decl = parseFuncDecl(kw, vis);
         } else {
             decl = parseVarDecl(vis);
         }
     } else {
+        LUC_LOG_PARSER("parseDeclaration: ERROR - expected declaration, got '" << ts_.peek().value << "'");
         errorAt(DiagCode::E1002, "expected declaration");
         return nullptr;
     }
 
     if (decl) {
         if (!attrs.empty()) {
+            LUC_LOG_PARSER_EXTREME("parseDeclaration: attaching " << attrs.size() << " attributes");
             auto builder = arena_.makeBuilder<AttributePtr>();
             for (auto& a : attrs) builder.push_back(std::move(a));
             decl->attributes = builder.build();
         }
         decl->loc = ts_.currentLoc();
+        LUC_LOG_PARSER_VERBOSE("parseDeclaration: successfully parsed " 
+                               << LucDebug::kindToString(decl->kind));
     }
     
     return decl;
@@ -161,7 +190,12 @@ DeclPtr Parser::parseDeclaration(DeclContext ctx) {
 // ============================================================================
 
 TypePtr Parser::parseType() {
-    return parseTypeWithNullable();
+    LUC_LOG_TYPE_VERBOSE("parseType: entering");
+    TypePtr result = parseTypeWithNullable();
+    if (result) {
+        LUC_LOG_TYPE_VERBOSE("parseType: parsed " << LucDebug::kindToString(result->kind));
+    }
+    return result;
 }
 
 /**
@@ -172,14 +206,19 @@ TypePtr Parser::parseType() {
  * Examples: int, int?, int!string, int?!string, int!
  */
 TypePtr Parser::parseTypeWithNullable() {
+    LUC_LOG_TYPE_EXTREME("parseTypeWithNullable: current token=" << ts_.peek().value);
+    
     TypePtr ty = parseBaseType();
     if (ty && ts_.match(TokenType::QUESTION)) {
+        LUC_LOG_TYPE_VERBOSE("parseTypeWithNullable: adding nullable modifier");
         ty = arena_.make<NullableTypeAST>(std::move(ty));
     }
     if (ty && ts_.match(TokenType::BANG)) {
+        LUC_LOG_TYPE_VERBOSE("parseTypeWithNullable: adding result type modifier");
         TypePtr errorType = nullptr;
         if (looksLikeType()) {
             errorType = parseType();
+            LUC_LOG_TYPE_EXTREME("parseTypeWithNullable: with error type");
         }
         ty = arena_.make<ResultTypeAST>(std::move(ty), std::move(errorType));
     }
@@ -199,6 +238,9 @@ TypePtr Parser::parseTypeWithNullable() {
  *   7. default → error + UnknownTypeAST
  */
 TypePtr Parser::parseBaseType() {
+    LUC_LOG_TYPE_EXTREME("parseBaseType: current token=" << ts_.peek().value 
+                         << " type=" << LucDebug::tokenTypeToString(ts_.peekType()));
+    
     switch (ts_.peekType()) {
         case TokenType::TYPE_BOOL: case TokenType::TYPE_BYTE:
         case TokenType::TYPE_SHORT: case TokenType::TYPE_INT:
@@ -212,25 +254,32 @@ TypePtr Parser::parseBaseType() {
         case TokenType::TYPE_DOUBLE: case TokenType::TYPE_DECIMAL:
         case TokenType::TYPE_STRING: case TokenType::TYPE_CHAR:
         case TokenType::TYPE_ANY:
+            LUC_LOG_TYPE_EXTREME("parseBaseType: dispatching to parsePrimitiveType");
             return parsePrimitiveType();
 
         case TokenType::IDENTIFIER:
+            LUC_LOG_TYPE_EXTREME("parseBaseType: dispatching to parseNamedType");
             return parseNamedType();
 
         case TokenType::LBRACKET:
+            LUC_LOG_TYPE_EXTREME("parseBaseType: dispatching to parseArrayType");
             return parseArrayType();
 
         case TokenType::AMPERSAND:
+            LUC_LOG_TYPE_EXTREME("parseBaseType: dispatching to parseRefType");
             return parseRefType();
 
         case TokenType::MUL:
+            LUC_LOG_TYPE_EXTREME("parseBaseType: dispatching to parsePtrType");
             return parsePtrType();
 
         case TokenType::LPAREN:
         case TokenType::TILDE:
+            LUC_LOG_TYPE_EXTREME("parseBaseType: dispatching to parseFuncType");
             return parseFuncType();
 
         default:
+            LUC_LOG_TYPE("parseBaseType: ERROR - expected type, got '" << ts_.peek().value << "'");
             errorAt(DiagCode::E1005, "expected type, got '" + ts_.peek().value + "'");
             return arena_.make<UnknownTypeAST>();
     }
@@ -257,8 +306,11 @@ TypePtr Parser::parseBaseType() {
  *   6. Expression statement – fallback
  */
 StmtPtr Parser::parseStmt() {
+    LUC_LOG_STMT_VERBOSE("parseStmt: current token=" << ts_.peek().value);
+    
     // Multi-assignment (reassignment)
     if (looksLikeMultiAssignStart()) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: looks like multi-assignment, dispatching to parseMultiAssignStmt");
         return parseMultiAssignStmt();
     }
 
@@ -275,6 +327,7 @@ StmtPtr Parser::parseStmt() {
             hasType = true;
             if (hasIdentifier && hasType && ts_.check(TokenType::COMMA)) {
                 ts_.setPos(savedPos);
+                LUC_LOG_STMT_VERBOSE("parseStmt: looks like multi-var declaration");
                 return parseMultiVarDecl();
             }
         }
@@ -286,16 +339,19 @@ StmtPtr Parser::parseStmt() {
                       TokenType::IMPL, TokenType::TRAIT, TokenType::FROM,
                       TokenType::LET, TokenType::CONST, TokenType::AT_SIGN,
                       TokenType::USE})) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: local declaration, dispatching to parseDeclaration(Local)");
         DeclPtr decl = parseDeclaration(DeclContext::Local);
         if (!decl) return nullptr;
         
         auto ds = arena_.make<DeclStmtAST>(std::move(decl));
         ds->loc = ts_.currentLoc();
+        LUC_LOG_STMT_VERBOSE("parseStmt: created DeclStmtAST");
         return ds;
     }
 
     // 'pub' inside a block - error
     if (ts_.check(TokenType::PUB)) {
+        LUC_LOG_STMT("parseStmt: ERROR - 'pub' not allowed inside block");
         errorAt(DiagCode::E1014, "'pub' is not valid inside a block");
         ts_.advance();
         if (ts_.checkAny({TokenType::LET, TokenType::CONST, TokenType::TYPE,
@@ -314,20 +370,45 @@ StmtPtr Parser::parseStmt() {
     }
 
     // Control flow keywords
-    if (ts_.check(TokenType::IF))       return parseIfStmt();
-    if (ts_.check(TokenType::SWITCH))   return parseSwitchStmt();
-    if (ts_.check(TokenType::FOR))      return parseForStmt();
-    if (ts_.check(TokenType::WHILE))    return parseWhileStmt();
-    if (ts_.check(TokenType::DO))       return parseDoWhileStmt();
-    if (ts_.check(TokenType::RETURN))   return parseReturnStmt();
-    if (ts_.check(TokenType::BREAK))    return parseBreakStmt();
-    if (ts_.check(TokenType::CONTINUE)) return parseContinueStmt();
+    if (ts_.check(TokenType::IF)) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: dispatching to parseIfStmt");
+        return parseIfStmt();
+    }
+    if (ts_.check(TokenType::SWITCH)) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: dispatching to parseSwitchStmt");
+        return parseSwitchStmt();
+    }
+    if (ts_.check(TokenType::FOR)) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: dispatching to parseForStmt");
+        return parseForStmt();
+    }
+    if (ts_.check(TokenType::WHILE)) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: dispatching to parseWhileStmt");
+        return parseWhileStmt();
+    }
+    if (ts_.check(TokenType::DO)) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: dispatching to parseDoWhileStmt");
+        return parseDoWhileStmt();
+    }
+    if (ts_.check(TokenType::RETURN)) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: dispatching to parseReturnStmt");
+        return parseReturnStmt();
+    }
+    if (ts_.check(TokenType::BREAK)) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: dispatching to parseBreakStmt");
+        return parseBreakStmt();
+    }
+    if (ts_.check(TokenType::CONTINUE)) {
+        LUC_LOG_STMT_VERBOSE("parseStmt: dispatching to parseContinueStmt");
+        return parseContinueStmt();
+    }
 
     // Detect invalid variable declaration missing let/const
     if (ts_.check(TokenType::IDENTIFIER)) {
         size_t savedPos = ts_.getPos();
         ts_.advance();
         if (looksLikeType() && ts_.check(TokenType::ASSIGN)) {
+            LUC_LOG_STMT("parseStmt: ERROR - variable declaration missing 'let' or 'const'");
             errorAt(DiagCode::E1002, "variable declaration requires 'let' or 'const'");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::SEMICOLON) && !ts_.check(TokenType::RBRACE)) {
                 ts_.advance();
@@ -342,6 +423,7 @@ StmtPtr Parser::parseStmt() {
 
     // Expression statement
     if (!looksLikeStmtStart()) {
+        LUC_LOG_STMT("parseStmt: ERROR - unexpected token '" << ts_.peek().value << "'");
         errorAt(DiagCode::E1002, "unexpected token '" + ts_.peek().value + "'");
         auto unknown = arena_.make<UnknownStmtAST>();
         unknown->loc = ts_.currentLoc();
@@ -350,8 +432,10 @@ StmtPtr Parser::parseStmt() {
     }
 
     SourceLocation loc = ts_.currentLoc();
+    LUC_LOG_STMT_VERBOSE("parseStmt: falling back to expression statement");
     ExprPtr expr = parseExpr();
     if (!expr) {
+        LUC_LOG_STMT("parseStmt: ERROR - expected expression statement");
         errorAt(DiagCode::E1008, "expected expression statement");
         auto unknown = arena_.make<UnknownStmtAST>();
         unknown->loc = ts_.currentLoc();
@@ -364,6 +448,7 @@ StmtPtr Parser::parseStmt() {
 
     auto stmt = arena_.make<ExprStmtAST>(std::move(expr));
     stmt->loc = loc;
+    LUC_LOG_STMT_VERBOSE("parseStmt: created ExprStmtAST");
     return stmt;
 }
 
@@ -376,12 +461,20 @@ StmtPtr Parser::parseStmt() {
 // ============================================================================
 
 ExprPtr Parser::parseExpr(bool allowStructLiteral) {
-    return parsePrattExpr(PREC_NONE, allowStructLiteral);
+    LUC_LOG_EXPR_VERBOSE("parseExpr: allowStructLiteral=" << allowStructLiteral);
+    ExprPtr result = parsePrattExpr(PREC_NONE, allowStructLiteral);
+    if (result) {
+        LUC_LOG_EXPR_EXTREME("parseExpr: parsed " << LucDebug::kindToString(result->kind));
+    }
+    return result;
 }
 
 ExprPtr Parser::parsePrattExpr(int minPrec, bool allowStructLiteral) {
+    LUC_LOG_EXPR_EXTREME("parsePrattExpr: minPrec=" << minPrec << ", allowStructLiteral=" << allowStructLiteral);
+    
     ExprPtr lhs = parsePrefixExpr(allowStructLiteral);
     if (!lhs) {
+        LUC_LOG_EXPR("parsePrattExpr: parsePrefixExpr returned nullptr");
         return arena_.make<UnknownExprAST>();
     }
 
@@ -389,31 +482,41 @@ ExprPtr Parser::parsePrattExpr(int minPrec, bool allowStructLiteral) {
 
     while (true) {
         int prec = infixPrec(ts_.peekType());
-        if (prec <= minPrec) break;
+        if (prec <= minPrec) {
+            LUC_LOG_EXPR_EXTREME("parsePrattExpr: break - prec=" << prec << " <= minPrec=" << minPrec);
+            break;
+        }
 
         TokenType opTok = ts_.peekType();
+        LUC_LOG_EXPR_EXTREME("parsePrattExpr: processing infix operator " << LucDebug::tokenTypeToString(opTok)
+                             << " with precedence " << prec);
 
         if (isAssignOp(opTok)) {
+            LUC_LOG_EXPR_VERBOSE("parsePrattExpr: assignment operator, calling parseInfixAssign");
             lhs = parseInfixAssign(std::move(lhs), allowStructLiteral);
             break;
         }
 
         if (opTok == TokenType::IS) {
+            LUC_LOG_EXPR_VERBOSE("parsePrattExpr: 'is' operator, calling parseInfixIs");
             lhs = parseInfixIs(std::move(lhs));
             continue;
         }
 
         if (opTok == TokenType::PIPELINE) {
+            LUC_LOG_EXPR_VERBOSE("parsePrattExpr: pipeline operator, calling parsePipelineExpr");
             lhs = parsePipelineExpr(std::move(lhs));
             continue;
         }
 
         if (opTok == TokenType::COMPOSE) {
+            LUC_LOG_EXPR_VERBOSE("parsePrattExpr: compose operator, calling parseComposeExpr");
             lhs = parseComposeExpr(std::move(lhs));
             continue;
         }
 
         if (opTok == TokenType::QUESTION_QUESTION) {
+            LUC_LOG_EXPR_VERBOSE("parsePrattExpr: null coalesce operator, calling parseInfixNullCoalesce");
             lhs = parseInfixNullCoalesce(std::move(lhs), allowStructLiteral);
             break;
         }
@@ -431,10 +534,15 @@ ExprPtr Parser::parsePrattExpr(int minPrec, bool allowStructLiteral) {
 
 ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
     SourceLocation loc = ts_.currentLoc();
+    TokenType current = ts_.peekType();
+    
+    LUC_LOG_EXPR_EXTREME("parsePrefixExpr: current token=" << ts_.peek().value
+                         << " (" << LucDebug::tokenTypeToString(current) << ")");
 
-    switch (ts_.peekType()) {
+    switch (current) {
         case TokenType::MINUS: {
             ts_.advance();
+            LUC_LOG_EXPR_EXTREME("parsePrefixExpr: unary minus");
             ExprPtr operand = parsePrefixExpr(allowStructLiteral);
             if (!operand) {
                 errorAt(DiagCode::E1008, "expected expression after '-'");
@@ -448,6 +556,7 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
         }
         case TokenType::NOT: {
             ts_.advance();
+            LUC_LOG_EXPR_EXTREME("parsePrefixExpr: unary not");
             ExprPtr operand = parsePrefixExpr(allowStructLiteral);
             if (!operand) {
                 errorAt(DiagCode::E1008, "expected expression after 'not'");
@@ -461,6 +570,7 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
         }
         case TokenType::BIT_NOT: {
             ts_.advance();
+            LUC_LOG_EXPR_EXTREME("parsePrefixExpr: unary bitwise not");
             ExprPtr operand = parsePrefixExpr(allowStructLiteral);
             if (!operand) {
                 errorAt(DiagCode::E1008, "expected expression after '~'");
@@ -474,6 +584,7 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
         }
         case TokenType::AMPERSAND: {
             ts_.advance();
+            LUC_LOG_EXPR_EXTREME("parsePrefixExpr: unary reference");
             ExprPtr operand = parsePrefixExpr(allowStructLiteral);
             if (!operand) {
                 errorAt(DiagCode::E1008, "expected expression after '&'");
@@ -486,6 +597,7 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
             return node;
         }
         default:
+            LUC_LOG_EXPR_EXTREME("parsePrefixExpr: dispatching to parsePrimaryExpr");
             return parsePrimaryExpr(allowStructLiteral);
     }
 }
@@ -509,15 +621,38 @@ ExprPtr Parser::parsePrefixExpr(bool allowStructLiteral) {
  */
 ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
     SourceLocation loc = ts_.currentLoc();
+    TokenType current = ts_.peekType();
+    
+    LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: current token=" << ts_.peek().value
+                         << " (" << LucDebug::tokenTypeToString(current) << ")");
 
-    if (ts_.check(TokenType::MATCH))     return parseMatchExpr();
-    if (ts_.check(TokenType::IF))        return parseIfExpr();
-    if (ts_.check(TokenType::RESOLVE))   return parseResolveExpr();
-    if (ts_.check(TokenType::HASH))      return parseIntrinsicCallExpr();
-    if (ts_.check(TokenType::AWAIT))     return parseAwaitExpr();
-    if (ts_.check(TokenType::LBRACKET))  return parseArrayLiteralExpr();
+    if (ts_.check(TokenType::MATCH)) {
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: dispatching to parseMatchExpr");
+        return parseMatchExpr();
+    }
+    if (ts_.check(TokenType::IF)) {
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: dispatching to parseIfExpr");
+        return parseIfExpr();
+    }
+    if (ts_.check(TokenType::RESOLVE)) {
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: dispatching to parseResolveExpr");
+        return parseResolveExpr();
+    }
+    if (ts_.check(TokenType::HASH)) {
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: dispatching to parseIntrinsicCallExpr");
+        return parseIntrinsicCallExpr();
+    }
+    if (ts_.check(TokenType::AWAIT)) {
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: dispatching to parseAwaitExpr");
+        return parseAwaitExpr();
+    }
+    if (ts_.check(TokenType::LBRACKET)) {
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: dispatching to parseArrayLiteralExpr");
+        return parseArrayLiteralExpr();
+    }
 
     if (ts_.check(TokenType::LBRACE)) {
+        LUC_LOG_EXPR("parsePrimaryExpr: ERROR - unexpected block in expression position");
         errorAt(DiagCode::E1006, "unexpected block in expression position");
         int braceDepth = 1;
         ts_.advance();
@@ -529,9 +664,13 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
         return arena_.make<UnknownExprAST>();
     }
 
-    if (looksLikeAnonFunc()) return parseAnonFuncExpr();
+    if (looksLikeAnonFunc()) {
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: looks like anonymous function, dispatching to parseAnonFuncExpr");
+        return parseAnonFuncExpr();
+    }
 
     if (ts_.check(TokenType::LPAREN)) {
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: grouped expression");
         ts_.advance();
         ExprPtr inner = parsePrattExpr(PREC_NONE, allowStructLiteral);
         if (!ts_.check(TokenType::RPAREN)) {
@@ -546,6 +685,7 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
         std::string name = ts_.peek().value;
 
         if (allowStructLiteral && looksLikeStructLiteral()) {
+            LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: looks like struct literal, dispatching to parseStructLiteralExpr");
             ts_.advance();
             ArenaSpan<TypePtr> genericArgs;
             if (ts_.check(TokenType::LESS)) {
@@ -555,6 +695,7 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
         }
 
         if (looksLikeBehaviorAccess()) {
+            LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: looks like behavior access");
             std::string typeName = ts_.advance().value;
             ArenaSpan<TypePtr> genericArgs;
             if (ts_.check(TokenType::LESS)) {
@@ -577,6 +718,7 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
         }
 
         ts_.advance();
+        LUC_LOG_EXPR_EXTREME("parsePrimaryExpr: plain identifier '" << name << "'");
         auto node = arena_.make<IdentifierExprAST>(pool_.intern(name));
         node->loc = loc;
         return node;
@@ -584,12 +726,14 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
 
     // primitive type cast
     if (looksLikeType() && ts_.peekNextType() == TokenType::LPAREN) {
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: looks like type cast, dispatching to parseTypeConvExpr");
         TypePtr targetType = parsePrimitiveType();
         if (targetType && ts_.check(TokenType::LPAREN)) {
             return parseTypeConvExpr(std::move(targetType));
         }
     }
 
+    LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: falling back to parseLiteralExpr");
     return parseLiteralExpr();
 }
 
@@ -603,11 +747,14 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
 // ============================================================================
 
 ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
+    LUC_LOG_EXPR_EXTREME("parsePostfixExpr: processing postfix operators");
+    
     while (true) {
         if (ts_.check(TokenType::RPAREN)) break;
         if (ts_.check(TokenType::PIPELINE) || ts_.check(TokenType::COMPOSE)) break;
 
         if (ts_.check(TokenType::LPAREN)) {
+            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: call expression");
             lhs = parseCallExpr(std::move(lhs), ArenaSpan<TypePtr>());
             continue;
         }
@@ -629,6 +776,7 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
             }
             
             if (depth == 0 && i + 1 < tokenCount && tokens[i + 1].type == TokenType::LPAREN) {
+                LUC_LOG_EXPR_EXTREME("parsePostfixExpr: generic call expression");
                 ArenaSpan<TypePtr> genericArgs = parseGenericArgs();
                 lhs = parseCallExpr(std::move(lhs), genericArgs);
                 continue;
@@ -636,6 +784,7 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
         }
 
         if (ts_.check(TokenType::LBRACKET)) {
+            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: index/slice expression");
             lhs = parseIndexExpr(std::move(lhs));
             continue;
         }
@@ -647,6 +796,7 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
                 break;
             }
             std::string field = ts_.advance().value;
+            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: field access ." << field);
             auto node = arena_.make<FieldAccessExprAST>();
             node->loc = lhs->loc;
             node->object = std::move(lhs);
@@ -656,6 +806,7 @@ ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
         }
 
         if (ts_.check(TokenType::QUESTION_DOT)) {
+            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: nullable chain");
             std::vector<InternedString> steps;
             ExprPtr object = std::move(lhs);
             

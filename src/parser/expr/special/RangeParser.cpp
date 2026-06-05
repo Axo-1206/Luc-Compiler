@@ -31,6 +31,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Range Expression
@@ -84,12 +85,16 @@
  *           returns RangeExprAST { lo = (1+2), hi = (3*4), isExclusive = false }
  */
 ExprPtr Parser::parseRangeExpr(ExprPtr lo, bool allowStructLiteral) {
+    LUC_LOG_EXPR_VERBOSE("parseRangeExpr: entering");
     SourceLocation loc = lo->loc;
     ts_.consume(TokenType::RANGE, "expected '..'");
 
     bool isExclusive = ts_.match(TokenType::LESS);
+    LUC_LOG_EXPR_EXTREME("parseRangeExpr: range is " << (isExclusive ? "exclusive (..<)" : "inclusive (..)"));
+    
     ExprPtr hi = parsePrattExpr(PREC_ADD, allowStructLiteral);
     if (!hi) {
+        LUC_LOG_EXPR("parseRangeExpr: ERROR - expected upper bound after '..'");
         errorAt(DiagCode::E1008, "expected upper bound after '..'");
         return arena_.make<UnknownExprAST>();
     }
@@ -99,5 +104,7 @@ ExprPtr Parser::parseRangeExpr(ExprPtr lo, bool allowStructLiteral) {
     node->lo = std::move(lo);
     node->hi = std::move(hi);
     node->isExclusive = isExclusive;
+    
+    LUC_LOG_EXPR_VERBOSE("parseRangeExpr: success");
     return node;
 }

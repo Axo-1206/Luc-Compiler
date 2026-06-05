@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Named Type
@@ -32,19 +33,25 @@
 // ============================================================================
 
 TypePtr Parser::parseNamedType() {
+    LUC_LOG_TYPE_EXTREME("parseNamedType: entering");
     SourceLocation loc = ts_.currentLoc();
     
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_TYPE("parseNamedType: ERROR - expected type name, got '" << ts_.peek().value << "'");
         errorAt(DiagCode::E1003, "expected type name");
         return arena_.make<UnknownTypeAST>();
     }
     
     InternedString name = pool_.intern(ts_.advance().value);
+    LUC_LOG_TYPE_EXTREME("parseNamedType: name = " << pool_.lookup(name));
+    
     auto node = arena_.make<NamedTypeAST>(name);
     node->loc = loc;
 
     if (ts_.check(TokenType::LESS)) {
+        LUC_LOG_TYPE_EXTREME("parseNamedType: parsing generic arguments");
         node->genericArgs = parseGenericArgs();
+        LUC_LOG_TYPE_EXTREME("parseNamedType: found " << node->genericArgs.size() << " generic argument(s)");
     }
 
     return node;

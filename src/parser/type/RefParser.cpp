@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Reference Type
@@ -29,15 +30,21 @@
 // ============================================================================
 
 TypePtr Parser::parseRefType() {
+    LUC_LOG_TYPE_EXTREME("parseRefType: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::AMPERSAND, "expected '&'");
+    
+    LUC_LOG_TYPE_EXTREME("parseRefType: parsing inner type");
     TypePtr inner = parseBaseType();
     if (!inner) {
+        LUC_LOG_TYPE("parseRefType: ERROR - expected type after '&'");
         // Use E1005: "Expected type annotation" (parsing error)
         errorAt(DiagCode::E1005, "expected type after '&'");
         return arena_.make<UnknownTypeAST>();
     }
+    
     auto node = arena_.make<RefTypeAST>(std::move(inner));
     node->loc = loc;
+    LUC_LOG_TYPE_EXTREME("parseRefType: success");
     return node;
 }

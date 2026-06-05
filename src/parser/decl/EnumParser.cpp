@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 /**
  * @brief Parses an enum type declaration.
@@ -29,14 +30,17 @@
  * - Missing '}': consume() reports error
  */
 ASTPtr<EnumDeclAST> Parser::parseEnumDecl(Visibility vis) {
+    LUC_LOG_DECL_VERBOSE("parseEnumDecl: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::ENUM, "expected 'enum'");
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_DECL("parseEnumDecl: ERROR - expected enum name");
         errorAt(DiagCode::E1003, "expected enum name");
         return nullptr;
     }
     InternedString name = pool_.intern(ts_.advance().value);
+    LUC_LOG_DECL_EXTREME("parseEnumDecl: enum name = " << pool_.lookup(name));
 
     auto node = arena_.make<EnumDeclAST>();
     node->loc = loc;
@@ -46,6 +50,8 @@ ASTPtr<EnumDeclAST> Parser::parseEnumDecl(Visibility vis) {
     ts_.consume(TokenType::LBRACE, "expected '{' to open enum body");
 
     std::vector<EnumVariantPtr> variants;
+    int variantCount = 0;
+    
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
         ts_.match(TokenType::COMMA);
         ts_.match(TokenType::SEMICOLON);
@@ -54,8 +60,11 @@ ASTPtr<EnumDeclAST> Parser::parseEnumDecl(Visibility vis) {
         size_t savedPos = ts_.getPos();
         EnumVariantPtr variant = parseEnumVariant();
         if (variant) {
+            variantCount++;
+            LUC_LOG_DECL_EXTREME("parseEnumDecl: parsed variant #" << variantCount);
             variants.push_back(std::move(variant));
         } else {
+            LUC_LOG_DECL("parseEnumDecl: ERROR - failed to parse variant");
             if (ts_.getPos() == savedPos && !ts_.isAtEnd()) ts_.advance();
             while (!ts_.isAtEnd() && !ts_.check(TokenType::RBRACE) && 
                    !ts_.check(TokenType::IDENTIFIER)) ts_.advance();
@@ -67,6 +76,8 @@ ASTPtr<EnumDeclAST> Parser::parseEnumDecl(Visibility vis) {
     node->variants = builder.build();
 
     ts_.consume(TokenType::RBRACE, "expected '}' to close enum body");
+    
+    LUC_LOG_DECL_VERBOSE("parseEnumDecl: parsed " << variantCount << " variant(s)");
     return node;
 }
 
@@ -91,18 +102,22 @@ ASTPtr<EnumDeclAST> Parser::parseEnumDecl(Visibility vis) {
  * - Invalid literal after '=': reports error, variant created with no value
  */
 EnumVariantPtr Parser::parseEnumVariant() {
+    LUC_LOG_DECL_EXTREME("parseEnumVariant: entering");
     SourceLocation loc = ts_.currentLoc();
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_DECL("parseEnumVariant: ERROR - expected enum variant name");
         errorAt(DiagCode::E1003, "expected enum variant name");
         return nullptr;
     }
     InternedString name = pool_.intern(ts_.advance().value);
+    LUC_LOG_DECL_EXTREME("parseEnumVariant: variant name = " << pool_.lookup(name));
 
     auto variant = arena_.make<EnumVariantAST>(name);
     variant->loc = loc;
 
     if (ts_.match(TokenType::ASSIGN)) {
+        LUC_LOG_DECL_EXTREME("parseEnumVariant: explicit value");
         if (ts_.check(TokenType::INT_LITERAL) || ts_.check(TokenType::HEX_LITERAL) ||
             ts_.check(TokenType::BINARY_LITERAL)) {
             Token valTok = ts_.advance();
@@ -116,11 +131,14 @@ EnumVariantPtr Parser::parseEnumVariant() {
 
             if (endPtr != raw.c_str() && *endPtr == '\0' && errno != ERANGE) {
                 variant->explicitValue = val;
+                LUC_LOG_DECL_EXTREME("parseEnumVariant: value = " << val);
             } else {
+                LUC_LOG_DECL("parseEnumVariant: ERROR - invalid integer literal '" << valTok.value << "'");
                 error(ts_.locOf(valTok), DiagCode::E1007,
                       "enum variant value '" + valTok.value + "' is not a valid integer");
             }
         } else {
+            LUC_LOG_DECL("parseEnumVariant: ERROR - expected integer literal after '='");
             errorAt(DiagCode::E1007, "expected integer literal after '=' in enum variant");
         }
     }

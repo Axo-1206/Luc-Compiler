@@ -33,6 +33,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Intrinsic Call
@@ -79,10 +80,12 @@
  *   - Memory intrinsics (#memcpy, #memset, #memmove) require raw pointer arguments.
  */
 ExprPtr Parser::parseIntrinsicCallExpr() {
+    LUC_LOG_EXPR_VERBOSE("parseIntrinsicCallExpr: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::HASH, "expected '#'");
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_EXPR("parseIntrinsicCallExpr: ERROR - expected intrinsic name after '#'");
         errorAt(DiagCode::E1003, "expected intrinsic name after '#'");
         return arena_.make<UnknownExprAST>();
     }
@@ -90,40 +93,57 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
     auto node = arena_.make<IntrinsicCallExprAST>();
     node->loc = loc;
     node->intrinsicName = pool_.intern(ts_.advance().value);
+    
+    std::string intrinsicStr = std::string(pool_.lookup(node->intrinsicName));
+    LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: intrinsic name = #" << intrinsicStr);
 
     if (!ts_.check(TokenType::LPAREN)) {
+        LUC_LOG_EXPR("parseIntrinsicCallExpr: ERROR - expected '(' after intrinsic name");
         errorAt(DiagCode::E1001, "expected '(' after intrinsic name");
         return arena_.make<UnknownExprAST>();
     }
     ts_.advance();  // consume '('
 
-    std::string intrinsicStr = std::string(pool_.lookup(node->intrinsicName));
     bool isTypeIntrinsic = (intrinsicStr == "sizeof" || intrinsicStr == "alignof");
 
     if (isTypeIntrinsic) {
+        LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: type intrinsic");
         // Type intrinsics: #sizeof(T), #alignof(T)
         if (ts_.check(TokenType::RPAREN)) {
+            LUC_LOG_EXPR("parseIntrinsicCallExpr: ERROR - expected type argument");
             errorAt(DiagCode::E1005, "expected type argument");
         } else {
             TypePtr typeArg = parseType();
-            if (!typeArg) errorAt(DiagCode::E1005, "invalid type argument");
-            else node->typeArg = std::move(typeArg);
+            if (!typeArg) {
+                LUC_LOG_EXPR("parseIntrinsicCallExpr: ERROR - invalid type argument");
+                errorAt(DiagCode::E1005, "invalid type argument");
+            } else {
+                node->typeArg = std::move(typeArg);
+                LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: type argument parsed");
+            }
         }
         ts_.consume(TokenType::RPAREN, "expected ')' after type argument");
     } else {
+        LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: value intrinsic");
         // Value intrinsics: #name(expr, expr, ...)
         std::vector<ExprPtr> args;
+        int argCount = 0;
+        
         while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
             size_t savedPos = ts_.getPos();
             ExprPtr arg = parseExpr();
             if (ts_.getPos() == savedPos) {
+                LUC_LOG_EXPR("parseIntrinsicCallExpr: ERROR - expected argument expression");
                 errorAt(DiagCode::E1008, "expected argument expression");
                 if (!ts_.isAtEnd()) ts_.advance();
                 break;
             }
+            argCount++;
+            LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: argument #" << argCount);
             args.push_back(std::move(arg));
             if (ts_.check(TokenType::RPAREN)) break;
             if (!ts_.match(TokenType::COMMA)) {
+                LUC_LOG_EXPR("parseIntrinsicCallExpr: ERROR - expected ',' or ')'");
                 errorAt(DiagCode::E1001, "expected ',' or ')' in intrinsic argument list");
                 break;
             }
@@ -131,8 +151,10 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
         auto builder = arena_.makeBuilder<ExprPtr>();
         for (auto& a : args) builder.push_back(std::move(a));
         node->args = builder.build();
+        LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: " << argCount << " argument(s)");
         ts_.consume(TokenType::RPAREN, "expected ')' to close intrinsic call");
     }
 
+    LUC_LOG_EXPR_VERBOSE("parseIntrinsicCallExpr: success");
     return node;
 }

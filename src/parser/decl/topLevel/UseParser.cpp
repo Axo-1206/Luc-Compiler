@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 /**
  * @brief Parses `use` import declaration.
@@ -23,6 +24,7 @@
  * - Missing alias after 'as': reports error, continues
  */
 ASTPtr<UseDeclAST> Parser::parseUseDecl(Visibility vis) {
+    LUC_LOG_DECL_VERBOSE("parseUseDecl: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::USE, "expected 'use'");
 
@@ -31,29 +33,41 @@ ASTPtr<UseDeclAST> Parser::parseUseDecl(Visibility vis) {
     node->visibility = vis;
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_DECL("parseUseDecl: ERROR - expected module path after 'use'");
         errorAt(DiagCode::E1003, "expected module path after 'use'");
         return node;
     }
 
     std::vector<InternedString> path;
     path.push_back(pool_.intern(ts_.advance().value));
+    LUC_LOG_DECL_EXTREME("parseUseDecl: path segment 1 = " << pool_.lookup(path.back()));
 
+    int segmentCount = 1;
     while (ts_.check(TokenType::DOT) && ts_.peekNextType() == TokenType::IDENTIFIER) {
         ts_.advance();
         path.push_back(pool_.intern(ts_.advance().value));
+        segmentCount++;
+        LUC_LOG_DECL_EXTREME("parseUseDecl: path segment " << segmentCount 
+                             << " = " << pool_.lookup(path.back()));
     }
 
     auto builder = arena_.makeBuilder<InternedString>();
     for (auto& p : path) builder.push_back(std::move(p));
     node->path = builder.build();
+    
+    LUC_LOG_DECL_EXTREME("parseUseDecl: path has " << segmentCount << " segment(s)");
 
     if (ts_.match(TokenType::AS)) {
+        LUC_LOG_DECL_EXTREME("parseUseDecl: parsing alias");
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_DECL("parseUseDecl: ERROR - expected alias name after 'as'");
             errorAt(DiagCode::E1003, "expected alias name after 'as'");
         } else {
             node->alias = pool_.intern(ts_.advance().value);
+            LUC_LOG_DECL_EXTREME("parseUseDecl: alias = " << pool_.lookup(node->alias.value()));
         }
     }
 
+    LUC_LOG_DECL_VERBOSE("parseUseDecl: success");
     return node;
 }

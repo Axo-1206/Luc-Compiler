@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 /**
  * @brief Parses `for` loops over ranges or collections.
@@ -61,23 +62,28 @@
  * @return ASTPtr<ForStmtAST> – for loop node on success, nullptr on error
  */
 ASTPtr<ForStmtAST> Parser::parseForStmt() {
+    LUC_LOG_STMT_VERBOSE("parseForStmt: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::FOR, "expected 'for'");
 
     // Parse iteration variable name (required)
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_STMT("parseForStmt: ERROR - expected iteration variable name");
         errorAt(DiagCode::E1003, "expected iteration variable name");
         return nullptr;
     }
     std::string varName = ts_.advance().value;
+    LUC_LOG_STMT_EXTREME("parseForStmt: variable name = '" << varName << "'");
 
     // Parse type annotation (required - no type inference in Luc)
     if (!looksLikeType()) {
+        LUC_LOG_STMT("parseForStmt: ERROR - expected type annotation for iteration variable");
         errorAt(DiagCode::E1005, "expected type annotation for iteration variable '" + varName + "'");
         return nullptr;
     }
     TypePtr varType = parseType();
     if (!varType) {
+        LUC_LOG_STMT("parseForStmt: ERROR - invalid type for iteration variable");
         errorAt(DiagCode::E1005, "invalid type for iteration variable");
         return nullptr;
     }
@@ -96,13 +102,16 @@ ASTPtr<ForStmtAST> Parser::parseForStmt() {
     // Try to parse as range: lo '..' [ '<' ] hi [ '..' step ]
     ExprPtr lo = parseExpr(false);
     if (lo && ts_.check(TokenType::RANGE)) {
+        LUC_LOG_STMT_EXTREME("parseForStmt: detected range iteration");
         // This IS a range iteration
         ts_.advance(); // consume '..'
         
         bool isExclusive = ts_.match(TokenType::LESS);
+        LUC_LOG_STMT_EXTREME("parseForStmt: range is " << (isExclusive ? "exclusive" : "inclusive"));
         
         ExprPtr hi = parseExpr(false);
         if (!hi) {
+            LUC_LOG_STMT("parseForStmt: ERROR - expected upper bound after '..'");
             errorAt(DiagCode::E1008, "expected upper bound after '..' in range iteration");
             return nullptr;
         }
@@ -117,18 +126,22 @@ ASTPtr<ForStmtAST> Parser::parseForStmt() {
         
         // Check for optional step: '..' step
         if (ts_.match(TokenType::RANGE)) {
+            LUC_LOG_STMT_EXTREME("parseForStmt: parsing step expression");
             step = parseExpr(false);
             if (!step) {
+                LUC_LOG_STMT("parseForStmt: ERROR - expected step expression after '..'");
                 errorAt(DiagCode::E1008, "expected step expression after '..'");
                 return nullptr;
             }
         }
     } else {
         // Not a range iteration - treat as collection iteration
+        LUC_LOG_STMT_EXTREME("parseForStmt: detected collection iteration");
         // Restore position and parse normally
         ts_.setPos(savedPos);
         iterable = parseExpr(false);
         if (!iterable) {
+            LUC_LOG_STMT("parseForStmt: ERROR - expected iterable expression after 'in'");
             errorAt(DiagCode::E1008, "expected iterable expression after 'in'");
             return nullptr;
         }
@@ -136,6 +149,7 @@ ASTPtr<ForStmtAST> Parser::parseForStmt() {
 
     // Parse loop body (must be a block)
     if (!ts_.check(TokenType::LBRACE)) {
+        LUC_LOG_STMT("parseForStmt: ERROR - expected '{' to start for loop body");
         errorAt(DiagCode::E1001, "expected '{' to start for loop body");
         return nullptr;
     }
@@ -154,6 +168,7 @@ ASTPtr<ForStmtAST> Parser::parseForStmt() {
     node->step = std::move(step);
     node->body = std::move(body);
     
+    LUC_LOG_STMT_VERBOSE("parseForStmt: success");
     return node;
 }
 
@@ -185,16 +200,20 @@ ASTPtr<ForStmtAST> Parser::parseForStmt() {
 // ============================================================================
 
 ASTPtr<WhileStmtAST> Parser::parseWhileStmt() {
+    LUC_LOG_STMT_VERBOSE("parseWhileStmt: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::WHILE, "expected 'while'");
 
     ExprPtr condition = parseExpr(false);
     if (!condition) {
+        LUC_LOG_STMT("parseWhileStmt: ERROR - expected condition after 'while'");
         errorAt(DiagCode::E1008, "expected condition after 'while'");
         return nullptr;
     }
+    LUC_LOG_STMT_EXTREME("parseWhileStmt: condition parsed");
 
     if (!ts_.check(TokenType::LBRACE)) {
+        LUC_LOG_STMT("parseWhileStmt: ERROR - expected '{' to start while loop body");
         errorAt(DiagCode::E1001, "expected '{' to start while loop body");
         return nullptr;
     }
@@ -206,6 +225,7 @@ ASTPtr<WhileStmtAST> Parser::parseWhileStmt() {
     node->condition = std::move(condition);
     node->body = std::move(body);
     
+    LUC_LOG_STMT_VERBOSE("parseWhileStmt: success");
     return node;
 }
 
@@ -238,20 +258,24 @@ ASTPtr<WhileStmtAST> Parser::parseWhileStmt() {
 // ============================================================================
 
 ASTPtr<DoWhileStmtAST> Parser::parseDoWhileStmt() {
+    LUC_LOG_STMT_VERBOSE("parseDoWhileStmt: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::DO, "expected 'do'");
 
     if (!ts_.check(TokenType::LBRACE)) {
+        LUC_LOG_STMT("parseDoWhileStmt: ERROR - expected '{' after 'do'");
         errorAt(DiagCode::E1001, "expected '{' after 'do'");
         return nullptr;
     }
 
     StmtPtr body = parseBlock();
+    LUC_LOG_STMT_EXTREME("parseDoWhileStmt: body parsed");
 
     ts_.consume(TokenType::WHILE, "expected 'while' after do body");
 
     ExprPtr condition = parseExpr(false);
     if (!condition) {
+        LUC_LOG_STMT("parseDoWhileStmt: ERROR - expected condition after 'while'");
         errorAt(DiagCode::E1008, "expected condition after 'while'");
         return nullptr;
     }
@@ -261,5 +285,6 @@ ASTPtr<DoWhileStmtAST> Parser::parseDoWhileStmt() {
     node->body = std::move(body);
     node->condition = std::move(condition);
     
+    LUC_LOG_STMT_VERBOSE("parseDoWhileStmt: success");
     return node;
 }

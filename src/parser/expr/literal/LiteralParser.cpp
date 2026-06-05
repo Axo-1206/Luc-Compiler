@@ -31,12 +31,14 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Literal Expression
 // ============================================================================
 
 ExprPtr Parser::parseLiteralExpr() {
+    LUC_LOG_EXPR_EXTREME("parseLiteralExpr: entering");
     SourceLocation loc = ts_.currentLoc();
     Token tok = ts_.advance();
 
@@ -53,10 +55,12 @@ ExprPtr Parser::parseLiteralExpr() {
         case TokenType::FALSE:              kind = LiteralKind::False; break;
         case TokenType::NIL:                kind = LiteralKind::Nil; break;
         default:
+            LUC_LOG_EXPR("parseLiteralExpr: ERROR - non-literal token");
             errorAt(DiagCode::E1002, "internal error: parseLiteralExpr on non-literal token");
             return arena_.make<UnknownExprAST>();
     }
 
+    LUC_LOG_EXPR_EXTREME("parseLiteralExpr: value = '" << tok.value << "', kind = " << (int)kind);
     auto node = arena_.make<LiteralExprAST>(kind, pool_.intern(tok.value));
     node->loc = loc;
     return node;
@@ -67,10 +71,12 @@ ExprPtr Parser::parseLiteralExpr() {
 // ============================================================================
 
 ExprPtr Parser::parseArrayLiteralExpr() {
+    LUC_LOG_EXPR_VERBOSE("parseArrayLiteralExpr: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LBRACKET, "expected '['");
 
     std::vector<ExprPtr> elements;
+    int elemCount = 0;
 
     while (!ts_.check(TokenType::RBRACKET) && !ts_.isAtEnd()) {
         ts_.match(TokenType::COMMA);
@@ -79,10 +85,13 @@ ExprPtr Parser::parseArrayLiteralExpr() {
         size_t beforePos = ts_.getPos();
         ExprPtr elem = parseExpr();
         if (ts_.getPos() == beforePos) {
+            LUC_LOG_EXPR("parseArrayLiteralExpr: ERROR - expected expression inside array literal");
             errorAt(DiagCode::E1008, "expected expression inside array literal");
             if (!ts_.isAtEnd()) ts_.advance();
             break;
         }
+        elemCount++;
+        LUC_LOG_EXPR_EXTREME("parseArrayLiteralExpr: element #" << elemCount);
         elements.push_back(std::move(elem));
     }
 
@@ -95,6 +104,7 @@ ExprPtr Parser::parseArrayLiteralExpr() {
     for (auto& e : elements) builder.push_back(std::move(e));
     node->elements = builder.build();
 
+    LUC_LOG_EXPR_VERBOSE("parseArrayLiteralExpr: " << elemCount << " element(s)");
     return node;
 }
 
@@ -103,6 +113,8 @@ ExprPtr Parser::parseArrayLiteralExpr() {
 // ============================================================================
 
 ExprPtr Parser::parseStructLiteralExpr(std::string typeName, ArenaSpan<TypePtr> genericArgs) {
+    LUC_LOG_EXPR_VERBOSE("parseStructLiteralExpr: type = " << typeName 
+                         << ", generic args = " << genericArgs.size());
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LBRACE, "expected '{' to open struct literal");
 
@@ -112,6 +124,8 @@ ExprPtr Parser::parseStructLiteralExpr(std::string typeName, ArenaSpan<TypePtr> 
     node->genericArgs = genericArgs;
 
     std::vector<FieldInitPtr> inits;
+    int initCount = 0;
+    
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
         ts_.match(TokenType::COMMA);
         ts_.match(TokenType::SEMICOLON);
@@ -120,19 +134,23 @@ ExprPtr Parser::parseStructLiteralExpr(std::string typeName, ArenaSpan<TypePtr> 
         SourceLocation fieldLoc = ts_.currentLoc();
 
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_EXPR("parseStructLiteralExpr: ERROR - expected field name");
             errorAt(DiagCode::E1003, "expected field name in struct literal");
             ts_.advance();
             continue;
         }
         std::string fieldName = ts_.advance().value;
+        LUC_LOG_EXPR_EXTREME("parseStructLiteralExpr: field '" << fieldName << "'");
 
         ts_.consume(TokenType::ASSIGN, "expected '=' after field name");
         ExprPtr val = parseExpr();
         if (!val) {
+            LUC_LOG_EXPR("parseStructLiteralExpr: ERROR - expected expression for field");
             errorAt(DiagCode::E1008, "expected expression for field");
             continue;
         }
 
+        initCount++;
         auto init = arena_.make<FieldInitAST>(pool_.intern(fieldName), std::move(val));
         init->loc = fieldLoc;
         inits.push_back(std::move(init));
@@ -143,6 +161,8 @@ ExprPtr Parser::parseStructLiteralExpr(std::string typeName, ArenaSpan<TypePtr> 
     node->inits = builder.build();
 
     ts_.consume(TokenType::RBRACE, "expected '}' to close struct literal");
+    
+    LUC_LOG_EXPR_VERBOSE("parseStructLiteralExpr: " << initCount << " initializer(s)");
     return node;
 }
 
@@ -151,6 +171,7 @@ ExprPtr Parser::parseStructLiteralExpr(std::string typeName, ArenaSpan<TypePtr> 
 // ============================================================================
 
 ExprPtr Parser::parseAnonFuncExpr() {
+    LUC_LOG_EXPR_VERBOSE("parseAnonFuncExpr: entering");
     SourceLocation loc = ts_.currentLoc();
     
     auto node = arena_.make<AnonFuncExprAST>();
@@ -158,6 +179,7 @@ ExprPtr Parser::parseAnonFuncExpr() {
     
     // Anonymous functions cannot have qualifiers – grammar rule.
     if (ts_.check(TokenType::TILDE)) {
+        LUC_LOG_EXPR("parseAnonFuncExpr: ERROR - anonymous function cannot have qualifiers");
         errorAt(DiagCode::E1006, "anonymous function cannot have qualifiers");
         // Skip all qualifiers to recover
         while (ts_.check(TokenType::TILDE)) {
@@ -171,6 +193,7 @@ ExprPtr Parser::parseAnonFuncExpr() {
     }
     
     if (!ts_.check(TokenType::LPAREN)) {
+        LUC_LOG_EXPR("parseAnonFuncExpr: ERROR - expected '(' for parameters");
         errorAt(DiagCode::E1001, "expected '(' to start anonymous function parameters");
         return arena_.make<UnknownExprAST>();
     }
@@ -178,13 +201,19 @@ ExprPtr Parser::parseAnonFuncExpr() {
     // Parameter groups: flat accumulation
     std::vector<ParamPtr> allParams;
     std::vector<size_t> groupSizes;
+    int groupCount = 0;
+    
     while (ts_.check(TokenType::LPAREN)) {
+        groupCount++;
         ParamGroup group = parseParamGroup();
         groupSizes.push_back(group.size());
+        LUC_LOG_EXPR_EXTREME("parseAnonFuncExpr: group #" << groupCount 
+                             << " has " << group.size() << " parameter(s)");
         for (auto& p : group) {
             allParams.push_back(std::move(p));
         }
     }
+    
     auto paramsBuilder = arena_.makeBuilder<ParamPtr>();
     for (auto& p : allParams) paramsBuilder.push_back(std::move(p));
     node->sig.allParams = paramsBuilder.build();
@@ -193,20 +222,27 @@ ExprPtr Parser::parseAnonFuncExpr() {
     for (auto& sz : groupSizes) gsBuilder.push_back(sz);
     node->sig.groupSizes = gsBuilder.build();
     
+    LUC_LOG_EXPR_EXTREME("parseAnonFuncExpr: total " << allParams.size() << " parameters");
+    
     // Optional return types
     if (ts_.check(TokenType::ARROW)) {
         ts_.advance();
+        LUC_LOG_EXPR_EXTREME("parseAnonFuncExpr: parsing return types");
         node->sig.returnTypes = parseReturnList();
+        LUC_LOG_EXPR_EXTREME("parseAnonFuncExpr: " << node->sig.returnTypes.size() << " return type(s)");
         if (node->sig.returnTypes.empty() && !ts_.check(TokenType::LBRACE)) {
+            LUC_LOG_EXPR("parseAnonFuncExpr: ERROR - expected return type after '->'");
             errorAt(DiagCode::E1005, "expected return type after '->' in anonymous function");
         }
     }
     
     if (!ts_.check(TokenType::LBRACE)) {
+        LUC_LOG_EXPR("parseAnonFuncExpr: ERROR - expected '{' for body");
         errorAt(DiagCode::E1001, "expected '{' to start anonymous function body");
         return arena_.make<UnknownExprAST>();
     }
     node->body = parseBlock();
     
+    LUC_LOG_EXPR_VERBOSE("parseAnonFuncExpr: success");
     return node;
 }

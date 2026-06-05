@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 /**
  * @brief Parses a `resolve` expression for structured error handling.
@@ -41,25 +42,34 @@
  * @return ExprPtr – ResolveExprAST on success, UnknownExprAST on error
  */
 ExprPtr Parser::parseResolveExpr() {
+    LUC_LOG_EXPR_VERBOSE("parseResolveExpr: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::RESOLVE, "expected 'resolve'");
 
     ExprPtr subject = parseExpr(false);
     if (!subject) {
+        LUC_LOG_EXPR("parseResolveExpr: ERROR - expected expression after 'resolve'");
         errorAt(DiagCode::E1008, "expected expression after 'resolve'");
         return arena_.make<UnknownExprAST>();
     }
+    LUC_LOG_EXPR_EXTREME("parseResolveExpr: subject parsed");
 
     ts_.consume(TokenType::LBRACE, "expected '{' after resolve subject");
 
     OkArmPtr okArm = parseOkArm();
     if (!okArm) {
+        LUC_LOG_EXPR("parseResolveExpr: ERROR - expected 'ok' arm");
         errorAt(DiagCode::E1006, "expected 'ok' arm in resolve expression");
+    } else {
+        LUC_LOG_EXPR_EXTREME("parseResolveExpr: ok arm parsed");
     }
 
     ErrArmPtr errArm = parseErrArm();
     if (!errArm) {
+        LUC_LOG_EXPR("parseResolveExpr: ERROR - expected 'err' arm");
         errorAt(DiagCode::E1006, "expected 'err' arm in resolve expression");
+    } else {
+        LUC_LOG_EXPR_EXTREME("parseResolveExpr: err arm parsed");
     }
 
     ts_.consume(TokenType::RBRACE, "expected '}' to close resolve expression");
@@ -69,6 +79,8 @@ ExprPtr Parser::parseResolveExpr() {
     node->subject = std::move(subject);
     node->okArm = std::move(okArm);
     node->errArm = std::move(errArm);
+    
+    LUC_LOG_EXPR_VERBOSE("parseResolveExpr: success");
     return node;
 }
 
@@ -106,18 +118,22 @@ ExprPtr Parser::parseResolveExpr() {
  * @return OkArmPtr – OkArmAST on success, nullptr on error
  */
 OkArmPtr Parser::parseOkArm() {
+    LUC_LOG_EXPR_EXTREME("parseOkArm: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::OK, "expected 'ok'");
     ts_.consume(TokenType::LPAREN, "expected '(' after 'ok'");
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_EXPR("parseOkArm: ERROR - expected identifier");
         errorAt(DiagCode::E1003, "expected identifier for ok arm binding");
         return nullptr;
     }
     InternedString bindName = pool_.intern(ts_.advance().value);
+    LUC_LOG_EXPR_EXTREME("parseOkArm: bindName = " << pool_.lookup(bindName));
 
     TypePtr bindType = parseType();
     if (!bindType) {
+        LUC_LOG_EXPR("parseOkArm: ERROR - expected type");
         errorAt(DiagCode::E1005, "expected type for ok arm binding");
         return nullptr;
     }
@@ -126,6 +142,7 @@ OkArmPtr Parser::parseOkArm() {
 
     StmtPtr body = parseBlock();
     if (!body) {
+        LUC_LOG_EXPR("parseOkArm: ERROR - expected block");
         errorAt(DiagCode::E1001, "expected block for ok arm");
         return nullptr;
     }
@@ -135,6 +152,8 @@ OkArmPtr Parser::parseOkArm() {
     arm->bindName = bindName;
     arm->bindType = std::move(bindType);
     arm->body = std::move(body);
+    
+    LUC_LOG_EXPR_EXTREME("parseOkArm: success");
     return arm;
 }
 
@@ -173,30 +192,39 @@ OkArmPtr Parser::parseOkArm() {
  * @return ErrArmPtr – ErrArmAST on success, nullptr on error
  */
 ErrArmPtr Parser::parseErrArm() {
+    LUC_LOG_EXPR_EXTREME("parseErrArm: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::ERR, "expected 'err'");
     ts_.consume(TokenType::LPAREN, "expected '(' after 'err'");
 
     InternedString bindName;
     TypePtr bindType;
+    bool isBare = false;
 
     // Check for optional identifier and type (bare '!' case)
     if (!ts_.check(TokenType::RPAREN)) {
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_EXPR("parseErrArm: ERROR - expected identifier");
             errorAt(DiagCode::E1003, "expected identifier for err arm binding");
         } else {
             bindName = pool_.intern(ts_.advance().value);
+            LUC_LOG_EXPR_EXTREME("parseErrArm: bindName = " << pool_.lookup(bindName));
             bindType = parseType();
             if (!bindType) {
+                LUC_LOG_EXPR("parseErrArm: ERROR - expected type");
                 errorAt(DiagCode::E1005, "expected type for err arm binding");
             }
         }
+    } else {
+        isBare = true;
+        LUC_LOG_EXPR_EXTREME("parseErrArm: bare '!' (no error payload)");
     }
 
     ts_.consume(TokenType::RPAREN, "expected ')' after err arm");
 
     StmtPtr body = parseBlock();
     if (!body) {
+        LUC_LOG_EXPR("parseErrArm: ERROR - expected block");
         errorAt(DiagCode::E1001, "expected block for err arm");
         return nullptr;
     }
@@ -206,5 +234,7 @@ ErrArmPtr Parser::parseErrArm() {
     arm->bindName = bindName;
     arm->bindType = std::move(bindType);
     arm->body = std::move(body);
+    
+    LUC_LOG_EXPR_EXTREME("parseErrArm: success" << (isBare ? " (bare)" : ""));
     return arm;
 }

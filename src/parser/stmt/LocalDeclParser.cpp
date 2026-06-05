@@ -33,6 +33,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // 1. LVALUE PARSING (the value receiver aka the variable)
@@ -74,11 +75,16 @@
  * - Missing ']' after index: consume() reports error
  */
 ExprPtr Parser::parseLvalue() {
+    LUC_LOG_EXPR_EXTREME("parseLvalue: entering");
+    
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_STMT("parseLvalue: ERROR - expected identifier");
         errorAt(DiagCode::E1003, "expected identifier for lvalue");
         return nullptr;
     }
     std::string name = ts_.advance().value;
+    LUC_LOG_EXPR_EXTREME("parseLvalue: base identifier = '" << name << "'");
+    
     ExprPtr expr = arena_.make<IdentifierExprAST>(pool_.intern(name));
     expr->loc = ts_.currentLoc();
 
@@ -87,10 +93,12 @@ ExprPtr Parser::parseLvalue() {
         if (ts_.check(TokenType::DOT)) {
             ts_.advance();
             if (!ts_.check(TokenType::IDENTIFIER)) {
+                LUC_LOG_STMT("parseLvalue: ERROR - expected field name after '.'");
                 errorAt(DiagCode::E1003, "expected field name after '.'");
                 return expr;
             }
             std::string field = ts_.advance().value;
+            LUC_LOG_EXPR_EXTREME("parseLvalue: field access ." << field);
             auto node = arena_.make<FieldAccessExprAST>();
             node->loc = expr->loc;
             node->object = std::move(expr);
@@ -99,9 +107,11 @@ ExprPtr Parser::parseLvalue() {
         }
         // Array index: [index]
         else if (ts_.check(TokenType::LBRACKET)) {
+            LUC_LOG_EXPR_EXTREME("parseLvalue: array index access");
             ts_.advance();
             ExprPtr index = parseExpr();
             if (!index) {
+                LUC_LOG_STMT("parseLvalue: ERROR - expected index expression");
                 errorAt(DiagCode::E1008, "expected index expression");
                 return expr;
             }
@@ -115,6 +125,7 @@ ExprPtr Parser::parseLvalue() {
         }
         // Method call ':' – not an lvalue, stop parsing
         else if (ts_.check(TokenType::COLON)) {
+            LUC_LOG_EXPR_EXTREME("parseLvalue: stopping at ':' (behavior access)");
             break;
         }
         else {
@@ -164,8 +175,11 @@ ExprPtr Parser::parseLvalue() {
  *   - Invalid variable spec: breaks loop, continues with already parsed vars
  */
 ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl(std::vector<AttributePtr> attrs) {
+    LUC_LOG_STMT_VERBOSE("parseMultiVarDecl: entering");
+    
     // Attributes are not allowed on multi-variable declarations
     if (!attrs.empty()) {
+        LUC_LOG_STMT("parseMultiVarDecl: ERROR - attributes not allowed on multi-var decl");
         error(attrs[0]->loc, DiagCode::E1006, 
               "attributes cannot be used on multi-variable declarations");
     }
@@ -173,49 +187,58 @@ ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl(std::vector<AttributePtr> attr
     SourceLocation loc = ts_.currentLoc();
 
     if (!ts_.checkAny({TokenType::LET, TokenType::CONST})) {
+        LUC_LOG_STMT("parseMultiVarDecl: ERROR - expected 'let' or 'const'");
         errorAt(DiagCode::E1002, "expected 'let' or 'const'");
         return nullptr;
     }
     Token kwTok = ts_.advance();
     DeclKeyword kw = (kwTok.type == TokenType::LET) ? DeclKeyword::Let : DeclKeyword::Const;
+    LUC_LOG_STMT_EXTREME("parseMultiVarDecl: keyword = " << (kw == DeclKeyword::Let ? "let" : "const"));
 
     std::vector<std::pair<InternedString, TypePtr>> vars;
 
     // Parse first variable: IDENTIFIER type
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_STMT("parseMultiVarDecl: ERROR - expected variable name");
         errorAt(DiagCode::E1003, "expected variable name");
         return nullptr;
     }
     std::string firstName = ts_.advance().value;
     if (!looksLikeType()) {
+        LUC_LOG_STMT("parseMultiVarDecl: ERROR - expected type annotation for '" + firstName + "'");
         errorAt(DiagCode::E1005, "expected type annotation for '" + firstName + "'");
         return nullptr;
     }
     TypePtr firstType = parseType();
     if (!firstType) return nullptr;
     vars.emplace_back(pool_.intern(firstName), std::move(firstType));
+    LUC_LOG_STMT_EXTREME("parseMultiVarDecl: variable " << vars.size() << ": " << firstName);
 
     // Parse additional variables: , IDENTIFIER type
     while (ts_.check(TokenType::COMMA)) {
         ts_.advance();
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_STMT("parseMultiVarDecl: ERROR - expected variable name after comma");
             errorAt(DiagCode::E1003, "expected variable name after comma");
             break;
         }
         std::string name = ts_.advance().value;
         if (!looksLikeType()) {
+            LUC_LOG_STMT("parseMultiVarDecl: ERROR - expected type annotation for '" + name + "'");
             errorAt(DiagCode::E1005, "expected type annotation for '" + name + "'");
             break;
         }
         TypePtr type = parseType();
         if (!type) break;
         vars.emplace_back(pool_.intern(name), std::move(type));
+        LUC_LOG_STMT_EXTREME("parseMultiVarDecl: variable " << vars.size() << ": " << name);
     }
 
     // Parse '=' and RHS
     ts_.consume(TokenType::ASSIGN, DiagCode::E1001, "expected '=' in multi-assignment");
     ExprPtr rhs = parseExpr();
     if (!rhs) {
+        LUC_LOG_STMT("parseMultiVarDecl: ERROR - expected expression after '='");
         errorAt(DiagCode::E1008, "expected expression after '='");
         return nullptr;
     }
@@ -231,6 +254,7 @@ ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl(std::vector<AttributePtr> attr
     
     node->rhs = std::move(rhs);
     
+    LUC_LOG_STMT_VERBOSE("parseMultiVarDecl: success with " << vars.size() << " variables");
     return node;
 }
 
@@ -273,30 +297,36 @@ ASTPtr<MultiVarDeclAST> Parser::parseMultiVarDecl(std::vector<AttributePtr> attr
  *   - Missing RHS: reports error, returns nullptr
  */
 ASTPtr<MultiAssignStmtAST> Parser::parseMultiAssignStmt() {
+    LUC_LOG_STMT_VERBOSE("parseMultiAssignStmt: entering");
     SourceLocation loc = ts_.currentLoc();
     std::vector<ExprPtr> lhs;
 
     // Parse first lvalue
     ExprPtr first = parseLvalue();
     if (!first) {
+        LUC_LOG_STMT("parseMultiAssignStmt: ERROR - expected left-hand side expression");
         errorAt(DiagCode::E1008, "expected left-hand side expression");
         return nullptr;
     }
     lhs.push_back(std::move(first));
+    LUC_LOG_STMT_EXTREME("parseMultiAssignStmt: first lvalue parsed");
 
     // Parse additional lvalues after commas
     while (ts_.check(TokenType::COMMA)) {
         ts_.advance();
         ExprPtr next = parseLvalue();
         if (!next) {
+            LUC_LOG_STMT("parseMultiAssignStmt: ERROR - expected left-hand side expression after comma");
             errorAt(DiagCode::E1008, "expected left-hand side expression after comma");
             break;
         }
         lhs.push_back(std::move(next));
+        LUC_LOG_STMT_EXTREME("parseMultiAssignStmt: additional lvalue parsed (total " << lhs.size() << ")");
     }
 
     // Expect '='
     if (!ts_.check(TokenType::ASSIGN)) {
+        LUC_LOG_STMT("parseMultiAssignStmt: ERROR - expected '=' in multiple assignment");
         errorAt(DiagCode::E1001, "expected '=' in multiple assignment");
         // Skip to recovery point
         while (!ts_.isAtEnd() && !ts_.check(TokenType::SEMICOLON) && !ts_.check(TokenType::RBRACE)) {
@@ -305,10 +335,12 @@ ASTPtr<MultiAssignStmtAST> Parser::parseMultiAssignStmt() {
         return nullptr;
     }
     ts_.advance();
+    LUC_LOG_STMT_EXTREME("parseMultiAssignStmt: found '=', parsing RHS");
 
     // Parse RHS
     ExprPtr rhs = parseExpr(true);
     if (!rhs) {
+        LUC_LOG_STMT("parseMultiAssignStmt: ERROR - expected expression after '='");
         errorAt(DiagCode::E1008, "expected expression after '='");
         return nullptr;
     }
@@ -322,5 +354,7 @@ ASTPtr<MultiAssignStmtAST> Parser::parseMultiAssignStmt() {
     node->lhs = builder.build();
     
     node->rhs = std::move(rhs);
+    
+    LUC_LOG_STMT_VERBOSE("parseMultiAssignStmt: success with " << lhs.size() << " lvalues");
     return node;
 }

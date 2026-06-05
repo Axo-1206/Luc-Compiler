@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Switch Statement
@@ -42,14 +43,17 @@
 // ============================================================================
 
 ASTPtr<SwitchStmtAST> Parser::parseSwitchStmt() {
+    LUC_LOG_STMT_VERBOSE("parseSwitchStmt: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::SWITCH, "expected 'switch'");
 
     ExprPtr subject = parseExpr(false);
     if (!subject) {
+        LUC_LOG_STMT("parseSwitchStmt: ERROR - expected expression after 'switch'");
         errorAt(DiagCode::E1008, "expected expression after 'switch'");
         return nullptr;
     }
+    LUC_LOG_STMT_EXTREME("parseSwitchStmt: subject parsed");
 
     ts_.consume(TokenType::LBRACE, "expected '{' after switch subject");
 
@@ -59,6 +63,7 @@ ASTPtr<SwitchStmtAST> Parser::parseSwitchStmt() {
 
     std::vector<SwitchCasePtr> cases;
     bool hasDefault = false;
+    int caseCount = 0;
 
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
         ts_.match(TokenType::SEMICOLON);
@@ -66,18 +71,25 @@ ASTPtr<SwitchStmtAST> Parser::parseSwitchStmt() {
 
         if (ts_.check(TokenType::CASE)) {
             SwitchCasePtr sc = parseSwitchCase();
-            if (sc) cases.push_back(std::move(sc));
+            if (sc) {
+                caseCount++;
+                cases.push_back(std::move(sc));
+                LUC_LOG_STMT_EXTREME("parseSwitchStmt: case #" << caseCount << " parsed");
+            }
             continue;
         }
 
         if (ts_.check(TokenType::DEFAULT)) {
             if (hasDefault) {
+                LUC_LOG_STMT("parseSwitchStmt: ERROR - duplicate 'default' clause");
                 errorAt(DiagCode::E1002, "duplicate 'default' clause");
             }
+            LUC_LOG_STMT_EXTREME("parseSwitchStmt: parsing default clause");
             node->defaultLoc = ts_.currentLoc();
             ts_.advance();
             ts_.consume(TokenType::COLON, "expected ':' after 'default'");
             if (!ts_.check(TokenType::LBRACE)) {
+                LUC_LOG_STMT("parseSwitchStmt: ERROR - expected '{' to start default body");
                 errorAt(DiagCode::E1001, "expected '{' to start default body");
             } else {
                 node->defaultBody = parseBlock();
@@ -86,6 +98,7 @@ ASTPtr<SwitchStmtAST> Parser::parseSwitchStmt() {
             continue;
         }
 
+        LUC_LOG_STMT("parseSwitchStmt: ERROR - expected 'case' or 'default' inside switch, got '" << ts_.peek().value << "'");
         errorAt(DiagCode::E1002, "expected 'case' or 'default' inside switch");
         ts_.advance();
     }
@@ -95,6 +108,8 @@ ASTPtr<SwitchStmtAST> Parser::parseSwitchStmt() {
     node->cases = builder.build();
 
     ts_.consume(TokenType::RBRACE, "expected '}' to close switch");
+    
+    LUC_LOG_STMT_VERBOSE("parseSwitchStmt: parsed " << caseCount << " cases, default=" << hasDefault);
     return node;
 }
 
@@ -125,6 +140,7 @@ ASTPtr<SwitchStmtAST> Parser::parseSwitchStmt() {
 // ============================================================================
 
 SwitchCasePtr Parser::parseSwitchCase() {
+    LUC_LOG_STMT_EXTREME("parseSwitchCase: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::CASE, "expected 'case'");
 
@@ -136,16 +152,19 @@ SwitchCasePtr Parser::parseSwitchCase() {
     const int MAX_CONSECUTIVE_ERRORS = 5;
 
     if (ts_.check(TokenType::COLON)) {
+        LUC_LOG_STMT("parseSwitchCase: ERROR - expected case value before ':'");
         errorAt(DiagCode::E1001, "expected case value before ':'");
     } else {
         size_t savedPos = ts_.getPos();
         ExprPtr val = parsePrattExpr(0, false);
         if (ts_.getPos() == savedPos) {
+            LUC_LOG_STMT("parseSwitchCase: ERROR - expected case value");
             errorAt(DiagCode::E1002, "expected case value");
             if (!ts_.isAtEnd()) ts_.advance();
             consecutiveErrors++;
         } else if (val && !val->isa<UnknownExprAST>()) {
             if (ts_.check(TokenType::RANGE)) {
+                LUC_LOG_STMT_EXTREME("parseSwitchCase: range value");
                 values.push_back(parseRangeExpr(std::move(val)));
             } else {
                 values.push_back(std::move(val));
@@ -161,6 +180,7 @@ SwitchCasePtr Parser::parseSwitchCase() {
         size_t savedPos = ts_.getPos();
         ExprPtr val = parsePrattExpr(0, false);
         if (ts_.getPos() == savedPos) {
+            LUC_LOG_STMT("parseSwitchCase: ERROR - expected case value after comma");
             errorAt(DiagCode::E1002, "expected case value after comma");
             if (!ts_.isAtEnd()) ts_.advance();
             break;
@@ -175,6 +195,7 @@ SwitchCasePtr Parser::parseSwitchCase() {
     }
 
     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        LUC_LOG_STMT("parseSwitchCase: ERROR - too many errors in case values");
         errorAt(DiagCode::E1002, "too many errors in case values; skipping to ':'");
         while (!ts_.isAtEnd() && !ts_.check(TokenType::COLON)) ts_.advance();
     }
@@ -185,8 +206,11 @@ SwitchCasePtr Parser::parseSwitchCase() {
     auto builder = arena_.makeBuilder<ExprPtr>();
     for (auto& v : values) builder.push_back(std::move(v));
     sc->values = builder.build();
+    
+    LUC_LOG_STMT_EXTREME("parseSwitchCase: case has " << values.size() << " value(s)");
 
     if (!ts_.check(TokenType::LBRACE)) {
+        LUC_LOG_STMT("parseSwitchCase: ERROR - expected '{' to start case body");
         errorAt(DiagCode::E1001, "expected '{' to start case body");
     } else {
         sc->body = parseBlock();

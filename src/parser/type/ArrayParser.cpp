@@ -33,6 +33,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // 1. CONCRETE ARRAY TYPE
@@ -67,6 +68,7 @@
 // ============================================================================
 
 TypePtr Parser::parseArrayType() {
+    LUC_LOG_TYPE_VERBOSE("parseArrayType: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LBRACKET, "expected '['");
 
@@ -75,36 +77,43 @@ TypePtr Parser::parseArrayType() {
 
     // Dynamic array: [*, T]
     if (ts_.check(TokenType::MUL)) {
+        LUC_LOG_TYPE_EXTREME("parseArrayType: dynamic array [*, T]");
         arrayKind = ArrayKind::Dynamic;
         ts_.advance();
         ts_.consume(TokenType::RBRACKET, "expected ']' after '*'");
         TypePtr elem = parseType();
         if (!elem) {
+            LUC_LOG_TYPE("parseArrayType: ERROR - missing element type after '[*]'");
             errorAt(DiagCode::E1005, "expected element type after '[*]'");
             return arena_.make<UnknownTypeAST>();
         }
         auto node = arena_.make<ArrayTypeAST>(arrayKind, 0, std::move(elem));
         node->loc = loc;
+        LUC_LOG_TYPE_VERBOSE("parseArrayType: created dynamic array");
         return node;
     }
 
     // Slice: [_, T]
     if (ts_.check(TokenType::WILDCARD)) {
+        LUC_LOG_TYPE_EXTREME("parseArrayType: slice [_, T]");
         arrayKind = ArrayKind::Slice;
         ts_.advance();
         ts_.consume(TokenType::RBRACKET, "expected ']' after '_'");
         TypePtr elem = parseType();
         if (!elem) {
+            LUC_LOG_TYPE("parseArrayType: ERROR - missing element type after '[_, '");
             errorAt(DiagCode::E1005, "expected element type after '[_, '");
             return arena_.make<UnknownTypeAST>();
         }
         auto node = arena_.make<ArrayTypeAST>(arrayKind, 0, std::move(elem));
         node->loc = loc;
+        LUC_LOG_TYPE_VERBOSE("parseArrayType: created slice");
         return node;
     }
 
     // Fixed array: [N, T]
     if (ts_.check(TokenType::INT_LITERAL)) {
+        LUC_LOG_TYPE_EXTREME("parseArrayType: fixed array [N, T]");
         arrayKind = ArrayKind::Fixed;
         Token sizeTok = ts_.advance();
         std::string raw = sizeTok.value;
@@ -113,6 +122,7 @@ TypePtr Parser::parseArrayType() {
         char* end = nullptr;
         fixedSize = std::strtoull(raw.c_str(), &end, 10);
         if (*end != '\0') {
+            LUC_LOG_TYPE("parseArrayType: ERROR - invalid array size '" << raw << "'");
             error(ts_.locOf(sizeTok), DiagCode::E1007, "invalid array size");
             fixedSize = 0;
         }
@@ -120,11 +130,13 @@ TypePtr Parser::parseArrayType() {
         ts_.consume(TokenType::RBRACKET, "expected ']' after array size");
         TypePtr elem = parseType();
         if (!elem) {
+            LUC_LOG_TYPE("parseArrayType: ERROR - missing element type after '[" << sizeTok.value << ", '");
             errorAt(DiagCode::E1005, "expected element type after '[" + sizeTok.value + ", '");
             return arena_.make<UnknownTypeAST>();
         }
         auto node = arena_.make<ArrayTypeAST>(arrayKind, fixedSize, std::move(elem));
         node->loc = loc;
+        LUC_LOG_TYPE_VERBOSE("parseArrayType: created fixed array with size " << fixedSize);
         return node;
     }
 
@@ -132,6 +144,7 @@ TypePtr Parser::parseArrayType() {
     // The grammar for generic array is only allowed in impl/from targets or type alias RHS.
     // We need to detect this early to give a meaningful error.
     if (ts_.check(TokenType::LESS) && !ts_.isAtEnd()) {
+        LUC_LOG_TYPE("parseArrayType: ERROR - generic array syntax in invalid context");
         // Look ahead: after '<' there might be an identifier then '>'
         // This is a generic array syntax used in wrong context.
         errorAt(DiagCode::E1024, "generic array type (e.g., '[_, <T>]') only allowed as `impl` target, `from` target, or in type alias right‑hand side");
@@ -145,6 +158,7 @@ TypePtr Parser::parseArrayType() {
         return arena_.make<UnknownTypeAST>();
     }
 
+    LUC_LOG_TYPE("parseArrayType: ERROR - expected '_', '*', or integer in array type, got '" << ts_.peek().value << "'");
     errorAt(DiagCode::E1001, "expected '_', '*', or integer in array type");
     // Recovery: skip to matching ']'
     int depth = 1;
@@ -198,6 +212,7 @@ TypePtr Parser::parseArrayType() {
 // ============================================================================
 
 TypePtr Parser::parseGenericArray() {
+    LUC_LOG_TYPE_VERBOSE("parseGenericArray: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LBRACKET, "expected '['");
 
@@ -206,12 +221,15 @@ TypePtr Parser::parseGenericArray() {
     uint64_t fixedSize = 0;
 
     if (ts_.check(TokenType::WILDCARD)) {
+        LUC_LOG_TYPE_EXTREME("parseGenericArray: generic slice [_, <T>]");
         arrayKind = ArrayKind::Slice;
         ts_.advance();
     } else if (ts_.check(TokenType::MUL)) {
+        LUC_LOG_TYPE_EXTREME("parseGenericArray: generic dynamic [*, <T>]");
         arrayKind = ArrayKind::Dynamic;
         ts_.advance();
     } else if (ts_.check(TokenType::INT_LITERAL)) {
+        LUC_LOG_TYPE_EXTREME("parseGenericArray: generic fixed [N, <T>]");
         arrayKind = ArrayKind::Fixed;
         Token sizeTok = ts_.advance();
         std::string raw = sizeTok.value;
@@ -219,10 +237,12 @@ TypePtr Parser::parseGenericArray() {
         char* end = nullptr;
         fixedSize = std::strtoull(raw.c_str(), &end, 10);
         if (*end != '\0') {
+            LUC_LOG_TYPE("parseGenericArray: ERROR - invalid array size '" << raw << "'");
             error(ts_.locOf(sizeTok), DiagCode::E1007, "invalid array size");
             fixedSize = 0;
         }
     } else {
+        LUC_LOG_TYPE("parseGenericArray: ERROR - expected '_', '*', or integer literal, got '" << ts_.peek().value << "'");
         errorAt(DiagCode::E1001, "expected '_', '*', or integer literal in generic array");
         // Recovery: skip to matching ']'
         int depth = 1;
@@ -240,6 +260,7 @@ TypePtr Parser::parseGenericArray() {
     ts_.consume(TokenType::LESS, "expected '<' before type variable in generic array");
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_TYPE("parseGenericArray: ERROR - expected type variable name");
         errorAt(DiagCode::E1003, "expected type variable name after '<'");
         // Still try to recover
         ts_.consume(TokenType::GREATER, "expected '>' after type variable");
@@ -248,10 +269,13 @@ TypePtr Parser::parseGenericArray() {
     }
 
     InternedString typeParamName = pool_.intern(ts_.advance().value);
+    LUC_LOG_TYPE_VERBOSE("parseGenericArray: type parameter name = " << pool_.lookup(typeParamName));
+    
     ts_.consume(TokenType::GREATER, "expected '>' after type variable");
     ts_.consume(TokenType::RBRACKET, "expected ']' to close generic array");
 
     auto node = arena_.make<GenericArrayTypeAST>(arrayKind, fixedSize, typeParamName);
     node->loc = loc;
+    LUC_LOG_TYPE_VERBOSE("parseGenericArray: success");
     return node;
 }

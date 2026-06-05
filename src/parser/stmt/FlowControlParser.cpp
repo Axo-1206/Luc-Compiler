@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // If Statement (Statement Form)
@@ -40,18 +41,22 @@
 // ============================================================================
 
 ASTPtr<IfStmtAST> Parser::parseIfStmt() {
+    LUC_LOG_STMT_VERBOSE("parseIfStmt: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::IF, "expected 'if'");
 
     ExprPtr condition = parseExpr(false);
     if (!condition) {
+        LUC_LOG_STMT("parseIfStmt: ERROR - missing condition");
         errorAt(DiagCode::E1008, "expected condition after 'if'");
         auto node = arena_.make<IfStmtAST>();
         node->loc = loc;
         return node;
     }
+    LUC_LOG_STMT_EXTREME("parseIfStmt: condition parsed");
 
     if (!ts_.check(TokenType::LBRACE)) {
+        LUC_LOG_STMT("parseIfStmt: ERROR - expected '{' after condition");
         errorAt(DiagCode::E1001, "expected '{' after if condition");
         auto node = arena_.make<IfStmtAST>();
         node->loc = loc;
@@ -59,6 +64,7 @@ ASTPtr<IfStmtAST> Parser::parseIfStmt() {
         return node;
     }
     StmtPtr thenBranch = parseBlock();
+    LUC_LOG_STMT_EXTREME("parseIfStmt: then branch parsed");
 
     auto node = arena_.make<IfStmtAST>();
     node->loc = loc;
@@ -66,15 +72,20 @@ ASTPtr<IfStmtAST> Parser::parseIfStmt() {
     node->thenBranch = std::move(thenBranch);
 
     if (ts_.match(TokenType::ELSE)) {
+        LUC_LOG_STMT_EXTREME("parseIfStmt: processing else branch");
         if (ts_.check(TokenType::IF)) {
             node->elseBranch = parseIfStmt();
+            LUC_LOG_STMT_EXTREME("parseIfStmt: else-if branch");
         } else if (ts_.check(TokenType::LBRACE)) {
             node->elseBranch = parseBlock();
+            LUC_LOG_STMT_EXTREME("parseIfStmt: else block");
         } else {
+            LUC_LOG_STMT("parseIfStmt: ERROR - expected 'if' or '{' after 'else'");
             errorAt(DiagCode::E1001, "expected 'if' or '{' after 'else'");
         }
     }
 
+    LUC_LOG_STMT_VERBOSE("parseIfStmt: success");
     return node;
 }
 
@@ -112,6 +123,7 @@ ASTPtr<IfStmtAST> Parser::parseIfStmt() {
 // ============================================================================
 
 ASTPtr<ReturnStmtAST> Parser::parseReturnStmt() {
+    LUC_LOG_STMT_VERBOSE("parseReturnStmt: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::RETURN, "expected 'return'");
 
@@ -121,16 +133,19 @@ ASTPtr<ReturnStmtAST> Parser::parseReturnStmt() {
     if (!ts_.check(TokenType::RBRACE) && !ts_.check(TokenType::SEMICOLON) && !ts_.isAtEnd()) {
         std::vector<ExprPtr> values;
         bool first = true;
+        int valueCount = 0;
         
         while (!ts_.check(TokenType::RBRACE) && !ts_.check(TokenType::SEMICOLON) && !ts_.isAtEnd()) {
             if (!first) {
                 if (!ts_.match(TokenType::COMMA)) break;
                 if (ts_.check(TokenType::COMMA)) {
+                    LUC_LOG_STMT("parseReturnStmt: ERROR - empty expression in return list");
                     errorAt(DiagCode::E1008, "empty expression in return list");
                     ts_.advance();
                     continue;
                 }
                 if (ts_.check(TokenType::RBRACE) || ts_.check(TokenType::SEMICOLON) || ts_.isAtEnd()) {
+                    LUC_LOG_STMT("parseReturnStmt: ERROR - trailing comma in return list");
                     errorAt(DiagCode::E1001, "trailing comma in return list");
                     break;
                 }
@@ -140,16 +155,22 @@ ASTPtr<ReturnStmtAST> Parser::parseReturnStmt() {
             size_t savedPos = ts_.getPos();
             ExprPtr expr = parseExpr();
             if (ts_.getPos() == savedPos) {
+                LUC_LOG_STMT("parseReturnStmt: ERROR - expected expression after 'return'");
                 errorAt(DiagCode::E1008, "expected expression after 'return'");
                 if (!ts_.isAtEnd()) ts_.advance();
                 break;
             }
+            valueCount++;
             values.push_back(std::move(expr));
         }
+        
+        LUC_LOG_STMT_EXTREME("parseReturnStmt: returning " << valueCount << " value(s)");
         
         auto builder = arena_.makeBuilder<ExprPtr>();
         for (auto& v : values) builder.push_back(std::move(v));
         node->values = builder.build();
+    } else {
+        LUC_LOG_STMT_EXTREME("parseReturnStmt: void return (no values)");
     }
 
     return node;
@@ -179,6 +200,7 @@ ASTPtr<ReturnStmtAST> Parser::parseReturnStmt() {
 // ============================================================================
 
 ASTPtr<BreakStmtAST> Parser::parseBreakStmt() {
+    LUC_LOG_STMT_EXTREME("parseBreakStmt: break statement");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::BREAK, "expected 'break'");
 
@@ -188,6 +210,7 @@ ASTPtr<BreakStmtAST> Parser::parseBreakStmt() {
 }
 
 ASTPtr<ContinueStmtAST> Parser::parseContinueStmt() {
+    LUC_LOG_STMT_EXTREME("parseContinueStmt: continue statement");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::CONTINUE, "expected 'continue'");
 

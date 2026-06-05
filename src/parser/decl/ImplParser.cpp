@@ -31,6 +31,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // 1. IMPL DECLARATION
@@ -91,6 +92,7 @@
  * @return ASTPtr<ImplDeclAST> – impl node on success, nullptr on error
  */
 ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
+    LUC_LOG_DECL_VERBOSE("parseImplDecl: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::IMPL, "expected 'impl'");
 
@@ -103,37 +105,45 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
 
     // Case 1: Array target (concrete or generic)
     if (ts_.check(TokenType::LBRACKET)) {
+        LUC_LOG_DECL_EXTREME("parseImplDecl: array target");
         if (looksLikeGenericArray()) {
+            LUC_LOG_DECL_EXTREME("parseImplDecl: generic array target");
             targetType = parseGenericArray();
         } else {
             targetType = parseArrayType();
         }
         
         if (!targetType || targetType->isa<UnknownTypeAST>()) {
+            LUC_LOG_DECL("parseImplDecl: ERROR - invalid array target");
             errorAt(DiagCode::E1005, "invalid array target in impl block");
             return nullptr;
         }
     }
     // Case 2: Primitive type
     else if (isPrimitiveTypeToken(ts_.peekType())) {
+        LUC_LOG_DECL_EXTREME("parseImplDecl: primitive type target");
         targetType = parsePrimitiveType();
     }
     // Case 3: Named type (struct, enum, type alias)
     else if (ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_DECL_EXTREME("parseImplDecl: named type target");
         targetType = parseNamedType();
     }
     // Case 4: Error
     else {
+        LUC_LOG_DECL("parseImplDecl: ERROR - expected target type after 'impl'");
         errorAt(DiagCode::E1003, 
                 "expected target type after 'impl' (primitive, identifier, or '[')");
         return nullptr;
     }
 
     if (!targetType || targetType->isa<UnknownTypeAST>()) {
+        LUC_LOG_DECL("parseImplDecl: ERROR - invalid target type");
         errorAt(DiagCode::E1005, "invalid target type in impl block");
         return nullptr;
     }
     node->targetType = std::move(targetType);
+    LUC_LOG_DECL_EXTREME("parseImplDecl: target type parsed");
 
     // For generic array targets, the type variable is already stored in the node.
     // The impl should NOT have additional generic parameters.
@@ -141,27 +151,38 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
 
     // Parse impl-level generic parameters (only for generic structs/aliases)
     if (!isGenericArray && ts_.check(TokenType::LESS)) {
+        LUC_LOG_DECL_EXTREME("parseImplDecl: parsing generic parameters");
         node->genericParams = parseGenericParams();
+        LUC_LOG_DECL_EXTREME("parseImplDecl: " << node->genericParams.size() << " generic parameter(s)");
     }
 
     // Parse 'as' alias (optional)
     if (ts_.match(TokenType::AS)) {
+        LUC_LOG_DECL_EXTREME("parseImplDecl: parsing 'as' alias");
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_DECL("parseImplDecl: ERROR - expected identifier after 'as'");
             errorAt(DiagCode::E1003, "expected identifier after 'as' for receiver alias");
         } else {
             node->receiverAlias = pool_.intern(ts_.advance().value);
+            LUC_LOG_DECL_EXTREME("parseImplDecl: receiver alias = " << pool_.lookup(node->receiverAlias));
         }
     }
 
     // Parse trait conformance (optional)
     if (ts_.check(TokenType::COLON)) {
+        LUC_LOG_DECL_EXTREME("parseImplDecl: parsing trait conformance");
         node->traitRef = parseTraitRef();
+        if (node->traitRef) {
+            LUC_LOG_DECL_EXTREME("parseImplDecl: trait = " << pool_.lookup(node->traitRef->name));
+        }
     }
 
     // Parse impl body
     ts_.consume(TokenType::LBRACE, "expected '{' to open impl body");
 
     std::vector<MethodDeclPtr> methods;
+    int methodCount = 0;
+    
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
         ts_.match(TokenType::SEMICOLON);
         ts_.match(TokenType::COMMA);
@@ -172,8 +193,11 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
         if (ts_.check(TokenType::IDENTIFIER)) {
             MethodDeclPtr md = parseMethodDecl();
             if (md) {
+                methodCount++;
+                LUC_LOG_DECL_EXTREME("parseImplDecl: parsed method #" << methodCount);
                 methods.push_back(std::move(md));
             } else {
+                LUC_LOG_DECL("parseImplDecl: ERROR - failed to parse method");
                 if (ts_.getPos() == savedPos && !ts_.isAtEnd()) ts_.advance();
                 while (!ts_.isAtEnd() && !ts_.check(TokenType::RBRACE) && 
                        !ts_.check(TokenType::IDENTIFIER)) ts_.advance();
@@ -181,6 +205,7 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
             continue;
         }
 
+        LUC_LOG_DECL("parseImplDecl: ERROR - expected method declaration inside impl block");
         errorAt(DiagCode::E1002, "expected method declaration inside impl block");
         if (ts_.getPos() == savedPos && !ts_.isAtEnd()) ts_.advance();
         while (!ts_.isAtEnd() && !ts_.check(TokenType::RBRACE) && 
@@ -192,6 +217,8 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
     node->methods = builder.build();
 
     ts_.consume(TokenType::RBRACE, "expected '}' to close impl body");
+    
+    LUC_LOG_DECL_VERBOSE("parseImplDecl: parsed " << methodCount << " method(s)");
     return node;
 }
 
@@ -199,60 +226,19 @@ ASTPtr<ImplDeclAST> Parser::parseImplDecl(Visibility vis) {
 // 2. METHOD DECLARATION
 // ============================================================================
 
-/**
- * @brief Parses a method implementation inside an `impl` block.
- *
- * Grammar (from LUC_GRAMMAR.md):
- *   method_decl := IDENTIFIER [ '<' generic_params '>' ] [ qualifier_list ] 
- *                  param_group+ [ '->' return_list ] '=' func_body           -- inline body
- *                | IDENTIFIER '=' func_ref                                   -- plain assignment
- *                | IDENTIFIER '=' func_ref '(' receiver_arg ')' '!'          -- injection assignment
- *
- *   func_ref := IDENTIFIER
- *             | IDENTIFIER '.' IDENTIFIER
- *             | func_ref generic_args
- *
- * @par Examples
- *   // Inline body with generic parameters
- *   map<U> (f (T) -> U) -> Box<U> = { ... }
- *
- *   // Plain assignment with generic instantiation
- *   toStr = utils.toStr<int>
- *
- *   // Injection assignment with generic instantiation
- *   map = transform<T, U>(self)!
- *
- *   // Inline body without generics
- *   length () -> float = { return #sqrt(self.x*self.x + self.y*self.y) }
- *
- * ─── The Three Forms ──────────────────────────────────────────────────────
- *
- * 1. **Inline Body** – Full signature with optional generic parameters,
- *    qualifiers, parameter groups, return types, and a block/expression body.
- *
- * 2. **Plain Assignment** – Method name, `=`, and a function reference.
- *    No qualifiers, no parameter groups, no return type. The function reference
- *    may include generic instantiation (e.g., `utils.toStr<int>`).
- *
- * 3. **Injection Assignment** – Same as plain assignment, but with `(receiver_arg)!`
- *    appended. The function reference may include generic instantiation.
- *
- * ─── Detection ─────────────────────────────────────────────────────────────
- *   The parser peeks ahead after the method name to see if the next non‑comment
- *   token is `=`. If yes, it treats the declaration as an assignment form;
- *   otherwise, it falls back to the inline body form.
- *
- * @return MethodDeclPtr – parsed method node, or nullptr on error
- */
+// Add logging to parseMethodDecl (similar to FuncParser.cpp patterns)
 MethodDeclPtr Parser::parseMethodDecl() {
+    LUC_LOG_DECL_EXTREME("parseMethodDecl: entering");
     SourceLocation loc = ts_.currentLoc();
 
     // ---------- 1. Parse method name ----------
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_DECL("parseMethodDecl: ERROR - expected method name");
         errorAt(DiagCode::E1003, "expected method name");
         return nullptr;
     }
     InternedString name = pool_.intern(ts_.advance().value);
+    LUC_LOG_DECL_EXTREME("parseMethodDecl: method name = " << pool_.lookup(name));
     
     // ---------- 2. Check for generic parameters on the method ----------
     // Save position before parsing generic params (we may need to restore for assignment form)
@@ -447,5 +433,6 @@ MethodDeclPtr Parser::parseMethodDecl() {
     }
 
     ts_.match(TokenType::SEMICOLON);
+    LUC_LOG_DECL_EXTREME("parseMethodDecl: success");
     return method;
 }

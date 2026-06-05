@@ -2,6 +2,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 /**
  * @brief Parses a struct type declaration.
@@ -25,14 +26,17 @@
  * - Missing '}': consume() reports error
  */
 ASTPtr<StructDeclAST> Parser::parseStructDecl(Visibility vis) {
+    LUC_LOG_DECL_VERBOSE("parseStructDecl: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::STRUCT, "expected 'struct'");
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_DECL("parseStructDecl: ERROR - expected struct name");
         errorAt(DiagCode::E1003, "expected struct name");
         return nullptr;
     }
     InternedString name = pool_.intern(ts_.advance().value);
+    LUC_LOG_DECL_EXTREME("parseStructDecl: struct name = " << pool_.lookup(name));
 
     auto node = arena_.make<StructDeclAST>();
     node->loc = loc;
@@ -40,12 +44,16 @@ ASTPtr<StructDeclAST> Parser::parseStructDecl(Visibility vis) {
     node->visibility = vis;
 
     if (ts_.check(TokenType::LESS)) {
+        LUC_LOG_DECL_EXTREME("parseStructDecl: parsing generic parameters");
         node->genericParams = parseGenericParams();
+        LUC_LOG_DECL_EXTREME("parseStructDecl: " << node->genericParams.size() << " generic parameter(s)");
     }
 
     ts_.consume(TokenType::LBRACE, "expected '{' to open struct body");
 
     std::vector<FieldDeclPtr> fields;
+    int fieldCount = 0;
+    
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
         ts_.match(TokenType::SEMICOLON);
         ts_.match(TokenType::COMMA);
@@ -54,8 +62,11 @@ ASTPtr<StructDeclAST> Parser::parseStructDecl(Visibility vis) {
         size_t savedPos = ts_.getPos();
         FieldDeclPtr field = parseFieldDecl();
         if (field) {
+            fieldCount++;
+            LUC_LOG_DECL_EXTREME("parseStructDecl: parsed field #" << fieldCount);
             fields.push_back(std::move(field));
         } else {
+            LUC_LOG_DECL("parseStructDecl: ERROR - failed to parse field");
             if (ts_.getPos() == savedPos && !ts_.isAtEnd()) ts_.advance();
             while (!ts_.isAtEnd() && !ts_.check(TokenType::RBRACE) && 
                    !ts_.check(TokenType::IDENTIFIER)) ts_.advance();
@@ -67,6 +78,8 @@ ASTPtr<StructDeclAST> Parser::parseStructDecl(Visibility vis) {
     node->fields = builder.build();
 
     ts_.consume(TokenType::RBRACE, "expected '}' to close struct body");
+    
+    LUC_LOG_DECL_VERBOSE("parseStructDecl: parsed " << fieldCount << " field(s)");
     return node;
 }
 
@@ -91,24 +104,30 @@ ASTPtr<StructDeclAST> Parser::parseStructDecl(Visibility vis) {
  * - Missing expression after '=': reports error (field still created)
  */
 FieldDeclPtr Parser::parseFieldDecl() {
+    LUC_LOG_DECL_EXTREME("parseFieldDecl: entering");
     SourceLocation loc = ts_.currentLoc();
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_DECL("parseFieldDecl: ERROR - expected field name");
         errorAt(DiagCode::E1003, "expected field name");
         return nullptr;
     }
     InternedString name = pool_.intern(ts_.advance().value);
+    LUC_LOG_DECL_EXTREME("parseFieldDecl: field name = " << pool_.lookup(name));
 
     TypePtr type = parseType();
     if (!type) {
+        LUC_LOG_DECL("parseFieldDecl: ERROR - expected type for field");
         errorAt(DiagCode::E1005, "expected type for field '" + std::string(pool_.lookup(name)) + "'");
         return nullptr;
     }
 
     ExprPtr defaultVal;
     if (ts_.match(TokenType::ASSIGN)) {
+        LUC_LOG_DECL_EXTREME("parseFieldDecl: parsing default value");
         defaultVal = parseExpr();
         if (!defaultVal) {
+            LUC_LOG_DECL("parseFieldDecl: ERROR - expected expression after '='");
             errorAt(DiagCode::E1008, "expected expression after '=' in field default value");
         }
     }

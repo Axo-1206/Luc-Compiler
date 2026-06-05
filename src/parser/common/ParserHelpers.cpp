@@ -36,6 +36,7 @@
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "registry/QualifierRegistry.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // 1. PARAMETER HELPERS
@@ -63,11 +64,15 @@
  * - If parsing fails, consumes one token and continues.
  */
 std::vector<ParamPtr> Parser::parseParamList() {
+    LUC_LOG_DECL_EXTREME("parseParamList: entering");
     std::vector<ParamPtr> list;
+    int paramCount = 0;
+    
     while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
         if (!list.empty() && !ts_.match(TokenType::COMMA))
             break;
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_DECL("parseParamList: ERROR - expected parameter name");
             errorAt(DiagCode::E1003, "expected parameter name");
             break;
         }
@@ -75,8 +80,16 @@ std::vector<ParamPtr> Parser::parseParamList() {
         param->name = pool_.intern(ts_.advance().value);
         param->isVariadic = ts_.match(TokenType::VARIADIC);
         param->type = parseType();
-        if (param->type) list.push_back(std::move(param));
+        if (param->type) {
+            paramCount++;
+            LUC_LOG_DECL_EXTREME("parseParamList: parameter #" << paramCount 
+                                 << " = " << pool_.lookup(param->name)
+                                 << (param->isVariadic ? " ..." : ""));
+            list.push_back(std::move(param));
+        }
     }
+    
+    LUC_LOG_DECL_EXTREME("parseParamList: parsed " << paramCount << " parameter(s)");
     return list;
 }
 
@@ -99,6 +112,7 @@ std::vector<ParamPtr> Parser::parseParamList() {
  * - Recovers from missing ')' by consuming until RPAREN or EOF.
  */
 ParamGroup Parser::parseParamGroup() {
+    LUC_LOG_DECL_EXTREME("parseParamGroup: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LPAREN, "expected '(' to start parameter group");
     
@@ -106,6 +120,7 @@ ParamGroup Parser::parseParamGroup() {
     
     ts_.consume(TokenType::RPAREN, "expected ')' to close parameter group");
     
+    LUC_LOG_DECL_EXTREME("parseParamGroup: parsed " << params.size() << " parameter(s)");
     return params;
 }
 
@@ -125,12 +140,15 @@ ParamGroup Parser::parseParamGroup() {
  * closing ')'.
  */
 ArenaSpan<ExprPtr> Parser::parseArgList() {
+    LUC_LOG_DECL_EXTREME("parseArgList: entering");
     std::vector<ExprPtr> args;
     int consecutiveErrors = 0;
     const int MAX_CONSECUTIVE_ERRORS = 5;
+    int argCount = 0;
 
     while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            LUC_LOG_DECL("parseArgList: ERROR - too many consecutive errors in argument list");
             errorAt(DiagCode::E1002, "too many consecutive errors in argument list; skipping to ')'");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::RPAREN)) ts_.advance();
             break;
@@ -140,6 +158,7 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
         ExprPtr arg = parseExpr();
 
         if (ts_.getPos() == savedPos) {
+            LUC_LOG_DECL("parseArgList: ERROR - expected argument expression");
             errorAt(DiagCode::E1008, "expected argument expression");
             if (!ts_.isAtEnd()) ts_.advance();
             consecutiveErrors++;
@@ -148,10 +167,13 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
         }
 
         consecutiveErrors = 0;
+        argCount++;
+        LUC_LOG_DECL_EXTREME("parseArgList: argument #" << argCount);
         args.push_back(std::move(arg));
 
         if (ts_.check(TokenType::RPAREN)) break;
         if (!ts_.match(TokenType::COMMA)) {
+            LUC_LOG_DECL("parseArgList: ERROR - expected ',' after argument");
             errorAt(DiagCode::E1001, "expected ',' after argument");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::COMMA) && !ts_.check(TokenType::RPAREN)) {
                 ts_.advance();
@@ -163,6 +185,8 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
     
     auto builder = arena_.makeBuilder<ExprPtr>();
     for (auto& a : args) builder.push_back(std::move(a));
+    
+    LUC_LOG_DECL_EXTREME("parseArgList: parsed " << argCount << " argument(s)");
     return builder.build();
 }
 
@@ -191,48 +215,61 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
  * - Invalid type in list: skips type, continues
  */
 ArenaSpan<TypePtr> Parser::parseReturnList() {
+    LUC_LOG_DECL_EXTREME("parseReturnList: entering");
+    
     // Case 1: Single return type (no parentheses)
     if (!ts_.check(TokenType::LPAREN)) {
+        LUC_LOG_DECL_EXTREME("parseReturnList: single return type (no parentheses)");
         // Use existing looksLikeType() to validate we have a type start
         if (!looksLikeType()) {
+            LUC_LOG_DECL("parseReturnList: ERROR - expected return type after '->'");
             errorAt(DiagCode::E1005, "expected return type after '->'");
             return ArenaSpan<TypePtr>();
         }
         TypePtr t = parseType();
         if (!t || t->isa<UnknownTypeAST>()) {
+            LUC_LOG_DECL("parseReturnList: ERROR - expected return type after '->'");
             errorAt(DiagCode::E1005, "expected return type after '->'");
             return ArenaSpan<TypePtr>();
         }
         auto builder = arena_.makeBuilder<TypePtr>();
         builder.push_back(std::move(t));
+        LUC_LOG_DECL_EXTREME("parseReturnList: single return type parsed");
         return builder.build();
     }
 
     // We have '(' - need to determine if it's a function type or multi-return
+    LUC_LOG_DECL_EXTREME("parseReturnList: detected '(' - checking if function type or multi-return");
     size_t savedPos = ts_.getPos();
     ts_.consume(TokenType::LPAREN, "expected '(' for return list");
 
     // Use lookahead to decide
     if (isFunctionTypeAfterParen(ts_.getPos())) {
+        LUC_LOG_DECL_EXTREME("parseReturnList: this is a function type");
         // This is a function type (the parentheses belong to the function's parameter group)
         ts_.setPos(savedPos);
         TypePtr funcType = parseFuncType();
         if (!funcType || funcType->isa<UnknownTypeAST>()) {
+            LUC_LOG_DECL("parseReturnList: ERROR - expected function type");
             errorAt(DiagCode::E1005, "expected function type");
             return ArenaSpan<TypePtr>();
         }
         auto builder = arena_.makeBuilder<TypePtr>();
         builder.push_back(std::move(funcType));
+        LUC_LOG_DECL_EXTREME("parseReturnList: function type parsed");
         return builder.build();
     }
 
     // Not a function type → parse as multi-return list
+    LUC_LOG_DECL_EXTREME("parseReturnList: multi-return list");
     // We are already positioned after the '(' (from the consume above)
     std::vector<TypePtr> types;
+    int typeCount = 0;
 
     while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
         if (!types.empty() && !ts_.match(TokenType::COMMA)) {
             if (ts_.check(TokenType::RPAREN)) break;
+            LUC_LOG_DECL("parseReturnList: ERROR - expected ',' between return types");
             errorAt(DiagCode::E1001, "expected ',' between return types");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::COMMA) && !ts_.check(TokenType::RPAREN)) {
                 ts_.advance();
@@ -245,6 +282,7 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
         size_t typeSavedPos = ts_.getPos();
         TypePtr t = parseType();
         if (ts_.getPos() == typeSavedPos) {
+            LUC_LOG_DECL("parseReturnList: ERROR - expected return type");
             errorAt(DiagCode::E1005, "expected return type");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::RPAREN)) {
                 ts_.advance();
@@ -252,6 +290,8 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
             break;
         }
         if (t && !t->isa<UnknownTypeAST>()) {
+            typeCount++;
+            LUC_LOG_DECL_EXTREME("parseReturnList: return type #" << typeCount);
             types.push_back(std::move(t));
         }
     }
@@ -260,6 +300,8 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
 
     auto builder = arena_.makeBuilder<TypePtr>();
     for (auto& t : types) builder.push_back(std::move(t));
+    
+    LUC_LOG_DECL_EXTREME("parseReturnList: parsed " << typeCount << " return type(s)");
     return builder.build();
 }
 
@@ -292,35 +334,49 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
  * - Duplicate qualifier: reports error (E1018), skips the duplicate.
  */
 QualifierSet Parser::parseQualifiers() {
+    LUC_LOG_DECL_EXTREME("parseQualifiers: entering");
     QualifierSet qs;
+    int qualifierCount = 0;
     
     while (ts_.check(TokenType::TILDE)) {
         SourceLocation loc = ts_.currentLoc();
         ts_.advance(); // consume '~'
         
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_DECL("parseQualifiers: ERROR - expected qualifier name after '~'");
             error(loc, DiagCode::E1003, "expected qualifier name after '~'");
             break;
         }
         InternedString name = pool_.intern(ts_.advance().value);
+        std::string_view nameStr = pool_.lookup(name);
+        LUC_LOG_DECL_EXTREME("parseQualifiers: found qualifier '~" << nameStr << "'");
         
         // Check for duplicate qualifier
         if (std::find(qs.raw.begin(), qs.raw.end(), name) != qs.raw.end()) {
+            LUC_LOG_DECL("parseQualifiers: ERROR - duplicate qualifier '~" << nameStr << "'");
             error(loc, DiagCode::E1018, 
-                  "duplicate qualifier '~" + std::string(pool_.lookup(name)) + "'");
+                  "duplicate qualifier '~" + std::string(nameStr) + "'");
             continue;
         }
         
         const QualifierEntry* entry = qualifier::lookup(name);
         if (!entry) {
+            LUC_LOG_DECL("parseQualifiers: ERROR - unknown qualifier '~" << nameStr << "'");
             error(loc, DiagCode::E1016, 
-                  "unknown qualifier '~" + std::string(pool_.lookup(name)) + 
+                  "unknown qualifier '~" + std::string(nameStr) + 
                   "'; known qualifiers: " + qualifier::allNames());
             continue;
         }
         
         qs.raw.push_back(name);
         qs.bitmask |= entry->bit;
+        qualifierCount++;
+        LUC_LOG_DECL_EXTREME("parseQualifiers: added qualifier (bitmask now 0x" 
+                             << std::hex << qs.bitmask << std::dec << ")");
+    }
+    
+    if (qualifierCount > 0) {
+        LUC_LOG_DECL_EXTREME("parseQualifiers: total " << qualifierCount << " qualifier(s)");
     }
     return qs;
 }
@@ -347,16 +403,31 @@ QualifierSet Parser::parseQualifiers() {
  * - Returns empty vector on no initial identifier.
  */
 std::vector<InternedString> Parser::parseModulePath() {
+    LUC_LOG_DECL_EXTREME("parseModulePath: entering");
     std::vector<InternedString> path;
-    if (!ts_.check(TokenType::IDENTIFIER)) return path;
+    
+    if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_DECL_EXTREME("parseModulePath: no identifier, returning empty");
+        return path;
+    }
+    
     path.push_back(pool_.intern(ts_.advance().value));
+    LUC_LOG_DECL_EXTREME("parseModulePath: segment 1 = " << pool_.lookup(path.back()));
+    
+    int segmentCount = 1;
     while (ts_.match(TokenType::DOT)) {
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_DECL("parseModulePath: ERROR - expected identifier after '.'");
             errorAt(DiagCode::E1003, "expected identifier after '.'");
             break;
         }
         path.push_back(pool_.intern(ts_.advance().value));
+        segmentCount++;
+        LUC_LOG_DECL_EXTREME("parseModulePath: segment " << segmentCount 
+                             << " = " << pool_.lookup(path.back()));
     }
+    
+    LUC_LOG_DECL_EXTREME("parseModulePath: " << segmentCount << " segment(s)");
     return path;
 }
 
@@ -408,14 +479,18 @@ std::vector<InternedString> Parser::parseModulePath() {
  *     returns empty span (still creates CallableRefExprAST with empty args).
  */
 ExprPtr Parser::parseFuncRef() {
+    LUC_LOG_EXPR_VERBOSE("parseFuncRef: entering");
     SourceLocation loc = ts_.currentLoc();
     
     // Parse a name (identifier or dotted path)
     if (!ts_.check(TokenType::IDENTIFIER)) {
+        LUC_LOG_EXPR("parseFuncRef: ERROR - expected function name");
         errorAt(DiagCode::E1003, "expected function name in function reference");
         return arena_.make<UnknownExprAST>();
     }
     std::string name = ts_.advance().value;
+    LUC_LOG_EXPR_EXTREME("parseFuncRef: base name = '" << name << "'");
+    
     ExprPtr expr = arena_.make<IdentifierExprAST>(pool_.intern(name));
     expr->loc = loc;
     
@@ -423,10 +498,12 @@ ExprPtr Parser::parseFuncRef() {
     while (ts_.check(TokenType::DOT)) {
         ts_.advance();
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_EXPR("parseFuncRef: ERROR - expected identifier after '.'");
             errorAt(DiagCode::E1003, "expected identifier after '.'");
             break;
         }
         std::string field = ts_.advance().value;
+        LUC_LOG_EXPR_EXTREME("parseFuncRef: dotted segment ." << field);
         auto node = arena_.make<FieldAccessExprAST>();
         node->loc = loc;
         node->object = std::move(expr);
@@ -436,12 +513,15 @@ ExprPtr Parser::parseFuncRef() {
     
     // Optional behavior access (method reference)
     if (ts_.check(TokenType::COLON)) {
+        LUC_LOG_EXPR_EXTREME("parseFuncRef: behavior access");
         ts_.advance();
         if (!ts_.check(TokenType::IDENTIFIER)) {
+            LUC_LOG_EXPR("parseFuncRef: ERROR - expected method name after ':'");
             errorAt(DiagCode::E1003, "expected method name after ':'");
             return expr;
         }
         std::string method = ts_.advance().value;
+        LUC_LOG_EXPR_EXTREME("parseFuncRef: method = " << method);
         auto behavior = arena_.make<BehaviorAccessExprAST>();
         behavior->loc = loc;
         // typeName will be resolved later by semantic pass
@@ -453,14 +533,17 @@ ExprPtr Parser::parseFuncRef() {
     
     // Optional generic arguments
     if (ts_.check(TokenType::LESS)) {
+        LUC_LOG_EXPR_EXTREME("parseFuncRef: parsing generic arguments");
         ArenaSpan<TypePtr> typeArgs = parseGenericArgs(); // consumes '<' ... '>'
         auto refNode = arena_.make<CallableRefExprAST>();
         refNode->loc = loc;
         refNode->entity = std::move(expr);
         refNode->typeArgs = typeArgs;
         expr = std::move(refNode);
+        LUC_LOG_EXPR_EXTREME("parseFuncRef: generic args count = " << typeArgs.size());
     }
     
+    LUC_LOG_EXPR_VERBOSE("parseFuncRef: success");
     return expr;
 }
 
@@ -492,6 +575,7 @@ ExprPtr Parser::parseFuncRef() {
  * @return int Precedence level (higher = tighter binding), or PREC_NONE.
  */
 int Parser::infixPrec(TokenType t) const {
+    int prec;
     switch (t) {
         case TokenType::ASSIGN:
         case TokenType::PLUS_ASSIGN:
@@ -505,12 +589,13 @@ int Parser::infixPrec(TokenType t) const {
         case TokenType::BIT_XOR_ASSIGN:
         case TokenType::SHL_ASSIGN:
         case TokenType::SHR_ASSIGN:
-            return PREC_ASSIGN;
-        case TokenType::COMPOSE:            return PREC_COMPOSE;
-        case TokenType::PIPELINE:           return PREC_PIPE;
-        case TokenType::QUESTION_QUESTION:  return PREC_NULLCOAL;
-        case TokenType::OR:                 return PREC_OR;
-        case TokenType::AND:                return PREC_AND;
+            prec = PREC_ASSIGN;
+            break;
+        case TokenType::COMPOSE:            prec = PREC_COMPOSE; break;
+        case TokenType::PIPELINE:           prec = PREC_PIPE; break;
+        case TokenType::QUESTION_QUESTION:  prec = PREC_NULLCOAL; break;
+        case TokenType::OR:                 prec = PREC_OR; break;
+        case TokenType::AND:                prec = PREC_AND; break;
         case TokenType::EQUAL_EQUAL:
         case TokenType::EQUAL_EQUAL_EQUAL:
         case TokenType::NOT_EQUAL:
@@ -519,25 +604,33 @@ int Parser::infixPrec(TokenType t) const {
         case TokenType::LESS_EQUAL:
         case TokenType::GREATER_EQUAL:
         case TokenType::IS:
-            return PREC_CMP;
+            prec = PREC_CMP;
+            break;
         case TokenType::BIT_AND:
         case TokenType::BIT_OR:
         case TokenType::BIT_XOR:
         case TokenType::SHL:
         case TokenType::SHR:
-            return PREC_BITWISE;
+            prec = PREC_BITWISE;
+            break;
         case TokenType::PLUS:
         case TokenType::MINUS:
-            return PREC_ADD;
+            prec = PREC_ADD;
+            break;
         case TokenType::MUL:
         case TokenType::DIV:
         case TokenType::MOD:
-            return PREC_MUL;
+            prec = PREC_MUL;
+            break;
         case TokenType::POW:
-            return PREC_POW;
+            prec = PREC_POW;
+            break;
         default:
-            return PREC_NONE;
+            prec = PREC_NONE;
+            break;
     }
+    LUC_LOG_EXPR_EXTREME("infixPrec: " << LucDebug::tokenTypeToString(t) << " -> " << prec);
+    return prec;
 }
 
 /**
@@ -549,29 +642,32 @@ int Parser::infixPrec(TokenType t) const {
  * @return BinaryOp – corresponding enum value.
  */
 BinaryOp Parser::tokenToBinaryOp(TokenType t) const {
+    BinaryOp op;
     switch (t) {
-        case TokenType::PLUS:                return BinaryOp::Add;
-        case TokenType::MINUS:               return BinaryOp::Sub;
-        case TokenType::MUL:                 return BinaryOp::Mul;
-        case TokenType::DIV:                 return BinaryOp::Div;
-        case TokenType::POW:                 return BinaryOp::Pow;
-        case TokenType::MOD:                 return BinaryOp::Mod;
-        case TokenType::EQUAL_EQUAL:         return BinaryOp::Eq;
-        case TokenType::EQUAL_EQUAL_EQUAL:   return BinaryOp::RefEq;
-        case TokenType::NOT_EQUAL:           return BinaryOp::Ne;
-        case TokenType::LESS:                return BinaryOp::Lt;
-        case TokenType::GREATER:             return BinaryOp::Gt;
-        case TokenType::LESS_EQUAL:          return BinaryOp::Le;
-        case TokenType::GREATER_EQUAL:       return BinaryOp::Ge;
-        case TokenType::AND:                 return BinaryOp::And;
-        case TokenType::OR:                  return BinaryOp::Or;
-        case TokenType::BIT_AND:             return BinaryOp::BitAnd;
-        case TokenType::BIT_OR:              return BinaryOp::BitOr;
-        case TokenType::BIT_XOR:             return BinaryOp::BitXor;
-        case TokenType::SHL:                 return BinaryOp::Shl;
-        case TokenType::SHR:                 return BinaryOp::Shr;
-        default:                             return BinaryOp::Add;
+        case TokenType::PLUS:                op = BinaryOp::Add; break;
+        case TokenType::MINUS:               op = BinaryOp::Sub; break;
+        case TokenType::MUL:                 op = BinaryOp::Mul; break;
+        case TokenType::DIV:                 op = BinaryOp::Div; break;
+        case TokenType::POW:                 op = BinaryOp::Pow; break;
+        case TokenType::MOD:                 op = BinaryOp::Mod; break;
+        case TokenType::EQUAL_EQUAL:         op = BinaryOp::Eq; break;
+        case TokenType::EQUAL_EQUAL_EQUAL:   op = BinaryOp::RefEq; break;
+        case TokenType::NOT_EQUAL:           op = BinaryOp::Ne; break;
+        case TokenType::LESS:                op = BinaryOp::Lt; break;
+        case TokenType::GREATER:             op = BinaryOp::Gt; break;
+        case TokenType::LESS_EQUAL:          op = BinaryOp::Le; break;
+        case TokenType::GREATER_EQUAL:       op = BinaryOp::Ge; break;
+        case TokenType::AND:                 op = BinaryOp::And; break;
+        case TokenType::OR:                  op = BinaryOp::Or; break;
+        case TokenType::BIT_AND:             op = BinaryOp::BitAnd; break;
+        case TokenType::BIT_OR:              op = BinaryOp::BitOr; break;
+        case TokenType::BIT_XOR:             op = BinaryOp::BitXor; break;
+        case TokenType::SHL:                 op = BinaryOp::Shl; break;
+        case TokenType::SHR:                 op = BinaryOp::Shr; break;
+        default:                             op = BinaryOp::Add; break;
     }
+    LUC_LOG_EXPR_EXTREME("tokenToBinaryOp: " << LucDebug::tokenTypeToString(t) << " -> " << static_cast<int>(op));
+    return op;
 }
 
 /**
@@ -583,21 +679,24 @@ BinaryOp Parser::tokenToBinaryOp(TokenType t) const {
  * @return AssignOp – corresponding enum value.
  */
 AssignOp Parser::tokenToAssignOp(TokenType t) const {
+    AssignOp op;
     switch (t) {
-        case TokenType::ASSIGN:          return AssignOp::Assign;
-        case TokenType::PLUS_ASSIGN:     return AssignOp::AddAssign;
-        case TokenType::MINUS_ASSIGN:    return AssignOp::SubAssign;
-        case TokenType::MUL_ASSIGN:      return AssignOp::MulAssign;
-        case TokenType::DIV_ASSIGN:      return AssignOp::DivAssign;
-        case TokenType::POW_ASSIGN:      return AssignOp::PowAssign;
-        case TokenType::MOD_ASSIGN:      return AssignOp::ModAssign;
-        case TokenType::BIT_AND_ASSIGN:  return AssignOp::BitAndAssign;
-        case TokenType::BIT_OR_ASSIGN:   return AssignOp::BitOrAssign;
-        case TokenType::BIT_XOR_ASSIGN:  return AssignOp::BitXorAssign;
-        case TokenType::SHL_ASSIGN:      return AssignOp::ShlAssign;
-        case TokenType::SHR_ASSIGN:      return AssignOp::ShrAssign;
-        default:                         return AssignOp::Assign;
+        case TokenType::ASSIGN:          op = AssignOp::Assign; break;
+        case TokenType::PLUS_ASSIGN:     op = AssignOp::AddAssign; break;
+        case TokenType::MINUS_ASSIGN:    op = AssignOp::SubAssign; break;
+        case TokenType::MUL_ASSIGN:      op = AssignOp::MulAssign; break;
+        case TokenType::DIV_ASSIGN:      op = AssignOp::DivAssign; break;
+        case TokenType::POW_ASSIGN:      op = AssignOp::PowAssign; break;
+        case TokenType::MOD_ASSIGN:      op = AssignOp::ModAssign; break;
+        case TokenType::BIT_AND_ASSIGN:  op = AssignOp::BitAndAssign; break;
+        case TokenType::BIT_OR_ASSIGN:   op = AssignOp::BitOrAssign; break;
+        case TokenType::BIT_XOR_ASSIGN:  op = AssignOp::BitXorAssign; break;
+        case TokenType::SHL_ASSIGN:      op = AssignOp::ShlAssign; break;
+        case TokenType::SHR_ASSIGN:      op = AssignOp::ShrAssign; break;
+        default:                         op = AssignOp::Assign; break;
     }
+    LUC_LOG_EXPR_EXTREME("tokenToAssignOp: " << LucDebug::tokenTypeToString(t) << " -> " << static_cast<int>(op));
+    return op;
 }
 
 /**
@@ -607,6 +706,7 @@ AssignOp Parser::tokenToAssignOp(TokenType t) const {
  * @return true if the token is an assignment operator.
  */
 bool Parser::isAssignOp(TokenType t) const {
+    bool result;
     switch (t) {
         case TokenType::ASSIGN:
         case TokenType::PLUS_ASSIGN:
@@ -620,8 +720,12 @@ bool Parser::isAssignOp(TokenType t) const {
         case TokenType::BIT_XOR_ASSIGN:
         case TokenType::SHL_ASSIGN:
         case TokenType::SHR_ASSIGN:
-            return true;
+            result = true;
+            break;
         default:
-            return false;
+            result = false;
+            break;
     }
+    LUC_LOG_EXPR_EXTREME("isAssignOp: " << LucDebug::tokenTypeToString(t) << " -> " << result);
+    return result;
 }

@@ -21,6 +21,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Generic Arguments – Full List
@@ -55,25 +56,32 @@
  * @return ArenaSpan<TypePtr> – span of type arguments (may be empty).
  */
 ArenaSpan<TypePtr> Parser::parseGenericArgs() {
+    LUC_LOG_TYPE_EXTREME("parseGenericArgs: entering");
     // The opening '<' is already consumed by the caller.
     // We just need to ensure the token stream is ready.
     // (The caller used ts_.match(TokenType::LESS) or ts_.consume.)
     // This function expects to be called right after the '<'.
 
     if (ts_.check(TokenType::GREATER)) {
+        LUC_LOG_TYPE_EXTREME("parseGenericArgs: empty generic args list");
         ts_.advance();
         return ArenaSpan<TypePtr>();
     }
     
     std::vector<TypePtr> args;
+    int argCount = 0;
+    
     do {
         if (ts_.match(TokenType::COMMA)) continue;
         
         TypePtr arg = parseGenericArg();
         if (!arg || arg->isa<UnknownTypeAST>()) {
+            LUC_LOG_TYPE("parseGenericArgs: ERROR - failed to parse generic argument");
             // Error already reported, break to avoid infinite loop
             break;
         }
+        argCount++;
+        LUC_LOG_TYPE_EXTREME("parseGenericArgs: parsed argument #" << argCount);
         args.push_back(std::move(arg));
     } while (!ts_.check(TokenType::GREATER) && !ts_.isAtEnd());
     
@@ -81,6 +89,8 @@ ArenaSpan<TypePtr> Parser::parseGenericArgs() {
     
     auto builder = arena_.makeBuilder<TypePtr>();
     for (auto& a : args) builder.push_back(std::move(a));
+    
+    LUC_LOG_TYPE_VERBOSE("parseGenericArgs: parsed " << argCount << " generic argument(s)");
     return builder.build();
 }
 
@@ -106,11 +116,14 @@ ArenaSpan<TypePtr> Parser::parseGenericArgs() {
  * @return TypePtr – the parsed type, or UnknownTypeAST on error.
  */
 TypePtr Parser::parseGenericArg() {
+    LUC_LOG_TYPE_EXTREME("parseGenericArg: entering");
     size_t savedPos = ts_.getPos();
     TypePtr arg = parseType();
     if (ts_.getPos() == savedPos) {
+        LUC_LOG_TYPE("parseGenericArg: ERROR - expected type in generic argument list");
         errorAt(DiagCode::E1005, "expected type in generic argument list");
         return arena_.make<UnknownTypeAST>();
     }
+    LUC_LOG_TYPE_EXTREME("parseGenericArg: success");
     return arg;
 }

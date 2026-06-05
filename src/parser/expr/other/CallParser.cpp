@@ -33,6 +33,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Call Expression Parser
@@ -83,6 +84,8 @@
  *   - Generic arguments must match the callee's generic parameters.
  */
 ExprPtr Parser::parseCallExpr(ExprPtr callee, ArenaSpan<TypePtr> genericArgs) {
+    LUC_LOG_EXPR_VERBOSE("parseCallExpr: entering, generic args = " << genericArgs.size());
+    
     SourceLocation loc = callee->loc;
     ts_.consume(TokenType::LPAREN, "expected '('");
 
@@ -93,11 +96,20 @@ ExprPtr Parser::parseCallExpr(ExprPtr callee, ArenaSpan<TypePtr> genericArgs) {
 
     // Parse argument list if not empty
     if (!ts_.check(TokenType::RPAREN)) {
+        LUC_LOG_EXPR_EXTREME("parseCallExpr: parsing argument list");
         node->args = parseArgList();
+        LUC_LOG_EXPR_EXTREME("parseCallExpr: parsed " << node->args.size() << " argument(s)");
+    } else {
+        LUC_LOG_EXPR_EXTREME("parseCallExpr: no arguments");
     }
 
     ts_.consume(TokenType::RPAREN, "expected ')' to close argument list");
     node->isArgPack = ts_.match(TokenType::BANG);
+    
+    if (node->isArgPack) {
+        LUC_LOG_EXPR_EXTREME("parseCallExpr: argument pack (!) detected");
+    }
 
+    LUC_LOG_EXPR_VERBOSE("parseCallExpr: success");
     return node;
 }

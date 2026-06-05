@@ -35,6 +35,7 @@
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
 #include "debug/DebugUtils.hpp"
+#include "debug/DebugMacros.hpp"
 
 // ============================================================================
 // Safe Type Conversion (Cast)
@@ -72,18 +73,23 @@
  *   - Missing ')': consume() reports error.
  */
 ExprPtr Parser::parseTypeConvExpr(TypePtr targetType) {
+    LUC_LOG_EXPR_VERBOSE("parseTypeConvExpr: entering");
     SourceLocation loc = ts_.currentLoc();
     ts_.consume(TokenType::LPAREN, "expected '(' for explicit type cast");
 
     ExprPtr expr = parseExpr();
     if (!expr) {
+        LUC_LOG_EXPR("parseTypeConvExpr: ERROR - expected expression inside explicit type cast");
         errorAt(DiagCode::E1008, "expected expression inside explicit type cast");
         return arena_.make<UnknownExprAST>();
     }
+    LUC_LOG_EXPR_EXTREME("parseTypeConvExpr: expression parsed");
 
     ts_.consume(TokenType::RPAREN, "expected ')' to close explicit type cast");
 
     auto node = arena_.make<TypeConvExprAST>(std::move(targetType), std::move(expr), false);
     node->loc = loc;
+    
+    LUC_LOG_EXPR_VERBOSE("parseTypeConvExpr: success");
     return node;
 }
