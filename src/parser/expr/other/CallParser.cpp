@@ -13,16 +13,17 @@
  * 
  * Grammar (from LUC_GRAMMAR.md):
  *   postfix_op := '(' [ arg_list ] ')'                -- regular call
- *               | '(' [ arg_list ] ')' '!'            -- argument pack (pipeline injection)
  *               | generic_args '(' [ arg_list ] ')'   -- generic instantiation
  * 
+ * IMPORTANT: The argument pack `!` suffix is NOT allowed in regular calls.
+ * It is part of the pipeline step syntax only (see PipelineParser.cpp).
+ * 
  * The caller (parsePostfixExpr) handles generic arguments before the `(`.
- * This function only consumes the argument list and optional `!` suffix.
+ * This function only consumes the argument list.
  * 
  * Examples:
  *   f(1, 2, 3)                    → regular call
  *   obj:method(a, b)              → method call (callee is BehaviorAccessExprAST)
- *   pipelineFn(2.0)!              → argument pack (upstream injected as first arg)
  *   arr[idx](x, y)                → array element call (callee is IndexExprAST)
  * 
  * @see ParserExpr.cpp for parsePostfixExpr integration
@@ -43,7 +44,7 @@
  * @brief Parses a function or method call expression.
  *
  * Grammar:
- *   call_expr := '(' [ arg_list ] ')' [ '!' ]
+ *   call_expr := '(' [ arg_list ] ')'
  *
  * The callee expression (function name, method reference, or any expression
  * that yields a function type) is already parsed by the caller. This function
@@ -56,7 +57,7 @@
  *
  * ─── Token Consumption ─────────────────────────────────────────────────────
  * On entry: positioned at '('
- * On exit:  positioned after the closing ')' (and optional '!' if present)
+ * On exit:  positioned after the closing ')'
  *
  * ─── Argument Parsing ─────────────────────────────────────────────────────
  *   - If the argument list is not empty, `parseArgList()` parses comma‑separated
@@ -64,17 +65,12 @@
  *   - `parseArgList()` uses a consecutive error counter (max 5) to prevent
  *     infinite loops on malformed input.
  *
- * ─── Argument Pack (`!`) ──────────────────────────────────────────────────
- *   - The `!` suffix is only valid in pipeline steps (enforced by semantic pass).
- *   - Indicates that the argument list is intentionally incomplete; the upstream
- *     value from the pipeline will be injected as the first argument.
- *   - The parser sets `isArgPack = true` when `!` is present.
- *
  * ─── Error Recovery ───────────────────────────────────────────────────────
  *   - Missing '(' after callee: `consume()` reports error and returns a dummy
  *     token; the caller (parsePostfixExpr) handles the error.
  *   - Missing ')': `consume()` reports error; the function still returns a
  *     CallExprAST (with whatever arguments were parsed).
+ *   - Unexpected `!` after ')': reports error, skips the `!` (recovery).
  *
  * ─── Semantic Notes (Not Parser Responsibility) ───────────────────────────
  *   - The callee must resolve to a function type (plain, ~async, or generic).
@@ -82,11 +78,18 @@
  *   - If the callee is ~async, the call site must be preceded by `await`.
  *   - If the callee is ~nullable, the call must be guarded by a nil check.
  *   - Generic arguments must match the callee's generic parameters.
+ *   - The `!` suffix is NOT allowed here – it is a pipeline‑only feature.
  */
 ExprPtr Parser::parseCallExpr(ExprPtr callee, ArenaSpan<TypePtr> genericArgs) {
-    LUC_LOG_EXPR_VERBOSE("parseCallExpr: entering, generic args = " << genericArgs.size());
+    LUC_LOG_EXPR_VERBOSE("parseCallExpr: entering at line " << callee->loc.line()
+                         << ", col " << callee->loc.column()
+                         << ", generic args = " << genericArgs.size());
     
     SourceLocation loc = callee->loc;
+    
+    LUC_LOG_EXPR("parseCallExpr: current token before '(' = '" << ts_.peek().value 
+                 << "' at line " << ts_.peek().line << ", col " << ts_.peek().column);
+    
     ts_.consume(TokenType::LPAREN, "expected '('");
 
     auto node = arena_.make<CallExprAST>();
@@ -104,11 +107,21 @@ ExprPtr Parser::parseCallExpr(ExprPtr callee, ArenaSpan<TypePtr> genericArgs) {
     }
 
     ts_.consume(TokenType::RPAREN, "expected ')' to close argument list");
-    node->isArgPack = ts_.match(TokenType::BANG);
     
-    if (node->isArgPack) {
-        LUC_LOG_EXPR_EXTREME("parseCallExpr: argument pack (!) detected");
+    // The `!` suffix is NOT allowed in regular function calls.
+    // If we see a `!`, it's a syntax error – the user likely meant a pipeline step.
+    if (ts_.check(TokenType::BANG)) {
+        LUC_LOG_EXPR("parseCallExpr: ERROR - unexpected '!' after argument list");
+        errorAt(DiagCode::E1001, 
+                "'!' argument pack annotation is only allowed inside pipeline steps (|>). "
+                "For a regular function call, remove the '!'. If you intended a pipeline, "
+                "use the '|>' operator before this call.");
+        ts_.advance(); // consume '!' to recover
+        // Do NOT set isArgPack – regular calls never have argument packs.
     }
+    
+    // isArgPack remains false (default) – the field is ignored for regular calls.
+    // (The AST still has isArgPack, but it will never be set here.)
 
     LUC_LOG_EXPR_VERBOSE("parseCallExpr: success");
     return node;

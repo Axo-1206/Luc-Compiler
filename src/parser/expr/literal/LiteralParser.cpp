@@ -27,6 +27,7 @@
  * @see ParserStmt.cpp for block parsing
  */
 
+#include "ast/BaseAST.hpp"
 #include "parser/Parser.hpp"
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
@@ -112,57 +113,47 @@ ExprPtr Parser::parseArrayLiteralExpr() {
 // Struct Literal
 // ============================================================================
 
-ExprPtr Parser::parseStructLiteralExpr(std::string typeName, ArenaSpan<TypePtr> genericArgs) {
-    LUC_LOG_EXPR_VERBOSE("parseStructLiteralExpr: type = " << typeName 
-                         << ", generic args = " << genericArgs.size());
-    SourceLocation loc = ts_.currentLoc();
-    ts_.consume(TokenType::LBRACE, "expected '{' to open struct literal");
-
-    auto node = arena_.make<StructLiteralExprAST>();
-    node->loc = loc;
-    node->typeName = pool_.intern(typeName);
-    node->genericArgs = genericArgs;
-
-    std::vector<FieldInitPtr> inits;
-    int initCount = 0;
+ExprPtr Parser::parseStructLiteralExpr(InternedString typeName, ArenaSpan<TypePtr> genericArgs) {
+    LUC_LOG_EXPR_VERBOSE("parseStructLiteralExpr: type = " << pool_.lookup(typeName) 
+                         << ", generic args = " << genericArgs.size()
+                         << " at line " << ts_.currentLoc().line()
+                         << ", col " << ts_.currentLoc().column());
     
+    auto node = arena_.make<StructLiteralExprAST>();
+    node->loc = ts_.currentLoc();
+    node->typeName = typeName;
+    node->genericArgs = genericArgs;
+    
+    ts_.consume(TokenType::LBRACE, "expected '{' to start struct literal");
+    
+    // Parse field initializers
+    std::vector<FieldInitPtr> inits;
     while (!ts_.check(TokenType::RBRACE) && !ts_.isAtEnd()) {
-        ts_.match(TokenType::COMMA);
-        ts_.match(TokenType::SEMICOLON);
-        if (ts_.check(TokenType::RBRACE)) break;
-
-        SourceLocation fieldLoc = ts_.currentLoc();
-
-        if (!ts_.check(TokenType::IDENTIFIER)) {
-            LUC_LOG_EXPR("parseStructLiteralExpr: ERROR - expected field name");
+        if (ts_.check(TokenType::IDENTIFIER)) {
+            SourceLocation fieldLoc = ts_.currentLoc();
+            Token fieldTok = ts_.advance();
+            ts_.consume(TokenType::ASSIGN, "expected '=' in field initializer");
+            ExprPtr value = parseExpr();
+            
+            auto init = arena_.make<FieldInitAST>();
+            init->loc = fieldLoc;
+            init->name = pool_.intern(fieldTok.value);
+            init->value = std::move(value);
+            inits.push_back(std::move(init));
+            
+            ts_.match(TokenType::COMMA);
+        } else {
             errorAt(DiagCode::E1003, "expected field name in struct literal");
-            ts_.advance();
-            continue;
+            break;
         }
-        std::string fieldName = ts_.advance().value;
-        LUC_LOG_EXPR_EXTREME("parseStructLiteralExpr: field '" << fieldName << "'");
-
-        ts_.consume(TokenType::ASSIGN, "expected '=' after field name");
-        ExprPtr val = parseExpr();
-        if (!val) {
-            LUC_LOG_EXPR("parseStructLiteralExpr: ERROR - expected expression for field");
-            errorAt(DiagCode::E1008, "expected expression for field");
-            continue;
-        }
-
-        initCount++;
-        auto init = arena_.make<FieldInitAST>(pool_.intern(fieldName), std::move(val));
-        init->loc = fieldLoc;
-        inits.push_back(std::move(init));
     }
-
+    
     auto builder = arena_.makeBuilder<FieldInitPtr>();
-    for (auto& i : inits) builder.push_back(std::move(i));
+    for (auto& init : inits) builder.push_back(std::move(init));
     node->inits = builder.build();
-
+    
     ts_.consume(TokenType::RBRACE, "expected '}' to close struct literal");
     
-    LUC_LOG_EXPR_VERBOSE("parseStructLiteralExpr: " << initCount << " initializer(s)");
     return node;
 }
 

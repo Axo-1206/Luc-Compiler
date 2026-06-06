@@ -24,7 +24,6 @@ public:
 private:
     FuncTypeAST* extractFromIdentifier(IdentifierExprAST* ident, const SourceLocation& loc);
     FuncTypeAST* extractFromFieldAccess(FieldAccessExprAST* field, const SourceLocation& loc);
-    FuncTypeAST* extractFromCallableRef(CallableRefExprAST* callableRef, const SourceLocation& loc);
     FuncTypeAST* extractFromBehaviorAccess(BehaviorAccessExprAST* behavior, const SourceLocation& loc);
 
     SemanticContext& ctx_;

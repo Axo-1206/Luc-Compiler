@@ -28,42 +28,65 @@
 ASTPtr<VarDeclAST> Parser::parseVarDecl(Visibility vis) {
     const Token& kwTok = ts_.peekAt(0);
     DeclKeyword kw = (kwTok.type == TokenType::LET) ? DeclKeyword::Let : DeclKeyword::Const;
-    LUC_LOG_DECL_VERBOSE("parseVarDecl: entering, kw=" << (kw == DeclKeyword::Let ? "let" : "const"));
+    LUC_LOG_DECL_VERBOSE("parseVarDecl: entering at line " << ts_.currentLoc().line()
+                         << ", col " << ts_.currentLoc().column()
+                         << ", kw=" << (kw == DeclKeyword::Let ? "let" : "const"));
+    
+    LUC_LOG_DECL("parseVarDecl: current token at entry = '" << ts_.peek().value 
+                 << "' (type=" << static_cast<int>(ts_.peek().type) 
+                 << ") at line " << ts_.peek().line << ", col " << ts_.peek().column);
 
     SourceLocation loc = ts_.currentLoc();
 
     if (!ts_.check(TokenType::IDENTIFIER)) {
-        LUC_LOG_DECL("parseVarDecl: ERROR - expected variable name");
-        errorAt(DiagCode::E1003, "expected variable name");
+        LUC_LOG_DECL("parseVarDecl: ERROR - expected variable name at line " 
+                     << ts_.peek().line << ", col " << ts_.peek().column);
+        errorAt(DiagCode::E1003);
         return nullptr;
     }
-    InternedString name = pool_.intern(ts_.advance().value);
-    LUC_LOG_DECL_EXTREME("parseVarDecl: variable name = " << pool_.lookup(name));
+    
+    Token nameToken = ts_.advance();
+    InternedString name = pool_.intern(nameToken.value);
+    LUC_LOG_DECL_EXTREME("parseVarDecl: variable name = '" << pool_.lookup(name) 
+                         << "' at line " << nameToken.line << ", col " << nameToken.column);
+    
+    LUC_LOG_DECL("parseVarDecl: after name, checking for type annotation, current token = '" 
+                 << ts_.peek().value << "' (type=" << static_cast<int>(ts_.peek().type)
+                 << ") at line " << ts_.peek().line << ", col " << ts_.peek().column);
 
     if (!looksLikeType()) {
-        LUC_LOG_DECL("parseVarDecl: ERROR - expected type annotation");
-        errorAt(DiagCode::E1005, "expected type annotation for '" + std::string(pool_.lookup(name)) + "'");
+        LUC_LOG_DECL("parseVarDecl: ERROR - expected type annotation at line " 
+                     << ts_.peek().line << ", col " << ts_.peek().column);
+        errorAt(DiagCode::E1005);
         return nullptr;
     }
 
+    LUC_LOG_DECL("parseVarDecl: parsing type, current token = '" << ts_.peek().value 
+                 << "' at line " << ts_.peek().line << ", col " << ts_.peek().column);
+    
     TypePtr type = parseType();
     if (!type) {
-        LUC_LOG_DECL("parseVarDecl: ERROR - expected type for variable");
-        errorAt(DiagCode::E1005, "expected type for variable '" + std::string(pool_.lookup(name)) + "'");
+        LUC_LOG_DECL("parseVarDecl: ERROR - expected type for variable at line " 
+                     << ts_.peek().line << ", col " << ts_.peek().column);
+        errorAt(DiagCode::E1005);
         return nullptr;
     }
-    LUC_LOG_DECL_EXTREME("parseVarDecl: type parsed");
+    
+    LUC_LOG_DECL("parseVarDecl: after parseType, next token = '" << ts_.peek().value 
+                 << "' (type=" << static_cast<int>(ts_.peek().type)
+                 << ") at line " << ts_.peek().line << ", col " << ts_.peek().column);
 
     ExprPtr init;
     if (ts_.match(TokenType::ASSIGN)) {
-        LUC_LOG_DECL_EXTREME("parseVarDecl: parsing initializer");
+        LUC_LOG_DECL_EXTREME("parseVarDecl: parsing initializer at line " 
+                             << ts_.peek().line << ", col " << ts_.peek().column);
         init = parseExpr();
         if (!init) {
             LUC_LOG_DECL("parseVarDecl: ERROR - expected expression after '='");
-            errorAt(DiagCode::E1008, "expected expression after '=' in variable declaration");
-        } else {
-            LUC_LOG_DECL_EXTREME("parseVarDecl: initializer parsed");
+            errorAt(DiagCode::E1008);
+            return nullptr;
         }
+        LUC_LOG_DECL_EXTREME("parseVarDecl: initializer parsed");
     } else {
         LUC_LOG_DECL_EXTREME("parseVarDecl: no initializer");
     }
@@ -76,6 +99,6 @@ ASTPtr<VarDeclAST> Parser::parseVarDecl(Visibility vis) {
     node->init = std::move(init);
     node->visibility = vis;
 
-    LUC_LOG_DECL_VERBOSE("parseVarDecl: success");
+    LUC_LOG_DECL_VERBOSE("parseVarDecl: success at line " << loc.line() << ", col " << loc.column());
     return node;
 }

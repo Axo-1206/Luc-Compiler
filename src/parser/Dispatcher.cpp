@@ -52,6 +52,7 @@
  * @see ParserType.cpp for type parsers
  */
 
+#include "ast/BaseAST.hpp"
 #include "parser/Parser.hpp"
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
@@ -629,7 +630,9 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
     SourceLocation loc = ts_.currentLoc();
     TokenType current = ts_.peekType();
     
-    LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: current token=" << ts_.peek().value
+    LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: entering at line " << loc.line()
+                         << ", col " << loc.column()
+                         << ", current token=" << ts_.peek().value
                          << " (" << LucDebug::tokenTypeToString(current) << ")");
 
     if (ts_.check(TokenType::MATCH)) {
@@ -688,55 +691,67 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
     }
 
     if (ts_.check(TokenType::IDENTIFIER)) {
-        std::string name = ts_.peek().value;
-
-        if (allowStructLiteral && looksLikeStructLiteral()) {
-            LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: looks like struct literal, dispatching to parseStructLiteralExpr");
-            ts_.advance();
-            ArenaSpan<TypePtr> genericArgs;
-            if (ts_.check(TokenType::LESS)) {
-                genericArgs = parseGenericArgs();
-            }
-            return parseStructLiteralExpr(name, genericArgs);
+        SourceLocation idenLoc = ts_.currentLoc();
+        Token identTok = ts_.advance();
+        std::string name = identTok.value;
+        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: identifier '" << name 
+                             << "' at line " << identTok.line << ", col " << identTok.column);
+        
+        // Check for generic arguments FIRST (for struct literals or function references)
+        ArenaSpan<TypePtr> genericArgs;
+        if (ts_.check(TokenType::LESS)) {
+            LUC_LOG_EXPR_EXTREME("parsePrimaryExpr: parsing generic arguments for identifier '" << name << "'");
+            ts_.advance(); // consume '<'
+            genericArgs = parseGenericArgs();
+            LUC_LOG_EXPR("parsePrimaryExpr: parsed " << genericArgs.size() 
+                         << " generic args for '" << name << "'");
         }
-
-        if (looksLikeBehaviorAccess()) {
-            LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: looks like behavior access");
-            std::string typeName = ts_.advance().value;
-            ArenaSpan<TypePtr> genericArgs;
-            if (ts_.check(TokenType::LESS)) {
-                genericArgs = parseGenericArgs();
-            }
-            ts_.consume(TokenType::COLON, "expected ':' in behavior access");
+        
+        // CRITICAL: Check for behavior access (method call) FIRST
+        // Pattern: identifier ':' identifier
+        if (ts_.check(TokenType::COLON)) {
+            LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: behavior access (method call)");
+            ts_.advance(); // consume ':'
+            
             if (!ts_.check(TokenType::IDENTIFIER)) {
                 errorAt(DiagCode::E1003, "expected method name after ':'");
                 return arena_.make<UnknownExprAST>();
             }
-            std::string method = ts_.advance().value;
-
+            Token methodTok = ts_.advance();
+            LUC_LOG_EXPR_EXTREME("parsePrimaryExpr: method = '" << methodTok.value << "'");
+            
             auto node = arena_.make<BehaviorAccessExprAST>();
-            node->loc = loc;
-            node->typeName = pool_.intern(typeName);
-            node->genericArgs = genericArgs;
-            node->method = pool_.intern(method);
+            node->loc = idenLoc;
+            node->typeName = pool_.intern(name);
+            node->method = pool_.intern(methodTok.value);
             node->isBehaviorMember = true;
+            // genericArgs should be empty for methods
+            if (genericArgs.size() > 0) {
+                LUC_LOG_EXPR("parsePrimaryExpr: WARNING - method '" << name << ":" << methodTok.value 
+                             << "' has generic arguments (ignored)");
+            }
             return node;
         }
-
-        ts_.advance();
-        LUC_LOG_EXPR_EXTREME("parsePrimaryExpr: plain identifier '" << name << "'");
-        auto node = arena_.make<IdentifierExprAST>(pool_.intern(name));
-        node->loc = loc;
-        return node;
-    }
-
-    // primitive type cast
-    if (looksLikeType() && ts_.peekNextType() == TokenType::LPAREN) {
-        LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: looks like type cast, dispatching to parseTypeConvExpr");
-        TypePtr targetType = parsePrimitiveType();
-        if (targetType && ts_.check(TokenType::LPAREN)) {
-            return parseTypeConvExpr(std::move(targetType));
+        
+        // Check for struct literal (with or without generic args)
+        if (allowStructLiteral && ts_.check(TokenType::LBRACE)) {
+            LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: struct literal '" << name 
+                                 << "' with " << genericArgs.size() << " generic args");
+            return parseStructLiteralExpr(pool_.intern(name), genericArgs);
         }
+        
+        // Plain identifier (variable, function name, or generic function reference)
+        auto node = arena_.make<IdentifierExprAST>(pool_.intern(name));
+        node->loc = idenLoc;
+        node->genericArgs = genericArgs;
+        
+        if (genericArgs.size() > 0) {
+            LUC_LOG_EXPR("parsePrimaryExpr: generic function reference '" << name 
+                         << "' with " << genericArgs.size() << " args");
+        }
+        
+        // IMPORTANT: Return the identifier node!
+        return node;
     }
 
     LUC_LOG_EXPR_VERBOSE("parsePrimaryExpr: falling back to parseLiteralExpr");
@@ -753,66 +768,63 @@ ExprPtr Parser::parsePrimaryExpr(bool allowStructLiteral) {
 // ============================================================================
 
 ExprPtr Parser::parsePostfixExpr(ExprPtr lhs) {
-    LUC_LOG_EXPR_EXTREME("parsePostfixExpr: processing postfix operators");
+    LUC_LOG_EXPR_EXTREME("parsePostfixExpr: entering at line " << lhs->loc.line()
+                         << ", col " << lhs->loc.column());
     
     while (true) {
         if (ts_.check(TokenType::RPAREN)) break;
         if (ts_.check(TokenType::PIPELINE) || ts_.check(TokenType::COMPOSE)) break;
 
+        // Regular call expression
         if (ts_.check(TokenType::LPAREN)) {
-            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: call expression");
+            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: call expression at line "
+                                 << ts_.peek().line << ", col " << ts_.peek().column);
             lhs = parseCallExpr(std::move(lhs), ArenaSpan<TypePtr>());
             continue;
         }
 
-        if (ts_.check(TokenType::LESS) && 
-            (lhs->isa<IdentifierExprAST>() || lhs->isa<BehaviorAccessExprAST>())) {
-            
-            size_t savedPos = ts_.getPos();
-            int depth = 1;
-            size_t i = ts_.getPos() + 1;
-            const auto& tokens = ts_.getTokens();
-            size_t tokenCount = ts_.getTokenCount();
-            
-            while (i < tokenCount && depth > 0) {
-                if (tokens[i].type == TokenType::LESS) ++depth;
-                else if (tokens[i].type == TokenType::GREATER) --depth;
-                else if (tokens[i].type == TokenType::EOF_TOKEN) break;
-                ++i;
-            }
-            
-            if (depth == 0 && i + 1 < tokenCount && tokens[i + 1].type == TokenType::LPAREN) {
-                LUC_LOG_EXPR_EXTREME("parsePostfixExpr: generic call expression");
-                ArenaSpan<TypePtr> genericArgs = parseGenericArgs();
-                lhs = parseCallExpr(std::move(lhs), genericArgs);
-                continue;
-            }
-        }
-
-        if (ts_.check(TokenType::LBRACKET)) {
-            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: index/slice expression");
-            lhs = parseIndexExpr(std::move(lhs));
-            continue;
-        }
-
+        // Field access with optional generic arguments
         if (ts_.check(TokenType::DOT)) {
             ts_.advance();
             if (!ts_.check(TokenType::IDENTIFIER)) {
                 errorAt(DiagCode::E1003, "expected field name after '.'");
                 break;
             }
-            std::string field = ts_.advance().value;
-            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: field access ." << field);
+            Token fieldTok = ts_.advance();
+            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: field access ." << fieldTok.value
+                                 << " at line " << fieldTok.line << ", col " << fieldTok.column);
+            
+            // Check for generic arguments after field name
+            ArenaSpan<TypePtr> genericArgs;
+            if (ts_.check(TokenType::LESS)) {
+                LUC_LOG_EXPR_EXTREME("parsePostfixExpr: parsing generic arguments for field");
+                ts_.advance(); // consume '<'
+                genericArgs = parseGenericArgs();
+                LUC_LOG_EXPR("parsePostfixExpr: parsed " << genericArgs.size() 
+                             << " generic args for field '" << fieldTok.value << "'");
+            }
+            
             auto node = arena_.make<FieldAccessExprAST>();
             node->loc = lhs->loc;
             node->object = std::move(lhs);
-            node->field = pool_.intern(field);
+            node->field = pool_.intern(fieldTok.value);
+            node->genericArgs = genericArgs;
             lhs = std::move(node);
             continue;
         }
 
+        // Index/Slice expression
+        if (ts_.check(TokenType::LBRACKET)) {
+            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: index/slice expression at line "
+                                 << ts_.peek().line << ", col " << ts_.peek().column);
+            lhs = parseIndexExpr(std::move(lhs));
+            continue;
+        }
+
+        // Nullable chain
         if (ts_.check(TokenType::QUESTION_DOT)) {
-            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: nullable chain");
+            LUC_LOG_EXPR_EXTREME("parsePostfixExpr: nullable chain at line "
+                                 << ts_.peek().line << ", col " << ts_.peek().column);
             std::vector<InternedString> steps;
             ExprPtr object = std::move(lhs);
             

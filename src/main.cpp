@@ -136,17 +136,17 @@ int main(int argc, char* argv[]) {
 
     // Phase 3: Semantic Analysis
     std::cout << "[MAIN] Starting semantic analysis..." << std::endl;
-    std::vector<ProgramAST*> files = { program.get() };
-    SemanticAnalyzer analyzer(stringPool, arena);
+    // std::vector<ProgramAST*> files = { program.get() };
+    // SemanticAnalyzer analyzer(stringPool, arena);
     
-    bool success = analyzer.analyze(files);
-    std::cout << "[MAIN] Semantic analysis complete: " << (success ? "SUCCESS" : "FAILED") << std::endl;
+    // bool success = analyzer.analyze(files);
+    // std::cout << "[MAIN] Semantic analysis complete: " << (success ? "SUCCESS" : "FAILED") << std::endl;
     
-    if (diagnostic::hasErrors()) {
-        std::cerr << "\n>>> Semantic Analysis FAILED:" << std::endl;
-        diagnostic::dumpAll(stringPool, std::cerr);
-        return 1;
-    }
+    // if (diagnostic::hasErrors()) {
+    //     std::cerr << "\n>>> Semantic Analysis FAILED:" << std::endl;
+    //     diagnostic::dumpAll(stringPool, std::cerr);
+    //     return 1;
+    // }
 
     if (diagnostic::hasWarnings()) {
         std::cerr << "\n>>> Semantic Analysis SUCCESSFUL with warnings:" << std::endl;

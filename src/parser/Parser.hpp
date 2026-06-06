@@ -476,7 +476,7 @@ private:
     // ---- Primary expression factories ----
     ExprPtr parseLiteralExpr();
     ExprPtr parseArrayLiteralExpr();
-    ExprPtr parseStructLiteralExpr(std::string typeName, ArenaSpan<TypePtr> genericArgs);
+    ExprPtr parseStructLiteralExpr(InternedString typeName, ArenaSpan<TypePtr> genericArgs);
     ExprPtr parseAnonFuncExpr();
     ExprPtr parseAwaitExpr(bool allowStructLiteral = true);
     ExprPtr parseIntrinsicCallExpr();

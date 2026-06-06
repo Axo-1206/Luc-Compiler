@@ -170,53 +170,6 @@ enum class ComposeOperandKind {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Callable Reference
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * @brief Reference to a callable entity (function, method, or function-valued field)
- *        with optional generic arguments.
- *
- * Grammar:
- *   callable_ref := IDENTIFIER
- *                 | IDENTIFIER '.' IDENTIFIER
- *                 | IDENTIFIER ':' IDENTIFIER
- *                 | callable_ref '<' type-list '>'
- *
- * Examples:
- *   identity<int>               – generic function reference
- *   math.utils.toString         – module path (no generics)
- *   list:map<U>                 – generic method reference
- *   getVersion                  – plain function reference
- *
- * This node is used wherever the grammar expects a `func_ref`:
- *   - Method assignments in `impl` blocks
- *   - Path entries in `from` blocks
- *   - Generic function steps in pipelines (`|>`)
- *   - Generic operands in composition (`+>`)
- *
- * The `entity` must be one of:
- *   - IdentifierExprAST   – a plain function name
- *   - FieldAccessExprAST  – a dotted module or namespace path
- *   - BehaviorAccessExprAST – a method reference (`Type:method` or `value:method`)
- *
- * If generic arguments are present, they are stored in `typeArgs`. Otherwise,
- * `typeArgs` is empty. The semantic pass resolves the entity and checks that
- * the number and kinds of type arguments match the declaration.
- *
- * @field entity   The base callable reference (identifier, field access, or behavior access)
- * @field typeArgs Optional concrete type arguments (empty if none)
- */
-struct CallableRefExprAST : ExprAST {
-    static constexpr ASTKind staticKind = ASTKind::CallableRefExpr;
-
-    ExprPtr entity;                 // The base callable reference
-    ArenaSpan<TypePtr> typeArgs;    // Generic type arguments (if any)
-
-    CallableRefExprAST() : ExprAST(ASTKind::CallableRefExpr) {}
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // LITERAL NODES
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -337,6 +290,7 @@ struct IdentifierExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::IdentifierExpr;
 
     InternedString name;
+    ArenaSpan<TypePtr> genericArgs;
 
     explicit IdentifierExprAST(InternedString n)
         : ExprAST(ASTKind::IdentifierExpr), name(n) {}
@@ -358,6 +312,7 @@ struct FieldAccessExprAST : ExprAST {
 
     ExprPtr object;
     InternedString field;
+    ArenaSpan<TypePtr> genericArgs;
 
     FieldAccessExprAST() : ExprAST(ASTKind::FieldAccessExpr) {}
 };
@@ -366,8 +321,8 @@ struct FieldAccessExprAST : ExprAST {
  * @brief Accesses a method on a type or value via the ':' operator.
  *
  * @example
- *   Vec2:normalize           → typeName = "Vec2", method = "normalize"
- *   v:length                 → typeName = type of v, method = "length"
+ *   v:normalize        → method = "normalize"
+ *   v:length           → method = "length"
  *
  * When the method is generic (e.g., `list:map<U>`), the BehaviorAccessExprAST
  * becomes the `entity` of a GenericInstantiationExprAST that supplies the
@@ -436,7 +391,6 @@ struct CallExprAST : ExprAST {
     ExprPtr callee;                 // The callable expression
     ArenaSpan<TypePtr> genericArgs; // Explicit type arguments (e.g., <int>)
     ArenaSpan<ExprPtr> args;        // Call arguments in order
-    bool isArgPack = false;         // true → fn(args)! — pipeline argument pack
     bool isAsyncCall = false;       // true if calling an async function
 
     CallExprAST() : ExprAST(ASTKind::CallExpr) {}
@@ -641,7 +595,6 @@ struct PipelineExprAST : ExprAST {
  *   - IdentifierExprAST (plain function name)
  *   - FieldAccessExprAST (dotted path)
  *   - BehaviorAccessExprAST (method reference)
- *   - CallableRefExprAST (with generic arguments)
  *
  * There is no argument pack or anonymous function in composition operands.
  */

@@ -194,7 +194,6 @@ enum class ASTKind : uint16_t {
     TypeAliasDecl,
 
     // Expression nodes
-    CallableRefExpr,
     LiteralExpr,
     ArrayLiteralExpr,
     StructLiteralExpr,

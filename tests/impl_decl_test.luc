@@ -154,7 +154,7 @@ impl Box<T> as b {
 -- 9. Independent generic parameters on methods
 -- ============================================================
 
-export const convert<T, U> (v T, f (T) -> U) -> U = { return f(v) }
+export const convert<T, U> (v T, f (t T) -> U) -> U = { return f(v) }
 
 impl Box<T> as b {
     -- Dependent T from Box<T>, independent U on method
@@ -254,13 +254,13 @@ impl IntList as l {
 
 impl Direction as d {
     opposite () -> Direction = {
-        match d {
-            Direction.North => return Direction.South
-            Direction.South => return Direction.North
-            Direction.East  => return Direction.West
-            Direction.West  => return Direction.East
+        return match d {
+            Direction.North => Direction.South
+            Direction.South => Direction.North
+            Direction.East  => Direction.West
+            Direction.West  => Direction.East
+            default => Direction.North
         }
-        default => return Direction.North
     }
     isHorizontal () -> bool = {
         return d == Direction.East or d == Direction.West

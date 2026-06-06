@@ -229,12 +229,6 @@ static void annotateExpr(ExprAST* expr, SemanticContext& ctx) {
             ic->isConst = isCompileTime;
             break;
         }
-        case ASTKind::CallableRefExpr: {
-            auto* cr = static_cast<CallableRefExprAST*>(expr);
-            if (cr->entity) annotateExpr(cr->entity.get(), ctx);
-            cr->isConst = false;
-            break;
-        }
         default:
             LUC_LOG_SEMANTIC("annotateExpr: unhandled kind " << static_cast<int>(expr->kind));
             expr->isConst = false;

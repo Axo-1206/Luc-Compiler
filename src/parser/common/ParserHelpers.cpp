@@ -31,6 +31,7 @@
  * @see LUC_GRAMMAR.md for grammar rules
  */
 
+#include "ast/BaseAST.hpp"
 #include "parser/Parser.hpp"
 #include "ast/support/InternedString.hpp"
 #include "diagnostics/DiagnosticCodes.hpp"
@@ -545,7 +546,10 @@ std::vector<InternedString> Parser::parseModulePath() {
  *         Result may be:
  *         - `IdentifierExprAST`        – plain identifier (e.g., `identity`)
  *         - `FieldAccessExprAST`       – dotted module path (e.g., `math.utils.toString`)
- *         - `CallableRefExprAST`       – wrapped with generic arguments (e.g., `identity<int>`)
+ *         - Both may have `genericArgs` stored directly on them for generic
+ *           function references (e.g., `identity<int>` has `genericArgs` on the
+ *           IdentifierExprAST, `math.toString<float>` has `genericArgs` on the
+ *           FieldAccessExprAST)
  *
  * ─── Parsing Steps ─────────────────────────────────────────────────────────
  *   1. Parse the first identifier (required).
@@ -559,13 +563,15 @@ std::vector<InternedString> Parser::parseModulePath() {
  * ─── Generic Arguments ────────────────────────────────────────────────────
  *   - The opening `<` is consumed BEFORE calling `parseGenericArgs()`.
  *   - `parseGenericArgs()` parses the type list and consumes the closing `>`.
- *   - The result is wrapped in a `CallableRefExprAST`.
+ *   - Generic arguments are stored directly on the `IdentifierExprAST` or
+ *     `FieldAccessExprAST` node (not in a separate wrapper node).
  *
  * ─── Error Recovery ───────────────────────────────────────────────────────
  *   - Missing identifier: returns `UnknownExprAST`, reports error.
  *   - Missing identifier after '.': reports error, stops building path.
  *   - Malformed generic arguments: `parseGenericArgs()` reports error,
- *     returns empty span, still creates `CallableRefExprAST` with empty args.
+ *     returns empty span (still creates the identifier/field access node
+ *     with empty generic args).
  *
  * ─── Important Notes ──────────────────────────────────────────────────────
  *   - Colon `:` is NOT handled here – it belongs to pipeline steps and
@@ -575,56 +581,76 @@ std::vector<InternedString> Parser::parseModulePath() {
  *   - Generic arguments are always explicit (no inference). An uninstantiated
  *     generic function (e.g., `identity` without `<type>`) is not a valid
  *     `func_ref` – the caller must provide type arguments.
+ *   - Generic arguments are stored directly on the AST node (IdentifierExprAST
+ *     or FieldAccessExprAST) rather than in a separate wrapper node. This
+ *     simplifies the AST and makes the semantic analysis more straightforward.
  *
  * @see parseGenericArgs() for the generic argument list parser
- * @see CallableRefExprAST for the node that stores generic arguments
  */
 ExprPtr Parser::parseFuncRef() {
-    LUC_LOG_EXPR_VERBOSE("parseFuncRef: entering");
+    LUC_LOG_EXPR_VERBOSE("parseFuncRef: entering at line " << ts_.currentLoc().line()
+                         << ", col " << ts_.currentLoc().column());
     SourceLocation loc = ts_.currentLoc();
 
     // Parse a name (identifier or dotted path)
     if (!ts_.check(TokenType::IDENTIFIER)) {
-        LUC_LOG_EXPR("parseFuncRef: ERROR - expected function name");
-        errorAt(DiagCode::E1003, "expected function name in function reference");
+        LUC_LOG_EXPR("parseFuncRef: ERROR - expected function name at line "
+                     << ts_.peek().line << ", col " << ts_.peek().column);
+        errorAt(DiagCode::E1003);
         return arena_.make<UnknownExprAST>();
     }
-    std::string name = ts_.advance().value;
-    LUC_LOG_EXPR_EXTREME("parseFuncRef: base name = '" << name << "'");
+    
+    SourceLocation firstTokenLoc = ts_.currentLoc();
+    Token firstToken = ts_.advance();
+    std::string name = firstToken.value;
+    LUC_LOG_EXPR_EXTREME("parseFuncRef: base name = '" << name 
+                         << "' at line " << firstToken.line << ", col " << firstToken.column);
 
     ExprPtr expr = arena_.make<IdentifierExprAST>(pool_.intern(name));
-    expr->loc = loc;
+    expr->loc = firstTokenLoc;
 
     // Parse dotted path segments (module path)
     while (ts_.check(TokenType::DOT)) {
         ts_.advance();
         if (!ts_.check(TokenType::IDENTIFIER)) {
-            LUC_LOG_EXPR("parseFuncRef: ERROR - expected identifier after '.'");
-            errorAt(DiagCode::E1003, "expected identifier after '.'");
+            LUC_LOG_EXPR("parseFuncRef: ERROR - expected identifier after '.' at line "
+                         << ts_.peek().line << ", col " << ts_.peek().column);
+            errorAt(DiagCode::E1003);
             break;
         }
-        std::string field = ts_.advance().value;
-        LUC_LOG_EXPR_EXTREME("parseFuncRef: dotted segment ." << field);
+        SourceLocation fieldLoc = ts_.currentLoc();
+        Token fieldToken = ts_.advance();
+        LUC_LOG_EXPR_EXTREME("parseFuncRef: dotted segment ." << fieldToken.value
+                             << " at line " << fieldToken.line << ", col " << fieldToken.column);
+        
         auto node = arena_.make<FieldAccessExprAST>();
-        node->loc = loc;
+        node->loc = fieldLoc;
         node->object = std::move(expr);
-        node->field = pool_.intern(field);
+        node->field = pool_.intern(fieldToken.value);
         expr = std::move(node);
     }
 
-    // Colon (:) is NOT part of func_ref grammar.
-    // Method references (e.g., `obj:method`) are handled by pipeline/compose parsers separately.
-
     // Optional generic arguments
     if (ts_.check(TokenType::LESS)) {
-        LUC_LOG_EXPR_EXTREME("parseFuncRef: parsing generic arguments");
-        ts_.advance(); // consume '<' — parseGenericArgs expects it already consumed
-        ArenaSpan<TypePtr> typeArgs = parseGenericArgs(); // parses type list and consumes '>'
-        auto refNode = arena_.make<CallableRefExprAST>();
-        refNode->loc = loc;
-        refNode->entity = std::move(expr);
-        refNode->typeArgs = typeArgs;
-        expr = std::move(refNode);
+        LUC_LOG_EXPR_EXTREME("parseFuncRef: parsing generic arguments at line "
+                             << ts_.peek().line << ", col " << ts_.peek().column);
+        ts_.advance(); // consume '<'
+        ArenaSpan<TypePtr> typeArgs = parseGenericArgs();
+        
+        // Apply generic arguments to the appropriate node type
+        if (auto* ident = expr->as<IdentifierExprAST>()) {
+            LUC_LOG_EXPR("parseFuncRef: adding " << typeArgs.size() 
+                         << " generic args to identifier");
+            ident->genericArgs = typeArgs;
+        } else if (auto* field = expr->as<FieldAccessExprAST>()) {
+            LUC_LOG_EXPR("parseFuncRef: adding " << typeArgs.size() 
+                         << " generic args to field access");
+            field->genericArgs = typeArgs;
+        } else {
+            LUC_LOG_EXPR("parseFuncRef: ERROR - cannot add generic args to node type "
+                         << static_cast<int>(expr->kind));
+        }
+        
         LUC_LOG_EXPR_EXTREME("parseFuncRef: generic args count = " << typeArgs.size());
     }
 
