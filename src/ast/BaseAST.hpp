@@ -531,7 +531,6 @@ struct ParamAST : BaseAST {
     InternedString name;
     TypePtr        type;
     bool           isVariadic = false;
-    bool           isConst = false;
 
     ParamAST() : BaseAST(ASTKind::Param) {}
 };

@@ -309,7 +309,6 @@ struct GenericArrayTypeAST : TypeAST {
     ArrayKind arrayKind;
     uint64_t size;
     InternedString typeParamName;
-    bool isConst = false;
 
     GenericArrayTypeAST(ArrayKind k, uint64_t sz, InternedString name)
         : TypeAST(ASTKind::GenericArrayType),

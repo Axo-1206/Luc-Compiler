@@ -125,7 +125,6 @@ struct VarDeclAST : DeclAST {
     TypeAST* type;
     ExprAST* init;
     Visibility visibility = Visibility::Private;
-    bool isConst = false;
 
     VarDeclAST() : DeclAST(ASTKind::VarDecl) {}
 };
@@ -159,7 +158,6 @@ struct FuncDeclAST : DeclAST {
     FuncTypeAST* funcType;
     StmtAST* body;
     Visibility visibility = Visibility::Private;
-    bool isConst = false;
 
     bool isAsync()   const { return funcType->isAsync(); }
     bool hasParams() const { return funcType->sig.hasParams(); }
@@ -253,7 +251,6 @@ struct EnumVariantAST : BaseAST {
 
     InternedString name;
     std::optional<int64_t> explicitValue;
-    bool isConst = false;
 
     explicit EnumVariantAST(InternedString n)
         : BaseAST(ASTKind::EnumVariant), name(n) {}
@@ -503,11 +500,6 @@ struct ImplDeclAST : DeclAST {
     
     TraitRefPtr traitRef = nullptr;
     ArenaSpan<MethodDeclPtr> methods;
-
-    // Semantic caches
-    mutable TypeAST* resolvedSelfType = nullptr;
-    mutable const ArenaSpan<GenericParamPtr>* resolvedTargetGenericParams = nullptr;
-    mutable std::unordered_map<InternedString, TypeAST*> resolvedSubstitutionMap;
 
     ImplDeclAST() : DeclAST(ASTKind::ImplDecl) {}
 };
