@@ -76,9 +76,9 @@ ExprPtr Parser::parseResolveExpr() {
 
     auto node = arena_.make<ResolveExprAST>();
     node->loc = loc;
-    node->subject = std::move(subject);
-    node->okArm = std::move(okArm);
-    node->errArm = std::move(errArm);
+    node->subject = subject;
+    node->okArm = okArm;
+    node->errArm = errArm;
     
     LUC_LOG_EXPR_VERBOSE("parseResolveExpr: success");
     return node;
@@ -150,8 +150,8 @@ OkArmPtr Parser::parseOkArm() {
     auto arm = arena_.make<OkArmAST>();
     arm->loc = loc;
     arm->bindName = bindName;
-    arm->bindType = std::move(bindType);
-    arm->body = std::move(body);
+    arm->bindType = bindType;
+    arm->body = body;
     
     LUC_LOG_EXPR_EXTREME("parseOkArm: success");
     return arm;
@@ -198,7 +198,7 @@ ErrArmPtr Parser::parseErrArm() {
     ts_.consume(TokenType::LPAREN, "expected '(' after 'err'");
 
     InternedString bindName;
-    TypePtr bindType;
+    TypePtr bindType = nullptr;
     bool isBare = false;
 
     // Check for optional identifier and type (bare '!' case)
@@ -232,8 +232,8 @@ ErrArmPtr Parser::parseErrArm() {
     auto arm = arena_.make<ErrArmAST>();
     arm->loc = loc;
     arm->bindName = bindName;
-    arm->bindType = std::move(bindType);
-    arm->body = std::move(body);
+    arm->bindType = bindType;
+    arm->body = body;
     
     LUC_LOG_EXPR_EXTREME("parseErrArm: success" << (isBare ? " (bare)" : ""));
     return arm;

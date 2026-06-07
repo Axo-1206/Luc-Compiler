@@ -101,8 +101,8 @@ ExprPtr Parser::parseRangeExpr(ExprPtr lo, bool allowStructLiteral) {
 
     auto node = arena_.make<RangeExprAST>();
     node->loc = loc;
-    node->lo = std::move(lo);
-    node->hi = std::move(hi);
+    node->lo = lo;
+    node->hi = hi;
     node->isExclusive = isExclusive;
     
     LUC_LOG_EXPR_VERBOSE("parseRangeExpr: success");

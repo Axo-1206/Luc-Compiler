@@ -15,15 +15,23 @@
  *   intrinsic_arg_list := intrinsic_arg { ',' intrinsic_arg }
  *   intrinsic_arg := expr | type
  * 
- * Intrinsics fall into two categories:
- *   - Type intrinsics: #sizeof(T), #alignof(T) – take a single type argument.
- *   - Value intrinsics: all others – take expression arguments.
+ * Parser Responsibility:
+ *   - Parse the `#` prefix
+ *   - Parse the intrinsic name (identifier)
+ *   - Parse the argument list inside parentheses
+ *   - Store ALL arguments as expressions in `IntrinsicCallExprAST::args`
+ * 
+ * Semantic Responsibility (NOT Parser):
+ *   - Validate the intrinsic name is known
+ *   - Check argument count matches the intrinsic's signature
+ *   - Determine if arguments are types or expressions
+ *   - Resolve types and perform any necessary conversions
  * 
  * Examples:
- *   #sizeof(Vertex)          → compile‑time size of type Vertex
- *   #sqrt(x)                 → hardware‑accelerated square root
- *   #memcpy(dst, src, len)   → LLVM memcpy intrinsic
- *   #clz(flags)              → count leading zero bits
+ *   #sizeof(Vertex)          → parsed as intrinsic name "sizeof", args=[Vertex as IdentifierExprAST?]
+ *   #sqrt(x)                 → parsed as intrinsic name "sqrt", args=[x]
+ *   #memcpy(dst, src, len)   → parsed as intrinsic name "memcpy", args=[dst, src, len]
+ *   #clz(flags)              → parsed as intrinsic name "clz", args=[flags]
  * 
  * @see ParserExpr.cpp for expression dispatch
  * @see IntrinsicCallExprAST for AST representation
@@ -43,13 +51,17 @@
  * @brief Parses a compiler intrinsic call: `#name(args)`.
  *
  * Grammar:
- *   intrinsic_call := '#' IDENTIFIER '(' [ intrinsic_arg_list ] ')'
- *   intrinsic_arg_list := intrinsic_arg { ',' intrinsic_arg }
- *   intrinsic_arg := expr | type
+ *   intrinsic_call := '#' IDENTIFIER '(' [ arg_list ] ')'
+ *   arg_list := expr { ',' expr }
  *
- * Two categories are distinguished by the intrinsic name:
- *   - Type intrinsics: `#sizeof`, `#alignof` – consume a single type argument.
- *   - Value intrinsics: all others – consume a comma‑separated list of expressions.
+ * IMPORTANT: The parser treats ALL arguments as expressions. The semantic
+ * pass is responsible for:
+ *   - Validating the intrinsic name
+ *   - Determining which arguments are actually type arguments
+ *   - Converting type arguments from identifier expressions to type AST nodes
+ *
+ * This design keeps the parser simple and maintainable. Adding a new
+ * intrinsic requires NO changes to the parser – only semantic validation.
  *
  * @return ExprPtr – IntrinsicCallExprAST on success, UnknownExprAST on error.
  *
@@ -57,27 +69,17 @@
  * On entry: positioned at '#'.
  * On exit:  positioned after the closing ')'.
  *
- * ─── Type Intrinsics (#sizeof, #alignof) ──────────────────────────────────
- *   - Take exactly one type argument (no expressions allowed).
- *   - Return compile‑time constant (uint64).
- *   - Example: `#sizeof(Vertex)`, `#alignof(Vec2)`
- *
- * ─── Value Intrinsics ──────────────────────────────────────────────────────
- *   - Take zero or more expression arguments.
- *   - Arguments are parsed with `parseExpr()`.
- *   - Examples: `#sqrt(x)`, `#memcpy(dst, src, n)`, `#clz(flags)`
+ * ─── Argument Parsing ─────────────────────────────────────────────────────
+ *   - All arguments are parsed as expressions using parseExpr()
+ *   - This includes what may later be interpreted as type names (e.g., in
+ *     `#sizeof(Vertex)`, "Vertex" is parsed as IdentifierExprAST)
+ *   - The semantic pass will convert identifier expressions to type AST nodes
+ *     when appropriate for the intrinsic
  *
  * ─── Error Recovery ───────────────────────────────────────────────────────
- *   - Missing '(' after intrinsic name: reports error, returns UnknownExprAST.
- *   - Missing type argument for type intrinsic: reports error.
- *   - Missing expression argument for value intrinsic: reports error, breaks loop.
- *   - Missing ')' after arguments: consume() reports error.
- *
- * ─── Semantic Validation (Not Parser Responsibility) ──────────────────────
- *   - The intrinsic name must be known to the compiler.
- *   - Argument count and types must match the intrinsic’s signature.
- *   - Type intrinsics may only appear in constant expressions.
- *   - Memory intrinsics (#memcpy, #memset, #memmove) require raw pointer arguments.
+ *   - Missing '(' after intrinsic name: reports error, returns UnknownExprAST
+ *   - Missing expression argument: reports error, breaks loop
+ *   - Missing ')' after arguments: consume() reports error
  */
 ExprPtr Parser::parseIntrinsicCallExpr() {
     LUC_LOG_EXPR_VERBOSE("parseIntrinsicCallExpr: entering");
@@ -104,32 +106,14 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
     }
     ts_.advance();  // consume '('
 
-    bool isTypeIntrinsic = (intrinsicStr == "sizeof" || intrinsicStr == "alignof");
-
-    if (isTypeIntrinsic) {
-        LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: type intrinsic");
-        // Type intrinsics: #sizeof(T), #alignof(T)
-        if (ts_.check(TokenType::RPAREN)) {
-            LUC_LOG_EXPR("parseIntrinsicCallExpr: ERROR - expected type argument");
-            errorAt(DiagCode::E1005, "expected type argument");
-        } else {
-            TypePtr typeArg = parseType();
-            if (!typeArg) {
-                LUC_LOG_EXPR("parseIntrinsicCallExpr: ERROR - invalid type argument");
-                errorAt(DiagCode::E1005, "invalid type argument");
-            } else {
-                node->typeArg = std::move(typeArg);
-                LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: type argument parsed");
-            }
-        }
-        ts_.consume(TokenType::RPAREN, "expected ')' after type argument");
-    } else {
-        LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: value intrinsic");
-        // Value intrinsics: #name(expr, expr, ...)
-        std::vector<ExprPtr> args;
-        int argCount = 0;
-        
-        while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
+    // Parse argument list - ALL arguments are parsed as expressions
+    // The semantic pass will interpret them appropriately based on the intrinsic
+    std::vector<ExprPtr> args;
+    int argCount = 0;
+    
+    // Check for empty argument list
+    if (!ts_.check(TokenType::RPAREN)) {
+        do {
             size_t savedPos = ts_.getPos();
             ExprPtr arg = parseExpr();
             if (ts_.getPos() == savedPos) {
@@ -140,20 +124,24 @@ ExprPtr Parser::parseIntrinsicCallExpr() {
             }
             argCount++;
             LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: argument #" << argCount);
-            args.push_back(std::move(arg));
+            args.push_back(arg);
+            
             if (ts_.check(TokenType::RPAREN)) break;
             if (!ts_.match(TokenType::COMMA)) {
                 LUC_LOG_EXPR("parseIntrinsicCallExpr: ERROR - expected ',' or ')'");
                 errorAt(DiagCode::E1001, "expected ',' or ')' in intrinsic argument list");
                 break;
             }
-        }
-        auto builder = arena_.makeBuilder<ExprPtr>();
-        for (auto& a : args) builder.push_back(std::move(a));
-        node->args = builder.build();
-        LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: " << argCount << " argument(s)");
-        ts_.consume(TokenType::RPAREN, "expected ')' to close intrinsic call");
+        } while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd());
     }
+    
+    auto builder = arena_.makeBuilder<ExprPtr>();
+    for (auto& a : args) builder.push_back(a);
+    node->args = builder.build();
+    
+    LUC_LOG_EXPR_EXTREME("parseIntrinsicCallExpr: " << argCount << " argument(s)");
+    
+    ts_.consume(TokenType::RPAREN, "expected ')' to close intrinsic call");
 
     LUC_LOG_EXPR_VERBOSE("parseIntrinsicCallExpr: success");
     return node;

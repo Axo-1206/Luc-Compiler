@@ -82,9 +82,9 @@ ExprPtr Parser::parseIfExpr(bool allowStructLiteral) {
 
     auto node = arena_.make<IfExprAST>();
     node->loc = loc;
-    node->condition = std::move(condition);
-    node->thenBranch = std::move(thenBranch);
-    node->elseBranch = std::move(elseBranch);
+    node->condition = condition;
+    node->thenBranch = thenBranch;
+    node->elseBranch = elseBranch;
     
     LUC_LOG_EXPR_VERBOSE("parseIfExpr: success");
     return node;

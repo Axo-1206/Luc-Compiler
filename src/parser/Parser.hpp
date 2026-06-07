@@ -481,8 +481,8 @@ private:
 
     // ---- Call & index ----
     ExprPtr parseCallExpr(ExprPtr callee, ArenaSpan<TypeAST*> genericArgs);
-    ExprPtr parseIndexExpr(ExprPtr target);           // returns IndexExprAST*
-    ExprPtr parseSliceExpr(ExprPtr target, ExprPtr start, ExprPtr end, bool isExclusive);  // returns SliceExprAST*
+    ExprPtr parseIndexExpr(ExprPtr target); // returns IndexExprAST*
+    ExprPtr parseSliceExpr(ExprPtr target); // returns SliceExprAST*
 
     // ---- Precedence helpers ----
     int infixPrec(TokenType type) const;

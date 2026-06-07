@@ -836,7 +836,6 @@ struct IntrinsicCallExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::IntrinsicCallExpr;
 
     InternedString intrinsicName; // "sizeof", "memcpy", "sqrt", etc.
-    TypeAST* typeArg;              // for #sizeof(T) – nullptr otherwise
     ArenaSpan<ExprAST*> args;      // value arguments in order
 
     IntrinsicCallExprAST() : ExprAST(ASTKind::IntrinsicCallExpr) {}

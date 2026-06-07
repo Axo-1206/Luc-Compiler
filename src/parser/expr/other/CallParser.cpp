@@ -87,21 +87,16 @@ ExprPtr Parser::parseCallExpr(ExprPtr callee, ArenaSpan<TypePtr> genericArgs) {
     
     SourceLocation loc = callee->loc;
     
-    LUC_LOG_EXPR("parseCallExpr: current token before '(' = '" << ts_.peek().value 
-                 << "' at line " << ts_.peek().line << ", col " << ts_.peek().column);
-    
     ts_.consume(TokenType::LPAREN, "expected '('");
 
     auto node = arena_.make<CallExprAST>();
     node->loc = loc;
-    node->callee = std::move(callee);
+    node->callee = callee;
     node->genericArgs = genericArgs;
 
     // Parse argument list if not empty
     if (!ts_.check(TokenType::RPAREN)) {
-        LUC_LOG_EXPR_EXTREME("parseCallExpr: parsing argument list");
         node->args = parseArgList();
-        LUC_LOG_EXPR_EXTREME("parseCallExpr: parsed " << node->args.size() << " argument(s)");
     } else {
         LUC_LOG_EXPR_EXTREME("parseCallExpr: no arguments");
     }
@@ -117,11 +112,7 @@ ExprPtr Parser::parseCallExpr(ExprPtr callee, ArenaSpan<TypePtr> genericArgs) {
                 "For a regular function call, remove the '!'. If you intended a pipeline, "
                 "use the '|>' operator before this call.");
         ts_.advance(); // consume '!' to recover
-        // Do NOT set isArgPack – regular calls never have argument packs.
     }
-    
-    // isArgPack remains false (default) – the field is ignored for regular calls.
-    // (The AST still has isArgPack, but it will never be set here.)
 
     LUC_LOG_EXPR_VERBOSE("parseCallExpr: success");
     return node;

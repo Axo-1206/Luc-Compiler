@@ -42,7 +42,7 @@ ExprPtr Parser::parseAwaitExpr(bool allowStructLiteral) {
         return arena_.make<UnknownExprAST>();
     }
 
-    auto node = arena_.make<AwaitExprAST>(std::move(inner));
+    auto node = arena_.make<AwaitExprAST>(inner);
     node->loc = loc;
     
     LUC_LOG_EXPR_EXTREME("parseAwaitExpr: success");

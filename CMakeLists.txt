@@ -92,6 +92,7 @@ add_executable(luc-comp
     src/parser/expr/match/PatternParser.cpp
     src/parser/expr/other/CallParser.cpp
     src/parser/expr/other/IndexParser.cpp
+    src/parser/expr/other/SliceParser.cpp
     src/parser/Dispatcher.cpp
 
     # Semantic Analyzer

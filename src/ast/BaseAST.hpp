@@ -278,14 +278,6 @@ enum class FromEntryKind {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IndexKind — distinguishes array element access vs slice access.
-// ─────────────────────────────────────────────────────────────────────────────
-enum class IndexKind {
-    Element,  // expr '[' expr ']'              — nums[2]
-    Slice,    // expr '[' expr '..' expr ']'    — nums[1..3] (inclusive)
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // DocComment — documentation attached to declarations only (stored in DeclAST).
 // ─────────────────────────────────────────────────────────────────────────────
 
