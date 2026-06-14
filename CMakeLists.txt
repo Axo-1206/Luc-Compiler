@@ -102,7 +102,6 @@ add_executable(luc-comp
     src/semantic/collector/DeclarationCollector.cpp
     src/semantic/resolver/TypeResolver.cpp
     src/semantic/checker/TypeChecker.cpp
-    src/semantic/checker/stmt/StmtChecker.cpp
     
     src/semantic/checker/decl/DeclChecker.cpp
     src/semantic/checker/decl/DeclUtils.cpp
@@ -131,6 +130,19 @@ add_executable(luc-comp
     src/semantic/checker/expr/FunctionChecker.cpp
     src/semantic/checker/expr/AwaitChecker.cpp
     src/semantic/checker/expr/RangeChecker.cpp
+
+    src/semantic/checker/stmt/StmtChecker.cpp
+    src/semantic/checker/stmt/StmtUtils.cpp
+    src/semantic/checker/stmt/BlockChecker.cpp
+    src/semantic/checker/stmt/DeclStmtChecker.cpp
+    src/semantic/checker/stmt/ExprStmtChecker.cpp
+    src/semantic/checker/stmt/IfChecker.cpp
+    src/semantic/checker/stmt/SwitchChecker.cpp
+    src/semantic/checker/stmt/ForChecker.cpp
+    src/semantic/checker/stmt/WhileChecker.cpp
+    src/semantic/checker/stmt/ReturnChecker.cpp
+    src/semantic/checker/stmt/JumpChecker.cpp
+    src/semantic/checker/stmt/MultiVarChecker.cpp
     
 
 

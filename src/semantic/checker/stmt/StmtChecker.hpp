@@ -1,36 +1,40 @@
 /**
  * @file StmtChecker.hpp
- * @brief Statement semantic validation and control flow checking.
+ * @brief Statement semantic validation and control flow checking - Main entry point.
  * 
  * ============================================================================
- * STATEMENT CHECKER
+ * STATEMENT CHECKER MODULE
  * ============================================================================
  * 
  * This module validates statements and their control flow semantics.
  * 
- * ─── Dispatch Pattern ──────────────────────────────────────────────────────
+ * ─── Architecture ──────────────────────────────────────────────────────────
  * 
- *   checkStmt(stmt, ctx) → dispatches to specific checker based on kind
- *   Each checker may push/pop scopes and validate control flow
+ *   The module follows a dispatch pattern:
+ *   
+ *   checkStmt() ─┬─► checkBlockStmt()       (BlockChecker.cpp)
+ *                ├─► checkDeclStmt()         (DeclStmtChecker.cpp)
+ *                ├─► checkExprStmt()         (ExprStmtChecker.cpp)
+ *                ├─► checkIfStmt()           (IfChecker.cpp)
+ *                ├─► checkSwitchStmt()       (SwitchChecker.cpp)
+ *                ├─► checkForStmt()          (ForChecker.cpp)
+ *                ├─► checkWhileStmt()        (WhileChecker.cpp)
+ *                ├─► checkDoWhileStmt()      (WhileChecker.cpp)
+ *                ├─► checkReturnStmt()       (ReturnChecker.cpp)
+ *                ├─► checkBreakStmt()        (JumpChecker.cpp)
+ *                ├─► checkContinueStmt()     (JumpChecker.cpp)
+ *                ├─► checkMultiVarDecl()     (MultiChecker.cpp)
+ *                └─► checkMultiAssignStmt()  (MultiChecker.cpp)
  * 
- * ─── Dependencies ─────────────────────────────────────────────────────────
+ * ─── Dependencies ──────────────────────────────────────────────────────────
  * 
  *   - ExprChecker: for expression validation
  *   - TypeChecker: for type compatibility
  *   - ScopeStack: for scope management
  * 
- * ─── Statement Categories ─────────────────────────────────────────────────
- * 
- *   Block:        { stmt* } – creates new scope
- *   Declaration:  local var/func declarations
- *   Branching:    if, switch
- *   Loops:        for, while, do-while
- *   Jump:         return, break, continue
- *   Expression:   expression as statement (value discarded)
- * 
  * ─── Control Flow Context ─────────────────────────────────────────────────
  * 
- *   - loopDepth: tracks nesting for break/continue validation
+ *   - ctx.loopDepth: tracks nesting for break/continue validation
  *   - expectedReturn: the function's return type (for return statements)
  * 
  * @see ExprChecker for expression validation
@@ -44,9 +48,11 @@
 #include "ast/DeclAST.hpp"
 #include "semantic/helpers/SemanticContext.hpp"
 #include "semantic/scope/ScopeStack.hpp"
+#include "semantic/checker/TypeChecker.hpp"
+#include "semantic/checker/expr/ExprChecker.hpp"
 
 // ============================================================================
-// Dispatcher
+// Main Dispatch
 // ============================================================================
 
 /**
@@ -108,7 +114,7 @@ void checkExprStmt(ExprStmtAST* exprStmt, SemanticContext& ctx, TypeAST* expecte
 /**
  * @brief Checks an if statement.
  * 
- * Condition must be boolean. Then/then branches are checked.
+ * Condition must be boolean. Then/else branches are checked.
  * 
  * @param ifStmt The if statement
  * @param ctx Semantic context
@@ -199,7 +205,7 @@ void checkBreakStmt(BreakStmtAST* breakStmt, SemanticContext& ctx);
 void checkContinueStmt(ContinueStmtAST* continueStmt, SemanticContext& ctx);
 
 // ============================================================================
-// Multi-Variable Declarations
+// Multi-Variable Declarations and Assignments
 // ============================================================================
 
 /**
@@ -219,3 +225,47 @@ void checkMultiVarDecl(MultiVarDeclAST* multiDecl, SemanticContext& ctx, TypeAST
  * @param expectedReturn Unused
  */
 void checkMultiAssignStmt(MultiAssignStmtAST* multiAssign, SemanticContext& ctx, TypeAST* expectedReturn = nullptr);
+
+// ============================================================================
+// Internal Helper Functions
+// ============================================================================
+
+/**
+ * @namespace stmt
+ * @brief Internal utilities for statement checking (not part of public API).
+ * 
+ * These helpers are used by the individual statement checkers but are not
+ * intended for external use.
+ */
+namespace stmt {
+
+/**
+ * @brief Checks if a type is boolean, emitting an error if not.
+ * 
+ * @param type The type to check
+ * @param loc Source location for error reporting
+ * @param ctx Semantic context
+ * @return true if type is boolean
+ */
+bool expectBoolean(TypeAST* type, const SourceLocation& loc, SemanticContext& ctx);
+
+/**
+ * @brief Checks if a type is integer, emitting an error if not.
+ * 
+ * @param type The type to check
+ * @param loc Source location for error reporting
+ * @param ctx Semantic context
+ * @return true if type is integer
+ */
+bool expectInteger(TypeAST* type, const SourceLocation& loc, SemanticContext& ctx);
+
+/**
+ * @brief Checks if an expression is constant, emitting an error if not.
+ * 
+ * @param expr The expression to check
+ * @param ctx Semantic context
+ * @return true if expression is constant
+ */
+bool expectConstant(ExprAST* expr, SemanticContext& ctx);
+
+} // namespace stmt
