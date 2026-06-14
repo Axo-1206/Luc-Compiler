@@ -2846,6 +2846,10 @@ from int {
 }
 ```
 
+> [!NOTE]
+> A bare generic instantiation such as `toString<int>` is **not** a valid `from_entry` by itself — there is no syntax for registering a generic instantiation directly as an entry. It may only appear as a call expression inside an inline entry's body, as shown above.
+
+
 **Generic `from` target** — when the `from` target is a generic type, its type parameters are in scope for every entry's parameter types and body, the same rule as `impl Box<T>`:
 
 ```luc
@@ -2884,6 +2888,20 @@ The compiler does not chain conversions (e.g., A → B → C) — only a single 
 > from (int) -> bool {
 >     (f ~nullable (int) -> bool) -> (int) -> bool = {
 >         if f == nil { return (x int) -> bool { return false } }
+>         return f
+>     }
+> }
+> ```
+>
+> Because the body is an ordinary inline entry, the returned function isn't limited to stripping qualifiers from `f` — it can also be a new closure that captures extra values from the conversion's enclosing scope, beyond what the source function type carries:
+>
+> ```luc
+> -- convert a nullable function to a plain one, falling back to a captured default
+> let defaultValue bool = true
+>
+> from (int) -> bool {
+>     (f ~nullable (int) -> bool) -> (int) -> bool = {
+>         if f == nil { return (x int) -> bool { return defaultValue } }
 >         return f
 >     }
 > }
