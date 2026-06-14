@@ -102,7 +102,6 @@ add_executable(luc-comp
     src/semantic/collector/DeclarationCollector.cpp
     src/semantic/resolver/TypeResolver.cpp
     src/semantic/checker/TypeChecker.cpp
-    src/semantic/checker/expr/ExprChecker.cpp
     src/semantic/checker/stmt/StmtChecker.cpp
     
     src/semantic/checker/decl/DeclChecker.cpp
@@ -117,6 +116,21 @@ add_executable(luc-comp
     src/semantic/checker/decl/ImplChecker.cpp
     src/semantic/checker/decl/FromChecker.cpp
     src/semantic/checker/decl/TypeAliasChecker.cpp
+    
+    src/semantic/checker/expr/ExprChecker.cpp
+    src/semantic/checker/expr/ExprUtils.cpp
+    src/semantic/checker/expr/LiteralChecker.cpp
+    src/semantic/checker/expr/IdentifierChecker.cpp
+    src/semantic/checker/expr/FieldAccessChecker.cpp
+    src/semantic/checker/expr/CallChecker.cpp
+    src/semantic/checker/expr/IndexSliceChecker.cpp
+    src/semantic/checker/expr/UnaryChecker.cpp
+    src/semantic/checker/expr/BinaryChecker.cpp
+    src/semantic/checker/expr/AssignChecker.cpp
+    src/semantic/checker/expr/NullableChecker.cpp
+    src/semantic/checker/expr/FunctionChecker.cpp
+    src/semantic/checker/expr/AwaitChecker.cpp
+    src/semantic/checker/expr/RangeChecker.cpp
     
 
 

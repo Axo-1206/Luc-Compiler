@@ -1,34 +1,42 @@
 /**
  * @file ExprChecker.hpp
- * @brief Expression type checking and semantic validation.
+ * @brief Expression type checking and semantic validation - Main entry point.
  * 
  * ============================================================================
- * EXPRESSION CHECKER
+ * EXPRESSION CHECKER MODULE
  * ============================================================================
  * 
  * This module validates expressions and computes their resolved types.
  * The resolved type is cached on ExprAST::resolvedType.
  * 
- * ─── Dispatch Pattern ──────────────────────────────────────────────────────
+ * ─── Architecture ──────────────────────────────────────────────────────────
  * 
- *   checkExpr(expr, ctx) → dispatches to specific checker based on kind
- *   Each checker returns TypeAST* and caches it on expr->resolvedType
+ *   The module follows a dispatch pattern:
+ *   
+ *   checkExpr() ─┬─► checkLiteralExpr()       (LiteralChecker.cpp)
+ *                ├─► checkArrayLiteralExpr()  (LiteralChecker.cpp)
+ *                ├─► checkStructLiteralExpr() (LiteralChecker.cpp)
+ *                ├─► checkIdentifierExpr()    (IdentifierChecker.cpp)
+ *                ├─► checkFieldAccessExpr()   (FieldAccessChecker.cpp)
+ *                ├─► checkBehaviorAccessExpr()(FieldAccessChecker.cpp)
+ *                ├─► checkCallExpr()          (CallChecker.cpp)
+ *                ├─► checkIndexExpr()         (IndexSliceChecker.cpp)
+ *                ├─► checkSliceExpr()         (IndexSliceChecker.cpp)
+ *                ├─► checkUnaryExpr()         (UnaryChecker.cpp)
+ *                ├─► checkBinaryExpr()        (BinaryChecker.cpp)
+ *                ├─► checkAssignExpr()        (AssignChecker.cpp)
+ *                ├─► checkNullCoalesceExpr()  (NullableChecker.cpp)
+ *                ├─► checkNullableChainExpr() (NullableChecker.cpp)
+ *                ├─► checkIsExpr()            (TypeTestChecker.cpp)
+ *                ├─► checkAnonFuncExpr()      (FunctionChecker.cpp)
+ *                ├─► checkAwaitExpr()         (AwaitChecker.cpp)
+ *                └─► checkRangeExpr()         (RangeChecker.cpp)
  * 
- * ─── Dependencies ─────────────────────────────────────────────────────────
+ * ─── Dependencies ──────────────────────────────────────────────────────────
  * 
  *   - TypeResolver: for type resolution and alias unwrapping
  *   - TypeChecker: for type compatibility and inference
  *   - ScopeStack: for name lookup (identifiers)
- * 
- * ─── Expression Categories ────────────────────────────────────────────────
- * 
- *   Literal:      Integer, float, string, boolean, nil
- *   Identifier:   Variable, function, type reference
- *   Unary:        Negation, logical not, bitwise not, reference
- *   Binary:       Arithmetic, comparison, logical, bitwise
- *   Call:         Function/method calls
- *   Index:        Array element access
- *   Other:        Assignments, pipelines, composition, etc.
  * 
  * @see TypeResolver for type resolution
  * @see TypeChecker for type utilities
@@ -44,7 +52,7 @@
 #include "semantic/checker/TypeChecker.hpp"
 
 // ============================================================================
-// Dispatcher
+// Main Dispatch
 // ============================================================================
 
 /**
@@ -204,7 +212,7 @@ TypeAST* checkBinaryExpr(BinaryExprAST* expr, SemanticContext& ctx);
 TypeAST* checkAssignExpr(AssignExprAST* expr, SemanticContext& ctx);
 
 // ============================================================================
-// Other Expressions
+// Nullable Expressions
 // ============================================================================
 
 /**
@@ -225,6 +233,10 @@ TypeAST* checkNullCoalesceExpr(NullCoalesceExprAST* expr, SemanticContext& ctx);
  */
 TypeAST* checkNullableChainExpr(NullableChainExprAST* expr, SemanticContext& ctx);
 
+// ============================================================================
+// Type Test Expression
+// ============================================================================
+
 /**
  * @brief Checks a type test expression (x is Type).
  * 
@@ -233,6 +245,10 @@ TypeAST* checkNullableChainExpr(NullableChainExprAST* expr, SemanticContext& ctx
  * @return TypeAST* The bool type
  */
 TypeAST* checkIsExpr(IsExprAST* expr, SemanticContext& ctx);
+
+// ============================================================================
+// Function Expressions
+// ============================================================================
 
 /**
  * @brief Checks an anonymous function expression.
@@ -243,6 +259,10 @@ TypeAST* checkIsExpr(IsExprAST* expr, SemanticContext& ctx);
  */
 TypeAST* checkAnonFuncExpr(AnonFuncExprAST* expr, SemanticContext& ctx);
 
+// ============================================================================
+// Await Expression
+// ============================================================================
+
 /**
  * @brief Checks an await expression (await future).
  * 
@@ -252,6 +272,10 @@ TypeAST* checkAnonFuncExpr(AnonFuncExprAST* expr, SemanticContext& ctx);
  */
 TypeAST* checkAwaitExpr(AwaitExprAST* expr, SemanticContext& ctx);
 
+// ============================================================================
+// Range Expression
+// ============================================================================
+
 /**
  * @brief Checks a range expression (lo..hi).
  * 
@@ -260,3 +284,63 @@ TypeAST* checkAwaitExpr(AwaitExprAST* expr, SemanticContext& ctx);
  * @return TypeAST* The range type
  */
 TypeAST* checkRangeExpr(RangeExprAST* expr, SemanticContext& ctx);
+
+// ============================================================================
+// Internal Helper Functions
+// ============================================================================
+
+/**
+ * @namespace expr
+ * @brief Internal utilities for expression checking (not part of public API).
+ * 
+ * These helpers are used by the individual expression checkers but are not
+ * intended for external use.
+ */
+namespace expr {
+
+/**
+ * @brief Ensures a type is resolved and unwraps aliases.
+ * 
+ * @param type The type to resolve
+ * @param ctx Semantic context
+ * @return TypeAST* The resolved type, or nullptr on error
+ */
+TypeAST* resolveType(TypeAST* type, SemanticContext& ctx);
+
+/**
+ * @brief Checks if a type is valid for numeric operations.
+ * 
+ * @param type The type to check
+ * @param ctx Semantic context
+ * @return true if type is numeric
+ */
+bool isNumericType(TypeAST* type, SemanticContext& ctx);
+
+/**
+ * @brief Checks if a type is valid for integer operations.
+ * 
+ * @param type The type to check
+ * @param ctx Semantic context
+ * @return true if type is integer
+ */
+bool isIntegerType(TypeAST* type, SemanticContext& ctx);
+
+/**
+ * @brief Checks if a type is valid for boolean operations.
+ * 
+ * @param type The type to check
+ * @param ctx Semantic context
+ * @return true if type is boolean
+ */
+bool isBooleanType(TypeAST* type, SemanticContext& ctx);
+
+/**
+ * @brief Gets the element type from an array type.
+ * 
+ * @param arrayType The array type
+ * @param ctx Semantic context
+ * @return TypeAST* The element type, or nullptr
+ */
+TypeAST* getArrayElementType(TypeAST* arrayType, SemanticContext& ctx);
+
+} // namespace expr
