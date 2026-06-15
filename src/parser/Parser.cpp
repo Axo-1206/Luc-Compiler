@@ -188,7 +188,7 @@ bool TokenStream::checkAny(std::initializer_list<TokenType> types) const {
  */
 bool TokenStream::match(TokenType type) {
     if (!check(type)) return false;
-    LUC_LOG_LEXER_EXTREME("TokenStream::match: consumed " << LucDebug::tokenTypeToString(type));
+    LOG_LEXER_EXTREME("TokenStream::match: consumed " << LucDebug::tokenTypeToString(type));
     advance();
     return true;
 }
@@ -394,7 +394,7 @@ void Parser::errorAt(DiagCode code, std::initializer_list<std::string> args) {
  * top level or in statement contexts. It consumes tokens until it finds
  * a token that can safely start a new declaration or statement.
  * 
- * ## Recovery Tokens (from LUC_GRAMMAR.md)
+ * ## Recovery Tokens (from GRAMMAR.md)
  * 
  * - Declaration starts: AT_SIGN, PACKAGE, USE, PUB, EXPORT, STRUCT, ENUM,
  *   TRAIT, IMPL, TYPE, FROM, LET, CONST
@@ -408,7 +408,7 @@ void Parser::errorAt(DiagCode code, std::initializer_list<std::string> args) {
  * @see synchronizeTo() for the implementation
  */
 void Parser::synchronize() {
-    LUC_LOG_PARSER_VERBOSE("Parser::synchronize: entering panic mode recovery");
+    LOG_PARSER_VERBOSE("Parser::synchronize: entering panic mode recovery");
     synchronizeTo({
         TokenType::AT_SIGN, TokenType::PACKAGE, TokenType::USE,
         TokenType::PUB, TokenType::EXPORT, TokenType::STRUCT,
@@ -450,7 +450,7 @@ void Parser::synchronizeTo(std::initializer_list<TokenType> stopTokens) {
     
     // Don't skip if we're already at a stop token - just consume it
     if (ts_.checkAny(stopTokens)) {
-        LUC_LOG_PARSER_VERBOSE("Parser::synchronizeTo: already at stop token, consuming: " 
+        LOG_PARSER_VERBOSE("Parser::synchronizeTo: already at stop token, consuming: " 
                                << LucDebug::tokenTypeToString(ts_.peekType()));
         ts_.advance();
         return;
@@ -459,11 +459,11 @@ void Parser::synchronizeTo(std::initializer_list<TokenType> stopTokens) {
     while (!ts_.isAtEnd()) {
         if (ts_.checkAny(stopTokens)) {
             // Consume the stop token to make progress
-            LUC_LOG_PARSER_VERBOSE("Parser::synchronizeTo: found stop token, consuming: " 
+            LOG_PARSER_VERBOSE("Parser::synchronizeTo: found stop token, consuming: " 
                                    << LucDebug::tokenTypeToString(ts_.peekType()));
             ts_.advance();
             if (skipped > 0) {
-                LUC_LOG_PARSER_VERBOSE("Parser::synchronizeTo: skipped " << skipped << " tokens");
+                LOG_PARSER_VERBOSE("Parser::synchronizeTo: skipped " << skipped << " tokens");
             }
             return;
         }
@@ -472,14 +472,14 @@ void Parser::synchronizeTo(std::initializer_list<TokenType> stopTokens) {
         
         // Safety: prevent infinite loops in synchronizeTo itself
         if (skipped > 10000) {
-            LUC_LOG_PARSER("Parser::synchronizeTo: ERROR - skipped too many tokens (" 
+            LOG_PARSER("Parser::synchronizeTo: ERROR - skipped too many tokens (" 
                            << skipped << "), aborting recovery");
             break;
         }
     }
     
     if (skipped > 0) {
-        LUC_LOG_PARSER_VERBOSE("Parser::synchronizeTo: reached EOF, skipped " << skipped << " tokens");
+        LOG_PARSER_VERBOSE("Parser::synchronizeTo: reached EOF, skipped " << skipped << " tokens");
     }
 }
 
@@ -520,7 +520,7 @@ Visibility Parser::parseVisibility() {
 // harvestDocComment() scans backward from the current position to collect
 // documentation comments attached to the next declaration.
 // 
-// Attachment priority (from LUC_GRAMMAR.md):
+// Attachment priority (from GRAMMAR.md):
 //   1. Block doc comment   : /-- ... --/ immediately above declaration
 //   2. Stacked line comments: consecutive -- lines above declaration
 //   3. Trailing comment    : -- comment on the same line as declaration
@@ -586,7 +586,7 @@ Visibility Parser::parseVisibility() {
  * @see DocCommentForm for the three comment forms
  */
 std::optional<DocComment> Parser::harvestDocComment() {
-    LUC_LOG_PARSER_EXTREME("harvestDocComment: checking for doc comment");
+    LOG_PARSER_EXTREME("harvestDocComment: checking for doc comment");
     
     const auto& tokens = ts_.getTokens();
     size_t pos = ts_.getPos();
@@ -642,11 +642,11 @@ std::optional<DocComment> Parser::harvestDocComment() {
     }
     
     if (blockText.has_value()) {
-        LUC_LOG_PARSER_EXTREME("harvestDocComment: found block doc comment");
+        LOG_PARSER_EXTREME("harvestDocComment: found block doc comment");
         return DocComment{pool_.intern(*blockText), DocCommentForm::Block};
     }
     if (!stackedLines.empty()) {
-        LUC_LOG_PARSER_EXTREME("harvestDocComment: found " << stackedLines.size() << " stacked line comments");
+        LOG_PARSER_EXTREME("harvestDocComment: found " << stackedLines.size() << " stacked line comments");
         std::string combined;
         for (int i = static_cast<int>(stackedLines.size()) - 1; i >= 0; --i) {
             if (!combined.empty()) combined += '\n';
@@ -655,7 +655,7 @@ std::optional<DocComment> Parser::harvestDocComment() {
         return DocComment{pool_.intern(combined), DocCommentForm::Stacked};
     }
     if (trailingText.has_value()) {
-        LUC_LOG_PARSER_EXTREME("harvestDocComment: found trailing comment");
+        LOG_PARSER_EXTREME("harvestDocComment: found trailing comment");
         return DocComment{pool_.intern(*trailingText), DocCommentForm::Trailing};
     }
     
@@ -740,7 +740,7 @@ std::optional<DocComment> Parser::harvestDocComment() {
  * @note After parsing, call hasErrors() to check if any errors were reported.
  */
 ProgramASTPtr Parser::parse() {
-    LUC_LOG_PARSER("Parser::parse: starting parsing of file " 
+    LOG_PARSER("Parser::parse: starting parsing of file " 
                    << std::string(pool_.lookup(filePath_)));
     
     auto* program = arena_.make<ProgramAST>();
@@ -757,11 +757,11 @@ ProgramASTPtr Parser::parse() {
     if (pkg) {
         program->packageName = pkg->name;
         decls.push_back(pkg);
-        LUC_LOG_PARSER_VERBOSE("Parser::parse: package name = " 
+        LOG_PARSER_VERBOSE("Parser::parse: package name = " 
                                << std::string(pool_.lookup(program->packageName)));
     } else {
         // parsePackageDecl failed (error already reported)
-        LUC_LOG_PARSER("Parser::parse: ERROR - failed to parse package declaration");
+        LOG_PARSER("Parser::parse: ERROR - failed to parse package declaration");
         synchronize();  // Skip to next safe point
         // packageName remains invalid
     }
@@ -783,20 +783,20 @@ ProgramASTPtr Parser::parse() {
         // Check for progress
         if (ts_.getPos() == savedPos) {
             consecutiveFailures++;
-            LUC_LOG_PARSER("Parser::parse: NO PROGRESS - stuck on token '" 
+            LOG_PARSER("Parser::parse: NO PROGRESS - stuck on token '" 
                            << ts_.peek().value << "' (type=" 
                            << LucDebug::tokenTypeToString(ts_.peekType())
                            << "), consecutive failures: " << consecutiveFailures);
             
             // Force consumption of stuck token
             if (!ts_.isAtEnd()) {
-                LUC_LOG_PARSER("Parser::parse: forcing consumption of stuck token");
+                LOG_PARSER("Parser::parse: forcing consumption of stuck token");
                 ts_.advance();
             }
             
             // Aggressive recovery after 5 failures
             if (consecutiveFailures > 5) {
-                LUC_LOG_PARSER("Parser::parse: too many consecutive failures, aggressive recovery");
+                LOG_PARSER("Parser::parse: too many consecutive failures, aggressive recovery");
                 synchronize();
             }
         } else if (decl) {
@@ -805,7 +805,7 @@ ProgramASTPtr Parser::parse() {
             consecutiveFailures = 0;
             lastPos = ts_.getPos();
             
-            LUC_LOG_PARSER_EXTREME("Parser::parse: parsed declaration #" << declCount 
+            LOG_PARSER_EXTREME("Parser::parse: parsed declaration #" << declCount 
                                    << " (" << LucDebug::kindToString(decl->kind) << ")");
             
             // Attach documentation if available
@@ -816,12 +816,12 @@ ProgramASTPtr Parser::parse() {
         } else {
             // Made progress but parseTopLevelDecl returned nullptr
             consecutiveFailures = 0;
-            LUC_LOG_PARSER("Parser::parse: parseTopLevelDecl returned nullptr but made progress, continuing");
+            LOG_PARSER("Parser::parse: parseTopLevelDecl returned nullptr but made progress, continuing");
         }
         
         // Critical stuck detection
         if (ts_.getPos() == lastPos && consecutiveFailures > 10) {
-            LUC_LOG_PARSER("Parser::parse: CRITICAL - still no progress after " 
+            LOG_PARSER("Parser::parse: CRITICAL - still no progress after " 
                            << consecutiveFailures << " attempts, forcing advance");
             if (!ts_.isAtEnd()) {
                 ts_.advance();
@@ -831,18 +831,18 @@ ProgramASTPtr Parser::parse() {
     }
 
     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        LUC_LOG_PARSER("Parser::parse: ERROR - too many consecutive failures (" 
+        LOG_PARSER("Parser::parse: ERROR - too many consecutive failures (" 
                        << MAX_CONSECUTIVE_FAILURES << "), aborting parsing");
         errorAt(DiagCode::E2001, "Too many parsing errors, compilation aborted");
     }
 
-    LUC_LOG_PARSER("Parser::parse: parsed " << declCount << " top-level declarations");
+    LOG_PARSER("Parser::parse: parsed " << declCount << " top-level declarations");
 
     // Build the ArenaSpan for program->decls
     auto builder = arena_.makeBuilder<DeclAST*>();
     for (auto* d : decls) builder.push_back(d);
     program->decls = builder.build();
 
-    LUC_LOG_PARSER("Parser::parse: parsing complete");
+    LOG_PARSER("Parser::parse: parsing complete");
     return program;
 }

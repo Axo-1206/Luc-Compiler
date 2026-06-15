@@ -11,6 +11,10 @@
  * 
  * Example: `use math.vec2 as v`
  * 
+ * ─── Precondition ─────────────────────────────────────────────────────────
+ * Caller MUST have already verified that the current token is USE.
+ * This function assumes it is positioned at the 'use' keyword.
+ * 
  * ─── Token Consumption ─────────────────────────────────────────────────────
  * On entry: positioned at 'use' keyword
  * On exit:  positioned after the alias (or after the last path segment)
@@ -20,58 +24,95 @@
  *   - Minimum one identifier
  * 
  * ─── Error Recovery ───────────────────────────────────────────────────────
- * - Missing module path: returns node with empty path
- * - Missing alias after 'as': reports error, continues
+ * - Missing 'use' keyword: returns nullptr (caller error)
+ * - Missing module path: reports error, returns nullptr
+ * - Missing alias after 'as': reports error, continues (returns node without alias)
+ * 
+ * @return UseDeclAST* on success, nullptr on error
  */
 UseDeclPtr Parser::parseUseDecl(Visibility vis) {
-    LUC_LOG_DECL_VERBOSE("parseUseDecl: entering");
+    LOG_DECL_VERBOSE("parseUseDecl: entering");
+    
+    // Harvest doc comments attached to this use declaration
+    auto doc = harvestDocComment();
+    
     SourceLocation loc = ts_.currentLoc();
-    ts_.consume(TokenType::USE, "expected 'use'");
-
-    auto node = arena_.make<UseDeclAST>();
-    node->loc = loc;
-    node->visibility = vis;
-
-    if (!ts_.check(TokenType::IDENTIFIER)) {
-        LUC_LOG_DECL("parseUseDecl: ERROR - expected module path after 'use'");
-        errorAt(DiagCode::E1003, "expected module path after 'use'");
-        return node;
+    
+    // Check for 'use' keyword (should be present if called correctly)
+    if (!ts_.check(TokenType::USE)) {
+        LOG_DECL("parseUseDecl: ERROR - expected 'use' keyword");
+        errorAt(DiagCode::E1001, "use", ts_.peek().value);
+        return nullptr;
     }
+    
+    // Consume 'use' keyword
+    ts_.advance();
 
-    // Parse use path (dotted identifiers) - inline implementation
+    // Parse module path (dotted identifiers)
+    if (!ts_.check(TokenType::IDENTIFIER)) {
+        LOG_DECL("parseUseDecl: ERROR - expected module path after 'use'");
+        errorAt(DiagCode::E1102);
+        return nullptr;
+    }
+    
+    // Parse use path (dotted identifiers)
     std::vector<InternedString> path;
+    bool pathError = false;
     
+    // Parse first segment
     path.push_back(pool_.intern(ts_.advance().value));
-    LUC_LOG_DECL_EXTREME("parseUseDecl: path segment 1 = " << pool_.lookup(path.back()));
+    LOG_DECL_EXTREME("parseUseDecl: path segment 1 = " << pool_.lookup(path.back()));
     
+    // Parse additional segments after dots
     while (ts_.match(TokenType::DOT)) {
         if (!ts_.check(TokenType::IDENTIFIER)) {
-            LUC_LOG_DECL("parseUseDecl: ERROR - expected identifier after '.'");
-            errorAt(DiagCode::E1003, "expected identifier after '.'");
+            LOG_DECL("parseUseDecl: ERROR - expected identifier after '.'");
+            errorAt(DiagCode::E1002);
+            pathError = true;
             break;
         }
         path.push_back(pool_.intern(ts_.advance().value));
-        LUC_LOG_DECL_EXTREME("parseUseDecl: path segment " << path.size() 
+        LOG_DECL_EXTREME("parseUseDecl: path segment " << path.size() 
                              << " = " << pool_.lookup(path.back()));
     }
     
+    // If there was an error in path parsing, abort
+    if (pathError) {
+        LOG_DECL_VERBOSE("parseUseDecl: aborted");
+        return nullptr;
+    }
+    
+    LOG_DECL_EXTREME("parseUseDecl: path has " << path.size() << " segment(s)");
+    
+    // Create the AST node
+    auto* node = arena_.make<UseDeclAST>();
+    node->loc = loc;
+    node->visibility = vis;
+    
+    // Build the path span
     auto builder = arena_.makeBuilder<InternedString>();
     for (auto& p : path) builder.push_back(p);
     node->path = builder.build();
     
-    LUC_LOG_DECL_EXTREME("parseUseDecl: path has " << path.size() << " segment(s)");
-
+    // Parse optional alias
     if (ts_.match(TokenType::AS)) {
-        LUC_LOG_DECL_EXTREME("parseUseDecl: parsing alias");
+        LOG_DECL_EXTREME("parseUseDecl: parsing alias");
         if (!ts_.check(TokenType::IDENTIFIER)) {
-            LUC_LOG_DECL("parseUseDecl: ERROR - expected alias name after 'as'");
-            errorAt(DiagCode::E1003, "expected alias name after 'as'");
+            LOG_DECL("parseUseDecl: ERROR - expected alias name after 'as'");
+            errorAt(DiagCode::E1103, "expected alias name after 'as'");
+            // Continue without alias (error already reported)
         } else {
             node->alias = pool_.intern(ts_.advance().value);
-            LUC_LOG_DECL_EXTREME("parseUseDecl: alias = " << pool_.lookup(node->alias.value()));
+            LOG_DECL_EXTREME("parseUseDecl: alias = " << pool_.lookup(node->alias.value()));
         }
     }
-
-    LUC_LOG_DECL_VERBOSE("parseUseDecl: success");
+    
+    // Attach doc comment if found
+    if (doc) {
+        node->doc = std::move(doc);
+        LOG_DECL_EXTREME("parseUseDecl: attached doc comment");
+    }
+    
+    LOG_DECL_VERBOSE("parseUseDecl: success");
     return node;
 }

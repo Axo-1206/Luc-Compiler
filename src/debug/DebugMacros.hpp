@@ -15,31 +15,31 @@
 // Helper to check if debug is enabled for a component
 namespace LucDebug {
     inline bool isDebugEnabled(const char* component) {
-        #ifdef LUC_DEBUG_MASTER
+        #ifdef DEBUG_MASTER
             return true;
         #else
-            #ifdef LUC_DEBUG_LEXER
+            #ifdef DEBUG_LEXER
                 if (std::string(component) == "LEXER") return true;
             #endif
-            #ifdef LUC_DEBUG_LEXER_TOKENS 
+            #ifdef DEBUG_LEXER_TOKENS 
                 if (std::string(component) == "LEXER_TOKENS") return true;
             #endif
-            #ifdef LUC_DEBUG_PARSER
+            #ifdef DEBUG_PARSER
                 if (std::string(component) == "PARSER") return true;
             #endif
-            #ifdef LUC_DEBUG_PARSE_RESULT
+            #ifdef DEBUG_PARSE_RESULT
                 if (std::string(component) == "PARSE_RESULT") return true;
             #endif
-            #ifdef LUC_DEBUG_TYPE
+            #ifdef DEBUG_TYPE
                 if (std::string(component) == "TYPE") return true;
             #endif
-            #ifdef LUC_DEBUG_SEMANTIC
+            #ifdef DEBUG_SEMANTIC
                 if (std::string(component) == "SEMANTIC") return true;
             #endif
-            #ifdef LUC_DEBUG_DUMP_SYMBOL
+            #ifdef DEBUG_DUMP_SYMBOL
                 if (std::string(component) == "DUMP_SYMBOL") return true;
             #endif
-            #ifdef LUC_DEBUG_CODEGEN
+            #ifdef DEBUG_CODEGEN
                 if (std::string(component) == "CODEGEN") return true;
             #endif
             return false;
@@ -47,17 +47,17 @@ namespace LucDebug {
     }
 
     inline int getVerbosity() {
-        #ifdef LUC_DEBUG_VERBOSITY
-            // LUC_DEBUG_VERBOSITY is now a number (0,1,2,3)
-            return LUC_DEBUG_VERBOSITY;
+        #ifdef DEBUG_VERBOSITY
+            // DEBUG_VERBOSITY is now a number (0,1,2,3)
+            return DEBUG_VERBOSITY;
         #else
             return 1; // default NORMAL
         #endif
     }
 
     inline std::string getLogFilePath() {
-        #ifdef LUC_DEBUG_FILE_PATH
-            return LUC_DEBUG_FILE_PATH;
+        #ifdef DEBUG_FILE_PATH
+            return DEBUG_FILE_PATH;
         #else
             return "debug.log";
         #endif
@@ -70,7 +70,7 @@ namespace LucDebug {
     }
 
     inline std::ostream& getDebugStream() {
-        #ifdef LUC_DEBUG_TO_FILE
+        #ifdef DEBUG_TO_FILE
             static std::ofstream file(getLogFilePath(), std::ios::out | std::ios::trunc);
             
             // Print message once when first accessed
@@ -111,18 +111,18 @@ namespace LucDebug {
 // =============================================================================
 
 // Verbosity levels
-#define LUC_VERB_MINIMAL 0
-#define LUC_VERB_NORMAL  1
-#define LUC_VERB_VERBOSE 2
-#define LUC_VERB_EXTREME 3
+#define VERB_MINIMAL 0
+#define VERB_NORMAL  1
+#define VERB_VERBOSE 2
+#define VERB_EXTREME 3
 
 // Helper to check verbosity
-#define LUC_VERB_GE(level) (LucDebug::getVerbosity() >= (level))
+#define VERB_GE(level) (LucDebug::getVerbosity() >= (level))
 
 // Core logging macro with timestamp and component
-#define LUC_LOG_CORE(COMPONENT, level, x) \
+#define LOG_CORE(COMPONENT, level, x) \
     do { \
-        if (LucDebug::isDebugEnabled(COMPONENT) && LUC_VERB_GE(level)) { \
+        if (LucDebug::isDebugEnabled(COMPONENT) && VERB_GE(level)) { \
             LucDebug::getDebugStream() << "[" << LucDebug::timestamp() << "] [" << COMPONENT << "] " << x << std::endl; \
         } \
     } while(0)
@@ -131,93 +131,93 @@ namespace LucDebug {
 // PARSER logging macros (with verbosity levels)
 // =============================================================================
 
-#define LUC_LOG_PARSER_MINIMAL(x)   LUC_LOG_CORE("PARSER", LUC_VERB_MINIMAL, x)
-#define LUC_LOG_PARSER(x)           LUC_LOG_CORE("PARSER", LUC_VERB_NORMAL, x)
-#define LUC_LOG_PARSER_VERBOSE(x)   LUC_LOG_CORE("PARSER", LUC_VERB_VERBOSE, x)
-#define LUC_LOG_PARSER_EXTREME(x)   LUC_LOG_CORE("PARSER", LUC_VERB_EXTREME, x)
+#define LOG_PARSER_MINIMAL(x)   LOG_CORE("PARSER", VERB_MINIMAL, x)
+#define LOG_PARSER(x)           LOG_CORE("PARSER", VERB_NORMAL, x)
+#define LOG_PARSER_VERBOSE(x)   LOG_CORE("PARSER", VERB_VERBOSE, x)
+#define LOG_PARSER_EXTREME(x)   LOG_CORE("PARSER", VERB_EXTREME, x)
 
 // =============================================================================
 // PARSE_RESULT logging macros (with verbosity levels)
 // =============================================================================
 
-#define LUC_LOG_PARSE_RESULT_MINIMAL(x) LUC_LOG_CORE("PARSE_RESULT", LUC_VERB_MINIMAL, x)
-#define LUC_LOG_PARSE_RESULT(x)         LUC_LOG_CORE("PARSE_RESULT", LUC_VERB_NORMAL, x)
-#define LUC_LOG_PARSE_RESULT_VERBOSE(x) LUC_LOG_CORE("PARSE_RESULT", LUC_VERB_VERBOSE, x)
-#define LUC_LOG_PARSE_RESULT_EXTREME(x) LUC_LOG_CORE("PARSE_RESULT", LUC_VERB_EXTREME, x)
+#define LOG_PARSE_RESULT_MINIMAL(x) LOG_CORE("PARSE_RESULT", VERB_MINIMAL, x)
+#define LOG_PARSE_RESULT(x)         LOG_CORE("PARSE_RESULT", VERB_NORMAL, x)
+#define LOG_PARSE_RESULT_VERBOSE(x) LOG_CORE("PARSE_RESULT", VERB_VERBOSE, x)
+#define LOG_PARSE_RESULT_EXTREME(x) LOG_CORE("PARSE_RESULT", VERB_EXTREME, x)
 
 // =============================================================================
 // TYPE logging macros (with verbosity levels)
 // =============================================================================
 
-#define LUC_LOG_TYPE_MINIMAL(x)     LUC_LOG_CORE("TYPE", LUC_VERB_MINIMAL, x)
-#define LUC_LOG_TYPE(x)             LUC_LOG_CORE("TYPE", LUC_VERB_NORMAL, x)
-#define LUC_LOG_TYPE_VERBOSE(x)     LUC_LOG_CORE("TYPE", LUC_VERB_VERBOSE, x)
-#define LUC_LOG_TYPE_EXTREME(x)     LUC_LOG_CORE("TYPE", LUC_VERB_EXTREME, x)
+#define LOG_TYPE_MINIMAL(x)     LOG_CORE("TYPE", VERB_MINIMAL, x)
+#define LOG_TYPE(x)             LOG_CORE("TYPE", VERB_NORMAL, x)
+#define LOG_TYPE_VERBOSE(x)     LOG_CORE("TYPE", VERB_VERBOSE, x)
+#define LOG_TYPE_EXTREME(x)     LOG_CORE("TYPE", VERB_EXTREME, x)
 
 // =============================================================================
 // SEMANTIC logging macros (with verbosity levels)
 // =============================================================================
 
-#define LUC_LOG_SEMANTIC_MINIMAL(x) LUC_LOG_CORE("SEMANTIC", LUC_VERB_MINIMAL, x)
-#define LUC_LOG_SEMANTIC(x)         LUC_LOG_CORE("SEMANTIC", LUC_VERB_NORMAL, x)
-#define LUC_LOG_SEMANTIC_VERBOSE(x) LUC_LOG_CORE("SEMANTIC", LUC_VERB_VERBOSE, x)
-#define LUC_LOG_SEMANTIC_EXTREME(x) LUC_LOG_CORE("SEMANTIC", LUC_VERB_EXTREME, x)
+#define LOG_SEMANTIC_MINIMAL(x) LOG_CORE("SEMANTIC", VERB_MINIMAL, x)
+#define LOG_SEMANTIC(x)         LOG_CORE("SEMANTIC", VERB_NORMAL, x)
+#define LOG_SEMANTIC_VERBOSE(x) LOG_CORE("SEMANTIC", VERB_VERBOSE, x)
+#define LOG_SEMANTIC_EXTREME(x) LOG_CORE("SEMANTIC", VERB_EXTREME, x)
 
 // =============================================================================
 // CODEGEN logging macros (with verbosity levels)
 // =============================================================================
 
-#define LUC_LOG_CODEGEN_MINIMAL(x)  LUC_LOG_CORE("CODEGEN", LUC_VERB_MINIMAL, x)
-#define LUC_LOG_CODEGEN(x)          LUC_LOG_CORE("CODEGEN", LUC_VERB_NORMAL, x)
-#define LUC_LOG_CODEGEN_VERBOSE(x)  LUC_LOG_CORE("CODEGEN", LUC_VERB_VERBOSE, x)
-#define LUC_LOG_CODEGEN_EXTREME(x)  LUC_LOG_CORE("CODEGEN", LUC_VERB_EXTREME, x)
+#define LOG_CODEGEN_MINIMAL(x)  LOG_CORE("CODEGEN", VERB_MINIMAL, x)
+#define LOG_CODEGEN(x)          LOG_CORE("CODEGEN", VERB_NORMAL, x)
+#define LOG_CODEGEN_VERBOSE(x)  LOG_CORE("CODEGEN", VERB_VERBOSE, x)
+#define LOG_CODEGEN_EXTREME(x)  LOG_CORE("CODEGEN", VERB_EXTREME, x)
 
 // =============================================================================
 // LEXER logging macros (with verbosity levels)
 // =============================================================================
 
-#define LUC_LOG_LEXER_MINIMAL(x)    LUC_LOG_CORE("LEXER", LUC_VERB_MINIMAL, x)
-#define LUC_LOG_LEXER(x)            LUC_LOG_CORE("LEXER", LUC_VERB_NORMAL, x)
-#define LUC_LOG_LEXER_VERBOSE(x)    LUC_LOG_CORE("LEXER", LUC_VERB_VERBOSE, x)
-#define LUC_LOG_LEXER_EXTREME(x)    LUC_LOG_CORE("LEXER", LUC_VERB_EXTREME, x)
+#define LOG_LEXER_MINIMAL(x)    LOG_CORE("LEXER", VERB_MINIMAL, x)
+#define LOG_LEXER(x)            LOG_CORE("LEXER", VERB_NORMAL, x)
+#define LOG_LEXER_VERBOSE(x)    LOG_CORE("LEXER", VERB_VERBOSE, x)
+#define LOG_LEXER_EXTREME(x)    LOG_CORE("LEXER", VERB_EXTREME, x)
 
 // =============================================================================
 // EXPRESSION logging macros (with verbosity levels)
 // =============================================================================
 
-#define LUC_LOG_EXPR_MINIMAL(x)     LUC_LOG_CORE("PARSER", LUC_VERB_MINIMAL, "[EXPR] " << x)
-#define LUC_LOG_EXPR(x)             LUC_LOG_CORE("PARSER", LUC_VERB_NORMAL, "[EXPR] " << x)
-#define LUC_LOG_EXPR_VERBOSE(x)     LUC_LOG_CORE("PARSER", LUC_VERB_VERBOSE, "[EXPR] " << x)
-#define LUC_LOG_EXPR_EXTREME(x)     LUC_LOG_CORE("PARSER", LUC_VERB_EXTREME, "[EXPR] " << x)
+#define LOG_EXPR_MINIMAL(x)     LOG_CORE("PARSER", VERB_MINIMAL, "[EXPR] " << x)
+#define LOG_EXPR(x)             LOG_CORE("PARSER", VERB_NORMAL, "[EXPR] " << x)
+#define LOG_EXPR_VERBOSE(x)     LOG_CORE("PARSER", VERB_VERBOSE, "[EXPR] " << x)
+#define LOG_EXPR_EXTREME(x)     LOG_CORE("PARSER", VERB_EXTREME, "[EXPR] " << x)
 
 // =============================================================================
 // STATEMENT logging macros (with verbosity levels)
 // =============================================================================
 
-#define LUC_LOG_STMT_MINIMAL(x)     LUC_LOG_CORE("PARSER", LUC_VERB_MINIMAL, "[STMT] " << x)
-#define LUC_LOG_STMT(x)             LUC_LOG_CORE("PARSER", LUC_VERB_NORMAL, "[STMT] " << x)
-#define LUC_LOG_STMT_VERBOSE(x)     LUC_LOG_CORE("PARSER", LUC_VERB_VERBOSE, "[STMT] " << x)
-#define LUC_LOG_STMT_EXTREME(x)     LUC_LOG_CORE("PARSER", LUC_VERB_EXTREME, "[STMT] " << x)
+#define LOG_STMT_MINIMAL(x)     LOG_CORE("PARSER", VERB_MINIMAL, "[STMT] " << x)
+#define LOG_STMT(x)             LOG_CORE("PARSER", VERB_NORMAL, "[STMT] " << x)
+#define LOG_STMT_VERBOSE(x)     LOG_CORE("PARSER", VERB_VERBOSE, "[STMT] " << x)
+#define LOG_STMT_EXTREME(x)     LOG_CORE("PARSER", VERB_EXTREME, "[STMT] " << x)
 
 // =============================================================================
 // DECLARATION logging macros (with verbosity levels)
 // =============================================================================
 
-#define LUC_LOG_DECL_MINIMAL(x)     LUC_LOG_CORE("PARSER", LUC_VERB_MINIMAL, "[DECL] " << x)
-#define LUC_LOG_DECL(x)             LUC_LOG_CORE("PARSER", LUC_VERB_NORMAL, "[DECL] " << x)
-#define LUC_LOG_DECL_VERBOSE(x)     LUC_LOG_CORE("PARSER", LUC_VERB_VERBOSE, "[DECL] " << x)
-#define LUC_LOG_DECL_EXTREME(x)     LUC_LOG_CORE("PARSER", LUC_VERB_EXTREME, "[DECL] " << x)
+#define LOG_DECL_MINIMAL(x)     LOG_CORE("PARSER", VERB_MINIMAL, "[DECL] " << x)
+#define LOG_DECL(x)             LOG_CORE("PARSER", VERB_NORMAL, "[DECL] " << x)
+#define LOG_DECL_VERBOSE(x)     LOG_CORE("PARSER", VERB_VERBOSE, "[DECL] " << x)
+#define LOG_DECL_EXTREME(x)     LOG_CORE("PARSER", VERB_EXTREME, "[DECL] " << x)
 
 // =============================================================================
 // Legacy compatibility macros
 // =============================================================================
 
-#ifdef LUC_DEBUG_MASTER
-    #define LUC_LOG(x) LucDebug::getDebugStream() << "[DEBUG] " << x << std::endl
-    #define LUC_LOG_KIND(x) LUC_LOG_CORE("DEBUG", LUC_VERB_NORMAL, "kind: " << LucDebug::kindToString(x))
-    #define LUC_LOG_TOKEN(t) LUC_LOG_CORE("DEBUG", LUC_VERB_NORMAL, "token: " << LucDebug::tokenTypeToString(t))
+#ifdef DEBUG_MASTER
+    #define LOG(x) LucDebug::getDebugStream() << "[DEBUG] " << x << std::endl
+    #define LOG_KIND(x) LOG_CORE("DEBUG", VERB_NORMAL, "kind: " << LucDebug::kindToString(x))
+    #define LOG_TOKEN(t) LOG_CORE("DEBUG", VERB_NORMAL, "token: " << LucDebug::tokenTypeToString(t))
 #else
-    #define LUC_LOG(x)
-    #define LUC_LOG_KIND(x)
-    #define LUC_LOG_TOKEN(t)
+    #define LOG(x)
+    #define LOG_KIND(x)
+    #define LOG_TOKEN(t)
 #endif

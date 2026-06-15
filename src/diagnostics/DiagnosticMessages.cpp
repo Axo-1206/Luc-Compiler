@@ -21,34 +21,40 @@ std::string_view getMessage(DiagCode code) {
         case DiagCode::E0107: return "Unexpected end of file while scanning token.";
 
         // ========== 1000–1999: Parsing (Syntax) ==========
-        case DiagCode::E1001: return "Expected token '%s' but found '%s'.";
-        case DiagCode::E1002: return "Unexpected token '%s'.";
-        case DiagCode::E1003: return "Expected an identifier.";
-        case DiagCode::E1004: return "Expected 'in' in for-loop.";
-        case DiagCode::E1005: return "Expected a type annotation.";
-        case DiagCode::E1006: return "Invalid context for statement or expression.";
-        case DiagCode::E1007: return "Malformed literal.";
-        case DiagCode::E1008: return "Expected expression.";
-        case DiagCode::E1009: return "Expected '->' in from entry.";
-        case DiagCode::E1010: return "Expected '=' before function body.";
-        case DiagCode::E1011: return "Missing ')' in parameter group.";
-        case DiagCode::E1012: return "Missing ']' in array type.";
-        case DiagCode::E1013: return "Missing '>' in generic arguments.";
-        case DiagCode::E1014: return "Misplaced visibility modifier (pub/export inside block).";
-        case DiagCode::E1015: return "Qualifier on anonymous function.";
-        case DiagCode::E1016: return "Unknown qualifier '~%s'.";
-        case DiagCode::E1017: return "Qualifier on non‑function type.";
-        case DiagCode::E1018: return "Duplicate qualifier.";
-        case DiagCode::E1019: return "'?' not allowed on inline function type (use alias or ~nullable).";
-        case DiagCode::E1020: return "'!' not allowed on inline function type (use alias).";
-        case DiagCode::E1021: return "Nested '!' in type (use alias).";
-        case DiagCode::E1022: return "Chained comparison (use 'and').";
-        case DiagCode::E1023: return "Mismatched parentheses in curry type.";
-        case DiagCode::E1024: return "Generic array type (e.g., `[_, <T>]`) only allowed as `impl` target, `from` target, or in type alias right‑hand side.";
-        case DiagCode::E1025: return "Missing type annotation for parameter '%s' in function type. Write `(%s Type)` instead.";
-        case DiagCode::E1026: return "Reference type '&T' cannot be used as a generic argument";
-        case DiagCode::E1027: return "Pointer type '*T' cannot be used as a generic argument";
-        case DiagCode::E1028: return "Missing package declaration at file: '%s'";
+        case DiagCode::E1001: return "Expected keyword '%s', but found %s";
+        case DiagCode::E1002: return "Expected an identifier";
+
+        case DiagCode::E1101: return "Expected package name";
+        case DiagCode::E1102: return "Expected module path after keyword 'use'"; 
+        case DiagCode::E1103: return "Expected name alias after keyword 'as'";
+
+        // case DiagCode::E1001: return "Expected token '%s' but found '%s'.";
+        // case DiagCode::E1002: return "Unexpected token '%s'.";
+        // case DiagCode::E1004: return "Expected 'in' in for-loop.";
+        // case DiagCode::E1005: return "Expected a type annotation.";
+        // case DiagCode::E1006: return "Invalid context for statement or expression: %s";
+        // case DiagCode::E1007: return "Malformed literal.";
+        // case DiagCode::E1008: return "Expected expression.";
+        // case DiagCode::E1009: return "Expected '->' in from entry.";
+        // case DiagCode::E1010: return "Expected '=' before function body.";
+        // case DiagCode::E1011: return "Missing ')' in parameter group.";
+        // case DiagCode::E1012: return "Missing ']' in array type.";
+        // case DiagCode::E1013: return "Missing '>' in generic arguments.";
+        // case DiagCode::E1014: return "Misplaced visibility modifier (pub/export inside block).";
+        // case DiagCode::E1015: return "Qualifier on anonymous function.";
+        // case DiagCode::E1016: return "Unknown qualifier '~%s'.";
+        // case DiagCode::E1017: return "Qualifier on non‑function type.";
+        // case DiagCode::E1018: return "Duplicate qualifier.";
+        // case DiagCode::E1019: return "'?' not allowed on inline function type (use alias or ~nullable).";
+        // case DiagCode::E1020: return "'!' not allowed on inline function type (use alias).";
+        // case DiagCode::E1021: return "Nested '!' in type (use alias).";
+        // case DiagCode::E1022: return "Chained comparison (use 'and').";
+        // case DiagCode::E1023: return "Mismatched parentheses in curry type.";
+        // case DiagCode::E1024: return "Generic array type (e.g., `[_, <T>]`) only allowed as `impl` target, `from` target, or in type alias right‑hand side.";
+        // case DiagCode::E1025: return "Missing type annotation for parameter '%s' in function type. Write `(%s Type)` instead.";
+        // case DiagCode::E1026: return "Reference type '&T' cannot be used as a generic argument";
+        // case DiagCode::E1027: return "Pointer type '*T' cannot be used as a generic argument";
+        // case DiagCode::E1028: return "Missing package declaration at file: '%s'";
         
         // ========== 2000–2999: Semantic ==========
         case DiagCode::E2001: return "Identifier '%s' used before it was declared.";
