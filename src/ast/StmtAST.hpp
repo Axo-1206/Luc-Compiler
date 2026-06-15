@@ -46,7 +46,7 @@
 struct BlockStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::BlockStmt;
 
-    ArenaSpan<StmtAST*> stmts; // Statements in execution order
+    ArenaSpan<StmtPtr> stmts; // Statements in execution order
 
     BlockStmtAST() : StmtAST(ASTKind::BlockStmt) {}
 };
@@ -71,9 +71,9 @@ using BlockStmtPtr = BlockStmtAST*;
 struct ExprStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::ExprStmt;
 
-    ExprAST* expr; // The expression being evaluated for its side effects
+    ExprPtr expr; // The expression being evaluated for its side effects
 
-    explicit ExprStmtAST(ExprAST* e)
+    explicit ExprStmtAST(ExprPtr e)
         : StmtAST(ASTKind::ExprStmt), expr(e) {}
 
 };
@@ -103,9 +103,9 @@ using ExprStmtPtr = ExprStmtAST*;
 struct DeclStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::DeclStmt;
 
-    DeclAST* decl; // The actual declaration node
+    DeclPtr decl; // The actual declaration node
 
-    explicit DeclStmtAST(DeclAST* d) : StmtAST(ASTKind::DeclStmt), decl(d) {}
+    explicit DeclStmtAST(DeclPtr d) : StmtAST(ASTKind::DeclStmt), decl(d) {}
 
     // Convenience helpers – use decl->isa<T>() directly in most cases
     bool isVar()        const { return decl && decl->isa<VarDeclAST>(); }
@@ -146,9 +146,9 @@ using DeclStmtPtr = DeclStmtAST*;
 struct IfStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::IfStmt;
 
-    ExprAST* condition;  // The test expression (must resolve to `bool`)
-    StmtAST* thenBranch; // Always a `BlockStmtAST`
-    StmtAST* elseBranch; // `nullptr` | `BlockStmtAST` | `IfStmtAST`
+    ExprPtr condition;  // The test expression (must resolve to `bool`)
+    StmtPtr thenBranch; // Always a `BlockStmtAST`
+    StmtPtr elseBranch; // `nullptr` | `BlockStmtAST` | `IfStmtAST`
 
     IfStmtAST() : StmtAST(ASTKind::IfStmt) {}
 };
@@ -172,7 +172,7 @@ using IfStmtPtr = IfStmtAST*;
 struct SwitchCaseAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::SwitchCase;
 
-    ArenaSpan<ExprAST*> values;          ///< Match values (literals or ranges)
+    ArenaSpan<ExprPtr> values;          ///< Match values (literals or ranges)
     BlockStmtAST* body;                 ///< Statements executed on match
 
     SwitchCaseAST() : BaseAST(ASTKind::SwitchCase) {}
@@ -198,7 +198,7 @@ using SwitchCasePtr = SwitchCaseAST*;
 struct SwitchStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::SwitchStmt;
 
-    ExprAST* subject;                           ///< The value being dispatched
+    ExprPtr subject;                           ///< The value being dispatched
     ArenaSpan<SwitchCasePtr> cases;             ///< Non‑default case clauses
     BlockStmtAST* defaultBody;                  ///< `nullptr` if no `default`
     std::optional<SourceLocation> defaultLoc;   ///< Location of `default` keyword (for diagnostics)
@@ -233,9 +233,9 @@ struct ForStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::ForStmt;
 
     ParamAST* iterVar;  // Iteration variable (name explicit type) – raw pointer
-    ExprAST*  iterable; // Collection or `RangeExprAST`
-    ExprAST*  step;     // Optional step (only for range loops, `nullptr` if omitted)
-    StmtAST*  body;     // Always a `BlockStmtAST`
+    ExprPtr  iterable; // Collection or `RangeExprAST`
+    ExprPtr  step;     // Optional step (only for range loops, `nullptr` if omitted)
+    StmtPtr  body;     // Always a `BlockStmtAST`
 
     ForStmtAST() : StmtAST(ASTKind::ForStmt) {}
 };
@@ -253,8 +253,8 @@ using ForStmtPtr = ForStmtAST*;
 struct WhileStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::WhileStmt;
 
-    ExprAST* condition; // Must resolve to `bool`
-    StmtAST* body;      // Always a `BlockStmtAST`
+    ExprPtr condition; // Must resolve to `bool`
+    StmtPtr body;      // Always a `BlockStmtAST`
 
     WhileStmtAST() : StmtAST(ASTKind::WhileStmt) {}
 };
@@ -272,8 +272,8 @@ using WhileStmtPtr = WhileStmtAST*;
 struct DoWhileStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::DoWhileStmt;
 
-    StmtAST* body;       ///< Executed at least once (always `BlockStmtAST`)
-    ExprAST* condition;  ///< Evaluated after each iteration; must resolve to `bool`
+    StmtPtr body;       ///< Executed at least once (always `BlockStmtAST`)
+    ExprPtr condition;  ///< Evaluated after each iteration; must resolve to `bool`
 
     DoWhileStmtAST() : StmtAST(ASTKind::DoWhileStmt) {}
 };
@@ -300,7 +300,7 @@ using DoWhileStmtPtr = DoWhileStmtAST*;
 struct ReturnStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::ReturnStmt;
 
-    ArenaSpan<ExprAST*> values; // Empty for bare `return`, otherwise one or more expressions
+    ArenaSpan<ExprPtr> values; // Empty for bare `return`, otherwise one or more expressions
 
     ReturnStmtAST() : StmtAST(ASTKind::ReturnStmt) {}
 };
@@ -363,8 +363,8 @@ struct MultiVarDeclAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::MultiVarDecl;
 
     DeclKeyword keyword;                                // `let` or `const`
-    ArenaSpan<std::pair<InternedString, TypeAST*>> vars; // (name, type) for each variable
-    ExprAST* rhs;                                        // Initialiser expression
+    ArenaSpan<std::pair<InternedString, TypePtr>> vars; // (name, type) for each variable
+    ExprPtr rhs;                                        // Initialiser expression
 
     MultiVarDeclAST() : StmtAST(ASTKind::MultiVarDecl) {}
 };
@@ -390,8 +390,8 @@ using MultiVarDeclPtr = MultiVarDeclAST*;
 struct MultiAssignStmtAST : StmtAST {
     static constexpr ASTKind staticKind = ASTKind::MultiAssignStmt;
 
-    ArenaSpan<ExprAST*> lhs; // Left‑hand side lvalues
-    ExprAST* rhs;            // Right‑hand side expression (single)
+    ArenaSpan<ExprPtr> lhs; // Left‑hand side lvalues
+    ExprPtr rhs;            // Right‑hand side expression (single)
 
     MultiAssignStmtAST() : StmtAST(ASTKind::MultiAssignStmt) {}
 };

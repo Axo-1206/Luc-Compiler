@@ -42,7 +42,7 @@
 struct PrimitiveTypeAST;
 struct NamedTypeAST;
 struct ArrayTypeAST;
-struct GenericParamTypeAST;
+struct GenericParamRefAST;
 struct NullableTypeAST;
 struct ResultTypeAST;        // T!E / T! — result type;
 struct RefTypeAST;
@@ -54,7 +54,7 @@ struct PackageDeclAST;
 struct UseDeclAST;
 struct VarDeclAST;
 struct ParamAST;
-struct GenericParamAST;
+struct GenericParamDeclAST;
 struct FuncDeclAST;
 struct FieldDeclAST;
 struct StructDeclAST;
@@ -173,7 +173,7 @@ enum class ASTKind : uint16_t {
     PrimitiveType,
     NamedType,
     ArrayType,
-    GenericParamType,
+    GenericParamRef,
     NullableType,
     ResultType,
     GenericArrayType,
@@ -186,7 +186,7 @@ enum class ASTKind : uint16_t {
     UseDecl,
     VarDecl,
     Param,
-    GenericParam,
+    GenericParamDecl,
     FuncDecl,
     FieldDecl,
     StructDecl,
@@ -264,25 +264,6 @@ enum class ASTKind : uint16_t {
     Attribute,
     AttributeArg,
     IntrinsicCallExpr,
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TargetKind — distinguishes the kind of target in impl and from declarations
-// ─────────────────────────────────────────────────────────────────────────────
-
-enum class TargetKind {
-    Concrete,           // int, Vec2, [_, int] — no free type variables
-    GenericArray,       // [_, <T>], [*, <T>], [N, <T>]
-    GenericNamed        // Box<T> — struct or type alias with generic params
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FromEntryKind — distinguishes inline entry from path entry in from blocks
-// ─────────────────────────────────────────────────────────────────────────────
-
-enum class FromEntryKind {
-    Inline,     // param_group ... -> type = func_body
-    Path        // func_ref
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,7 +384,6 @@ struct DeclAST    : BaseAST {
     std::optional<DocComment> doc;
     ArenaSpan<AttributePtr>   attributes;
     InternedString            file;
-    InternedString            name;
     bool                      isConst = false;
 
     explicit DeclAST(ASTKind k) : BaseAST(k) {}
@@ -443,6 +423,7 @@ struct ValueDeclAST : DeclAST {
     // Cached resolved type of this value (set during type resolution)
     // For functions, this points to funcType
     TypeAST* valueType = nullptr;
+    InternedString name;
     
     explicit ValueDeclAST(ASTKind k) : DeclAST(k) {}
 };
@@ -552,7 +533,7 @@ struct ProgramAST : BaseAST {
 using ProgramASTPtr = ProgramAST*;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GenericParamAST — a generic type parameter declaration.
+// GenericParamDeclAST — a generic type parameter declaration.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -570,44 +551,50 @@ using ProgramASTPtr = ProgramAST*;
  *
  * @par Examples
  *   @code
- *   struct Box<T> { ... }                    // unconstrained T
- *   fn find<T : Comparable> (items []T) ...  // T must implement Comparable
- *   type Pair<K, V> = struct { ... }         // two unconstrained parameters
- *   impl Map<K : Hashable, V> { ... }        // K constrained, V unconstrained
+ *   struct Box<T> { ... }                         // unconstrained T
+ *   fn find<T : Comparable> (items []T) ...       // T must implement Comparable
+ *   type Pair<K, V> = struct { ... }              // two unconstrained parameters
+ *   impl Map<K : Hashable + Comparable, V> { ... } // K has two constraints
  *   @endcode
  *
  * @par Memory Layout (64-bit, typical)
  *   - BaseAST overhead    : ~16 bytes (vtable + kind + loc + padding)
  *   - `name`              : 4 bytes (InternedString is uint32_t)
  *   - `constraints` span  : 16 bytes (ptr + size, each 8 bytes)
- *   @n Total: ~36 bytes per generic parameter (excluding constraint strings)
+ *   @n Total: ~36 bytes per generic parameter (excluding constraint nodes)
  *
  * @par Semantic Resolution
- *   During semantic analysis, each constraint name is resolved to a
- *   `TraitDeclAST`. The order of constraints does not affect semantics,
- *   but is preserved for source fidelity.
+ *   During semantic analysis, each constraint type is resolved to a
+ *   `TraitDeclAST` (or potentially other constraint kinds in the future).
+ *   The order of constraints does not affect semantics, but is preserved
+ *   for source fidelity.
  *
  * @field name        The identifier of the type parameter (e.g., "T", "K", "V").
- * @field constraints Trait names that this parameter must satisfy.
+ * @field constraints Trait types that this parameter must satisfy.
  *                    Empty span means the parameter is unconstrained.
+ *                    Each constraint is a full type AST (typically a NamedTypeAST
+ *                    or a NamedTypeAST with generic arguments), preserving
+ *                    source location and allowing generic trait constraints.
  *
  * @note Multiple constraints are joined with `+` in source (e.g., `T : Hashable + Comparable`).
- *       The semantic pass verifies that all constraint names resolve to traits
+ *       The semantic pass verifies that all constraint types resolve to traits
  *       and that the traits are compatible (no conflicting method signatures).
+ *       Generic trait constraints (e.g., `T : Iterator<Item=U>`) are supported
+ *       because constraints are full type AST nodes, not just trait names.
  */
-struct GenericParamAST : BaseAST {
-    static constexpr ASTKind staticKind = ASTKind::GenericParam;
+struct GenericParamDeclAST : BaseAST {
+    static constexpr ASTKind staticKind = ASTKind::GenericParamDecl;
 
     InternedString name;
-    ArenaSpan<InternedString> constraints;   // trait names (empty = unconstrained)
+    ArenaSpan<TypeAST*> constraints;   // trait types (empty = unconstrained)
 
-    explicit GenericParamAST(InternedString n)
-        : BaseAST(ASTKind::GenericParam), name(n) {}
+    explicit GenericParamDeclAST(InternedString n)
+        : BaseAST(ASTKind::GenericParamDecl), name(n) {}
 };
 
 using ParamPtr          = ParamAST*;
 using ParamGroup        = std::vector<ParamPtr>;
-using GenericParamPtr   = GenericParamAST*;
+using GenericParamDeclPtr   = GenericParamDeclAST*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UnknownAST family — error recovery nodes.

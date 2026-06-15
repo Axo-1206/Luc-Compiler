@@ -159,8 +159,8 @@ struct VarDeclAST : ValueDeclAST {
     static constexpr ASTKind staticKind = ASTKind::VarDecl;
 
     DeclKeyword keyword;
-    TypeAST* type;          // Original type annotation (may contain aliases)
-    ExprAST* init;
+    TypePtr type;          // Original type annotation (may contain aliases)
+    ExprPtr init;
     Visibility visibility = Visibility::Private;
 
     VarDeclAST() : ValueDeclAST(ASTKind::VarDecl) {}
@@ -204,8 +204,8 @@ using ParamGroup = std::vector<ParamPtr>;
 struct FieldDeclAST : ValueDeclAST {
     static constexpr ASTKind staticKind = ASTKind::FieldDecl;
 
-    TypeAST* type;          // Original type annotation (may contain aliases)
-    ExprAST* defaultVal;    // nullptr if no default
+    TypePtr type;          // Original type annotation (may contain aliases)
+    ExprPtr defaultVal;    // nullptr if no default
 
     FieldDeclAST() : ValueDeclAST(ASTKind::FieldDecl) {}
 };
@@ -236,67 +236,18 @@ struct FuncDeclAST : ValueDeclAST {
     static constexpr ASTKind staticKind = ASTKind::FuncDecl;
 
     DeclKeyword keyword;
-    ArenaSpan<GenericParamPtr> genericParams;
+    ArenaSpan<GenericParamDeclPtr> genericParams;
     FuncTypeAST* funcType = nullptr;   // full function type (includes qualifiers)
-    StmtAST* body = nullptr;           // always BlockStmtAST
+    StmtPtr body = nullptr;           // always BlockStmtAST
     Visibility visibility = Visibility::Private;
     
     // Cache for the first return type (for quick access during checking)
     // Set during Phase 2 type resolution
-    TypeAST* resolvedReturnType = nullptr;
+    TypePtr resolvedReturnType = nullptr;
 
     FuncDeclAST() : ValueDeclAST(ASTKind::FuncDecl) {}
 };
 using FuncDeclPtr = FuncDeclAST*;
-
-/**
- * @brief Represents a method implementation inside an `impl` block.
- *
- * This node supports three syntactic forms defined in the grammar:
- *
- * 1. **Inline Body** – Full signature and a block/expression body.
- *    - `funcType` contains the signature (including qualifiers, parameters, return types).
- *    - `body` is a `BlockStmtAST` (the parser desugars expression bodies).
- *
- * 2. **Plain Assignment** – Method name bound to an existing function.
- *    - `assignmentRef` points to a function reference (`IdentifierExprAST`,
- *      `FieldAccessExprAST`, or a `CallExprAST` for generic instantiation).
- *    - `isInjection = false`, `receiverArg` is empty.
- *
- * 3. **Injection Assignment** – Method name bound to a function where the first
- *    parameter is fixed to the receiver (`self` or an alias).
- *    - `assignmentRef` as in plain assignment.
- *    - `isInjection = true`, `receiverArg` holds the receiver name (must be `self`
- *      or the alias declared on the enclosing `impl` block).
- *
- * Methods are called using the colon operator: `value:method(args)`. The semantic
- * pass resolves the call using the `impl` block that matches the receiver's type.
- *
- * ─── Semantic Cache ────────────────────────────────────────────────────────
- * `valueType` (from ValueDeclAST) points to the method's type (funcType or
- * the type of assignmentRef).
- *
- * @see ImplDeclAST for the enclosing `impl` block.
- */
-struct MethodDeclAST : ValueDeclAST {
-    static constexpr ASTKind staticKind = ASTKind::MethodDecl;
-
-    // Inline body form
-    FuncTypeAST* funcType = nullptr;   // signature + qualifiers
-    StmtAST* body = nullptr;
-
-    // Assignment forms (plain or injection)
-    ExprAST* assignmentRef = nullptr;
-    InternedString receiverArg;
-    bool isInjection = false;
-
-    bool isInlineBody() const { return funcType != nullptr; }
-    bool isPlainAssignment() const { return assignmentRef != nullptr && !isInjection; }
-    bool isInjectionAssignment() const { return isInjection && assignmentRef != nullptr; }
-
-    MethodDeclAST() : ValueDeclAST(ASTKind::MethodDecl) {}
-};
-using MethodDeclPtr = MethodDeclAST*;
 
 /**
  * @brief Represents one variant of an enum, optionally with an explicit value.
@@ -354,7 +305,7 @@ using EnumVariantPtr = EnumVariantAST*;
 struct StructDeclAST : TypeDeclAST {
     static constexpr ASTKind staticKind = ASTKind::StructDecl;
 
-    ArenaSpan<GenericParamPtr> genericParams;
+    ArenaSpan<GenericParamDeclPtr> genericParams;
     ArenaSpan<FieldDeclPtr> fields;
     Visibility visibility = Visibility::Private;
 
@@ -409,7 +360,7 @@ using EnumDeclPtr = EnumDeclAST*;
 struct TraitDeclAST : TypeDeclAST {
     static constexpr ASTKind staticKind = ASTKind::TraitDecl;
 
-    ArenaSpan<GenericParamPtr> genericParams;
+    ArenaSpan<GenericParamDeclPtr> genericParams;
     ArenaSpan<TraitMethodAST*> methods;
     Visibility visibility = Visibility::Private;
 
@@ -446,8 +397,8 @@ using TraitDeclPtr = TraitDeclAST*;
 struct TypeAliasDeclAST : TypeDeclAST {
     static constexpr ASTKind staticKind = ASTKind::TypeAliasDecl;
 
-    ArenaSpan<GenericParamPtr> genericParams;
-    TypeAST* aliasedType;       // Original alias target (may be another alias)
+    ArenaSpan<GenericParamDeclPtr> genericParams;
+    TypePtr aliasedType;       // Original alias target (may be another alias)
     Visibility visibility = Visibility::Private;
 
     TypeAliasDeclAST() : TypeDeclAST(ASTKind::TypeAliasDecl) {}
@@ -516,21 +467,26 @@ using TraitRefPtr = TraitRefAST*;
 /**
  * @brief A single conversion entry inside a from block.
  *
- * Two forms:
- *   - Inline entry: has funcType and body
- *   - Path entry: has path (reference to existing function)
+ * Only inline form is supported – path entries are not allowed.
+ * Each entry declares its signature and body directly.
+ *
+ * Grammar:
+ *   from_entry := param_group { param_group } '->' type '=' func_body
+ *
+ * @example
+ *   from int {
+ *       (s string) -> int = { return #parseInt(s) }
+ *   }
+ *
+ * @field funcType The conversion function type (source parameters and return)
+ * @field body     The conversion body (always a BlockStmtAST)
  */
 struct FromEntryAST : BaseAST {
     static constexpr ASTKind staticKind = ASTKind::FromEntry;
-
-    FromEntryKind kind = FromEntryKind::Inline;
     
     // For inline entries
     FuncTypeAST* funcType = nullptr;   // the conversion function type
-    StmtAST* body = nullptr;
-    
-    // For path entries
-    ExprAST* path = nullptr;
+    StmtPtr body = nullptr;
 
     FromEntryAST() : BaseAST(ASTKind::FromEntry) {}
 };
@@ -554,18 +510,9 @@ struct FromDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::FromDecl;
 
     Visibility visibility = Visibility::Private;
-    
-    // Target information (unified with impl)
-    TargetKind targetKind = TargetKind::Concrete;
-    TypeAST* targetType = nullptr;
-    
-    // For GenericArray target
-    InternedString arrayTypeParamName;
-    
-    // For GenericNamed target
-    ArenaSpan<GenericParamPtr> genericParams;
-    
+    TypePtr targetType = nullptr;
     ArenaSpan<FromEntryPtr> entries;
+    ArenaSpan<GenericParamDeclPtr> genericParams;
 
     FromDeclAST() : DeclAST(ASTKind::FromDecl) {}
 };
@@ -574,6 +521,55 @@ using FromDeclPtr = FromDeclAST*;
 // ─────────────────────────────────────────────────────────────────────────────
 // IMPL BLOCK NODES (method implementations)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @brief Represents a method implementation inside an `impl` block.
+ *
+ * This node supports three syntactic forms defined in the grammar:
+ *
+ * 1. **Inline Body** – Full signature and a block/expression body.
+ *    - `funcType` contains the signature (including qualifiers, parameters, return types).
+ *    - `body` is a `BlockStmtAST` (the parser desugars expression bodies).
+ *
+ * 2. **Plain Assignment** – Method name bound to an existing function.
+ *    - `assignmentRef` points to a function reference (`IdentifierExprAST`,
+ *      `FieldAccessExprAST`, or a `CallExprAST` for generic instantiation).
+ *    - `isInjection = false`, `receiverArg` is empty.
+ *
+ * 3. **Injection Assignment** – Method name bound to a function where the first
+ *    parameter is fixed to the receiver (`self` or an alias).
+ *    - `assignmentRef` as in plain assignment.
+ *    - `isInjection = true`, `receiverArg` holds the receiver name (must be `self`
+ *      or the alias declared on the enclosing `impl` block).
+ *
+ * Methods are called using the colon operator: `value:method(args)`. The semantic
+ * pass resolves the call using the `impl` block that matches the receiver's type.
+ *
+ * ─── Semantic Cache ────────────────────────────────────────────────────────
+ * `valueType` (from ValueDeclAST) points to the method's type (funcType or
+ * the type of assignmentRef).
+ *
+ * @see ImplDeclAST for the enclosing `impl` block.
+ */
+struct MethodDeclAST : ValueDeclAST {
+    static constexpr ASTKind staticKind = ASTKind::MethodDecl;
+
+    // Inline body form
+    FuncTypeAST* funcType = nullptr;   // signature + qualifiers
+    StmtPtr body = nullptr;
+
+    // Assignment forms (plain or injection)
+    ExprPtr assignmentRef = nullptr;
+    InternedString receiverArg;
+    bool isInjection = false;
+
+    bool isInlineBody() const { return funcType != nullptr; }
+    bool isPlainAssignment() const { return assignmentRef != nullptr && !isInjection; }
+    bool isInjectionAssignment() const { return isInjection && assignmentRef != nullptr; }
+
+    MethodDeclAST() : ValueDeclAST(ASTKind::MethodDecl) {}
+};
+using MethodDeclPtr = MethodDeclAST*;
 
 /**
  * @brief Binds method implementations to a type.
@@ -604,21 +600,13 @@ using FromDeclPtr = FromDeclAST*;
 struct ImplDeclAST : DeclAST {
     static constexpr ASTKind staticKind = ASTKind::ImplDecl;
 
-    InternedString receiverAlias;           // 'as' alias (replaces 'self')
     Visibility visibility = Visibility::Private;
-    
-    // Target information (unified with from)
-    TargetKind targetKind = TargetKind::Concrete;
-    TypeAST* targetType = nullptr;
-    
-    // For GenericArray target
-    InternedString arrayTypeParamName;
-    
-    // For GenericNamed target
-    ArenaSpan<GenericParamPtr> genericParams;
-    
-    TraitRefPtr traitRef = nullptr;         // Optional trait conformance
+    TypePtr targetType = nullptr;
     ArenaSpan<MethodDeclPtr> methods;
+    ArenaSpan<GenericParamDeclPtr> genericParams;
+    
+    InternedString receiverAlias;           // 'as' alias (replaces 'self')
+    TraitRefPtr traitRef = nullptr;         // Optional trait conformance
 
     ImplDeclAST() : DeclAST(ASTKind::ImplDecl) {}
 };

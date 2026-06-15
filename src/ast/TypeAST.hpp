@@ -144,25 +144,50 @@ struct NamedTypeAST : TypeAST {
     static constexpr ASTKind staticKind = ASTKind::NamedType;
 
     InternedString name;
-    ArenaSpan<TypeAST*> genericArgs;
+    ArenaSpan<TypePtr> genericArgs;
 
     explicit NamedTypeAST(InternedString n)
         : TypeAST(ASTKind::NamedType), name(n) {}
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GenericParamTypeAST – a generic type parameter reference.
+// GenericParamRefAST – reference to a generic type parameter
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct GenericParamTypeAST : TypeAST {
-    static constexpr ASTKind staticKind = ASTKind::GenericParamType;
+/**
+ * @brief Represents a use of a generic type parameter as a type.
+ *
+ * This node appears wherever a type expression may refer to a type variable
+ * that was declared by a GenericParamDeclAST. It acts as a leaf in the type
+ * AST, standing for an unknown type that will be instantiated later.
+ *
+ * @example
+ *   fn identity<T> (v T) -> T { ... }        // the T in parameter and return
+ *   struct Box<T> { value T }                // the T in field type
+ *   type Option<T> = struct { value T? }     // the T in the alias body
+ *
+ * ─── Semantic Role ─────────────────────────────────────────────────────────
+ * The `declaration` field is set during semantic analysis to point to the
+ * GenericParamDeclAST that declared this variable. This allows the type system
+ * to know which type parameter is being referenced, including its constraints.
+ *
+ * The `isPhantom` flag is set when the parameter is marked `@phantom`, meaning
+ * it does not appear in the body but is kept for type identity.
+ *
+ * @field name        The name of the type parameter being referenced (e.g., "T").
+ * @field declaration Pointer to the declaration that introduced this parameter
+ *                    (set during type resolution, initially nullptr).
+ * @field isPhantom   True if this parameter is marked `@phantom`.
+ */
+struct GenericParamRefAST : TypeAST {
+    static constexpr ASTKind staticKind = ASTKind::GenericParamRef;
 
     InternedString name;
-    GenericParamAST* declaration = nullptr;
+    GenericParamDeclAST* declaration = nullptr;   // back‑pointer to the declaration
     bool isPhantom = false;
 
-    explicit GenericParamTypeAST(InternedString n)
-        : TypeAST(ASTKind::GenericParamType), name(n) {}
+    explicit GenericParamRefAST(InternedString n)
+        : TypeAST(ASTKind::GenericParamRef), name(n) {}
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -186,9 +211,9 @@ struct GenericParamTypeAST : TypeAST {
 struct NullableTypeAST : TypeAST {
     static constexpr ASTKind staticKind = ASTKind::NullableType;
 
-    TypeAST* inner;
+    TypePtr inner;
 
-    explicit NullableTypeAST(TypeAST* t)
+    explicit NullableTypeAST(TypePtr t)
         : TypeAST(ASTKind::NullableType), inner(t) {}
 };
 
@@ -215,10 +240,10 @@ struct NullableTypeAST : TypeAST {
 struct ResultTypeAST : TypeAST {
     static constexpr ASTKind staticKind = ASTKind::ResultType;
 
-    TypeAST* inner;
-    TypeAST* errorType;
+    TypePtr inner;
+    TypePtr errorType;
 
-    ResultTypeAST(TypeAST* t, TypeAST* err)
+    ResultTypeAST(TypePtr t, TypePtr err)
         : TypeAST(ASTKind::ResultType), inner(t), errorType(err) {}
 
     bool hasErrorType() const { return errorType != nullptr; }
@@ -261,9 +286,9 @@ struct ArrayTypeAST : TypeAST {
 
     ArrayKind arrayKind;
     uint64_t size;
-    TypeAST* element;
+    TypePtr element;
 
-    ArrayTypeAST(ArrayKind k, uint64_t sz, TypeAST* elem)
+    ArrayTypeAST(ArrayKind k, uint64_t sz, TypePtr elem)
         : TypeAST(ASTKind::ArrayType), arrayKind(k), size(sz), element(elem) {}
 
     bool isFixed()   const { return arrayKind == ArrayKind::Fixed; }
@@ -278,9 +303,9 @@ struct ArrayTypeAST : TypeAST {
 /**
  * @brief Represents an array type with a free type variable, e.g., `impl [_, <T>]`.
  *
- * This node is only valid as the `impl_target` in an `impl` declaration. It
- * declares a type variable (e.g., `T`) that is bound to the concrete element
- * type of the array at the call site.
+ * This node is only valid as the `impl_target` in an `impl` declaration or 
+ * `from_target` in a `from` declaration. It declares a type variable (e.g., `T`) 
+ * that is bound to the concrete element type of the array at the call site.
  *
  * Grammar:
  *   generic_array_type := '[' '_' ',' '<' IDENTIFIER '>' ']'      -- slice
@@ -290,6 +315,12 @@ struct ArrayTypeAST : TypeAST {
  * Example:
  *   impl [*, <T>] as a {
  *       first () -> T = { return a[0] }
+ *   }
+ *
+ *   from [*, <T>] {
+ *       (n int) -> [*, <T>] = {
+ *       
+ *       }
  *   }
  *
  * The variable `T` is in scope inside the method bodies of this `impl` block.
@@ -339,9 +370,9 @@ struct GenericArrayTypeAST : TypeAST {
 struct RefTypeAST : TypeAST {
     static constexpr ASTKind staticKind = ASTKind::RefType;
 
-    TypeAST* inner;
+    TypePtr inner;
 
-    explicit RefTypeAST(TypeAST* t)
+    explicit RefTypeAST(TypePtr t)
         : TypeAST(ASTKind::RefType), inner(t) {}
 };
 
@@ -385,9 +416,9 @@ struct RefTypeAST : TypeAST {
 struct PtrTypeAST : TypeAST {
     static constexpr ASTKind staticKind = ASTKind::PtrType;
 
-    TypeAST* inner;
+    TypePtr inner;
 
-    explicit PtrTypeAST(TypeAST* t)
+    explicit PtrTypeAST(TypePtr t)
         : TypeAST(ASTKind::PtrType), inner(t) {}
 };
 
@@ -423,7 +454,7 @@ struct FuncTypeAST : TypeAST {
     static constexpr ASTKind staticKind = ASTKind::FuncType;
 
     ArenaSpan<ParamAST*> params;           // parameters for this group
-    ArenaSpan<TypeAST*>  returnTypes;      // return types (may contain FuncTypeAST)
+    ArenaSpan<TypePtr>  returnTypes;      // return types (may contain FuncTypeAST)
     uint32_t qualifiers = 0;               // QualifierBits flags
     ArenaSpan<InternedString> rawQualifiers; // source qualifier strings
 
