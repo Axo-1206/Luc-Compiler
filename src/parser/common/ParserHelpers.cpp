@@ -28,7 +28,7 @@
  *   - **Null Safety**: Functions return empty collections on error, never nullptr.
  * 
  * @see Parser.cpp for core infrastructure
- * @see LUC_GRAMMAR.md for grammar rules
+ * @see GRAMMAR.md for grammar rules
  */
 
 #include "ast/BaseAST.hpp"
@@ -73,7 +73,7 @@
  *       and ')' after this function returns.
  */
 std::vector<ParamPtr> Parser::parseParamList() {
-    LUC_LOG_DECL_EXTREME("parseParamList: entering");
+    LOG_DECL_EXTREME("parseParamList: entering");
     std::vector<ParamPtr> list;
     int paramCount = 0;
     
@@ -81,8 +81,8 @@ std::vector<ParamPtr> Parser::parseParamList() {
         if (!list.empty() && !ts_.match(TokenType::COMMA))
             break;
         if (!ts_.check(TokenType::IDENTIFIER)) {
-            LUC_LOG_DECL("parseParamList: ERROR - expected parameter name");
-            errorAt(DiagCode::E1003, "expected parameter name");
+            LOG_DECL("parseParamList: ERROR - expected parameter name");
+            errorAt(DiagCode::E1002, "parameter name", ts_.peek().value);
             break;
         }
         auto param = arena_.make<ParamAST>();
@@ -121,15 +121,15 @@ std::vector<ParamPtr> Parser::parseParamList() {
         param->type = parseType();
         if (param->type) {
             paramCount++;
-            LUC_LOG_DECL_EXTREME("parseParamList: parameter #" << paramCount 
+            LOG_DECL_EXTREME("parseParamList: parameter #" << paramCount 
                                  << " = " << pool_.lookup(param->name));
             list.push_back(param);
         } else {
-            LUC_LOG_DECL("parseParamList: ERROR - failed to parse type for parameter");
+            LOG_DECL("parseParamList: ERROR - failed to parse type for parameter");
         }
     }
     
-    LUC_LOG_DECL_EXTREME("parseParamList: parsed " << paramCount << " parameter(s)");
+    LOG_DECL_EXTREME("parseParamList: parsed " << paramCount << " parameter(s)");
     return list;
 }
 
@@ -153,7 +153,7 @@ std::vector<ParamPtr> Parser::parseParamList() {
  * closing ')'.
  */
 ArenaSpan<ExprPtr> Parser::parseArgList() {
-    LUC_LOG_DECL_EXTREME("parseArgList: entering");
+    LOG_DECL_EXTREME("parseArgList: entering");
     std::vector<ExprPtr> args;
     int consecutiveErrors = 0;
     const int MAX_CONSECUTIVE_ERRORS = 5;
@@ -161,7 +161,7 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
 
     while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            LUC_LOG_DECL("parseArgList: ERROR - too many consecutive errors in argument list");
+            LOG_DECL("parseArgList: ERROR - too many consecutive errors in argument list");
             errorAt(DiagCode::E1002, "too many consecutive errors in argument list; skipping to ')'");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::RPAREN)) ts_.advance();
             break;
@@ -171,7 +171,7 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
         ExprPtr arg = parseExpr();
 
         if (ts_.getPos() == savedPos) {
-            LUC_LOG_DECL("parseArgList: ERROR - expected argument expression");
+            LOG_DECL("parseArgList: ERROR - expected argument expression");
             errorAt(DiagCode::E1008, "expected argument expression");
             if (!ts_.isAtEnd()) ts_.advance();
             consecutiveErrors++;
@@ -181,12 +181,12 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
 
         consecutiveErrors = 0;
         argCount++;
-        LUC_LOG_DECL_EXTREME("parseArgList: argument #" << argCount);
+        LOG_DECL_EXTREME("parseArgList: argument #" << argCount);
         args.push_back(arg);
 
         if (ts_.check(TokenType::RPAREN)) break;
         if (!ts_.match(TokenType::COMMA)) {
-            LUC_LOG_DECL("parseArgList: ERROR - expected ',' after argument");
+            LOG_DECL("parseArgList: ERROR - expected ',' after argument");
             errorAt(DiagCode::E1001, "expected ',' after argument");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::COMMA) && !ts_.check(TokenType::RPAREN)) {
                 ts_.advance();
@@ -199,7 +199,7 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
     auto builder = arena_.makeBuilder<ExprPtr>();
     for (auto& a : args) builder.push_back(a);
     
-    LUC_LOG_DECL_EXTREME("parseArgList: parsed " << argCount << " argument(s)");
+    LOG_DECL_EXTREME("parseArgList: parsed " << argCount << " argument(s)");
     return builder.build();
 }
 
@@ -228,53 +228,53 @@ ArenaSpan<ExprPtr> Parser::parseArgList() {
  * - Invalid type in list: skips type, continues
  */
 ArenaSpan<TypePtr> Parser::parseReturnList() {
-    LUC_LOG_DECL_EXTREME("parseReturnList: entering");
+    LOG_DECL_EXTREME("parseReturnList: entering");
     
     // Case 1: Single return type (no parentheses)
     if (!ts_.check(TokenType::LPAREN)) {
-        LUC_LOG_DECL_EXTREME("parseReturnList: single return type (no parentheses)");
+        LOG_DECL_EXTREME("parseReturnList: single return type (no parentheses)");
         // Use existing looksLikeType() to validate we have a type start
         if (!looksLikeType()) {
-            LUC_LOG_DECL("parseReturnList: ERROR - expected return type after '->'");
+            LOG_DECL("parseReturnList: ERROR - expected return type after '->'");
             errorAt(DiagCode::E1005, "expected return type after '->'");
             return ArenaSpan<TypePtr>();
         }
         TypePtr t = parseType();
         if (!t || t->isa<UnknownTypeAST>()) {
-            LUC_LOG_DECL("parseReturnList: ERROR - expected return type after '->'");
+            LOG_DECL("parseReturnList: ERROR - expected return type after '->'");
             errorAt(DiagCode::E1005, "expected return type after '->'");
             return ArenaSpan<TypePtr>();
         }
         auto builder = arena_.makeBuilder<TypePtr>();
         builder.push_back(t);
-        LUC_LOG_DECL_EXTREME("parseReturnList: single return type parsed");
+        LOG_DECL_EXTREME("parseReturnList: single return type parsed");
         return builder.build();
     }
 
     // We have '(' - need to determine if it's a function type or multi-return
-    LUC_LOG_DECL_EXTREME("parseReturnList: detected '(' - checking if function type or multi-return");
+    LOG_DECL_EXTREME("parseReturnList: detected '(' - checking if function type or multi-return");
     size_t savedPos = ts_.getPos();
     ts_.consume(TokenType::LPAREN, "expected '(' for return list");
 
     // Use lookahead to decide
     if (isFunctionTypeAfterParen(ts_.getPos())) {
-        LUC_LOG_DECL_EXTREME("parseReturnList: this is a function type");
+        LOG_DECL_EXTREME("parseReturnList: this is a function type");
         // This is a function type (the parentheses belong to the function's parameter group)
         ts_.setPos(savedPos);
         TypePtr funcType = parseFuncType();
         if (!funcType || funcType->isa<UnknownTypeAST>()) {
-            LUC_LOG_DECL("parseReturnList: ERROR - expected function type");
+            LOG_DECL("parseReturnList: ERROR - expected function type");
             errorAt(DiagCode::E1005, "expected function type");
             return ArenaSpan<TypePtr>();
         }
         auto builder = arena_.makeBuilder<TypePtr>();
         builder.push_back(funcType);
-        LUC_LOG_DECL_EXTREME("parseReturnList: function type parsed");
+        LOG_DECL_EXTREME("parseReturnList: function type parsed");
         return builder.build();
     }
 
     // Not a function type → parse as multi-return list
-    LUC_LOG_DECL_EXTREME("parseReturnList: multi-return list");
+    LOG_DECL_EXTREME("parseReturnList: multi-return list");
     // We are already positioned after the '(' (from the consume above)
     std::vector<TypePtr> types;
     int typeCount = 0;
@@ -282,7 +282,7 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
     while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
         if (!types.empty() && !ts_.match(TokenType::COMMA)) {
             if (ts_.check(TokenType::RPAREN)) break;
-            LUC_LOG_DECL("parseReturnList: ERROR - expected ',' between return types");
+            LOG_DECL("parseReturnList: ERROR - expected ',' between return types");
             errorAt(DiagCode::E1001, "expected ',' between return types");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::COMMA) && !ts_.check(TokenType::RPAREN)) {
                 ts_.advance();
@@ -295,7 +295,7 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
         size_t typeSavedPos = ts_.getPos();
         TypePtr t = parseType();
         if (ts_.getPos() == typeSavedPos) {
-            LUC_LOG_DECL("parseReturnList: ERROR - expected return type");
+            LOG_DECL("parseReturnList: ERROR - expected return type");
             errorAt(DiagCode::E1005, "expected return type");
             while (!ts_.isAtEnd() && !ts_.check(TokenType::RPAREN)) {
                 ts_.advance();
@@ -304,7 +304,7 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
         }
         if (t && !t->isa<UnknownTypeAST>()) {
             typeCount++;
-            LUC_LOG_DECL_EXTREME("parseReturnList: return type #" << typeCount);
+            LOG_DECL_EXTREME("parseReturnList: return type #" << typeCount);
             types.push_back(t);
         }
     }
@@ -314,7 +314,7 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
     auto builder = arena_.makeBuilder<TypePtr>();
     for (auto& t : types) builder.push_back(t);
     
-    LUC_LOG_DECL_EXTREME("parseReturnList: parsed " << typeCount << " return type(s)");
+    LOG_DECL_EXTREME("parseReturnList: parsed " << typeCount << " return type(s)");
     return builder.build();
 }
 
@@ -351,7 +351,7 @@ ArenaSpan<TypePtr> Parser::parseReturnList() {
  * - Duplicate qualifier: reports error (E1018), skips the duplicate.
  */
 QualifierSet Parser::parseQualifiers() {
-    LUC_LOG_DECL_EXTREME("parseQualifiers: entering");
+    LOG_DECL_EXTREME("parseQualifiers: entering");
     QualifierSet qs;
     int qualifierCount = 0;
     
@@ -360,17 +360,17 @@ QualifierSet Parser::parseQualifiers() {
         ts_.advance(); // consume '~'
         
         if (!ts_.check(TokenType::IDENTIFIER)) {
-            LUC_LOG_DECL("parseQualifiers: ERROR - expected qualifier name after '~'");
+            LOG_DECL("parseQualifiers: ERROR - expected qualifier name after '~'");
             error(loc, DiagCode::E1003, "expected qualifier name after '~'");
             break;
         }
         InternedString name = pool_.intern(ts_.advance().value);
         std::string_view nameStr = pool_.lookup(name);
-        LUC_LOG_DECL_EXTREME("parseQualifiers: found qualifier '~" << nameStr << "'");
+        LOG_DECL_EXTREME("parseQualifiers: found qualifier '~" << nameStr << "'");
         
         // Check for duplicate qualifier
         if (std::find(qs.raw.begin(), qs.raw.end(), name) != qs.raw.end()) {
-            LUC_LOG_DECL("parseQualifiers: ERROR - duplicate qualifier '~" << nameStr << "'");
+            LOG_DECL("parseQualifiers: ERROR - duplicate qualifier '~" << nameStr << "'");
             error(loc, DiagCode::E1018, 
                   "duplicate qualifier '~" + std::string(nameStr) + "'");
             continue;
@@ -378,7 +378,7 @@ QualifierSet Parser::parseQualifiers() {
         
         const QualifierEntry* entry = qualifier::lookup(name);
         if (!entry) {
-            LUC_LOG_DECL("parseQualifiers: ERROR - unknown qualifier '~" << nameStr << "'");
+            LOG_DECL("parseQualifiers: ERROR - unknown qualifier '~" << nameStr << "'");
             error(loc, DiagCode::E1016, 
                   "unknown qualifier '~" + std::string(nameStr) + 
                   "'; known qualifiers: " + qualifier::allNames());
@@ -388,12 +388,12 @@ QualifierSet Parser::parseQualifiers() {
         qs.raw.push_back(name);
         qs.bitmask |= entry->bit;
         qualifierCount++;
-        LUC_LOG_DECL_EXTREME("parseQualifiers: added qualifier (bitmask now 0x" 
+        LOG_DECL_EXTREME("parseQualifiers: added qualifier (bitmask now 0x" 
                              << std::hex << qs.bitmask << std::dec << ")");
     }
     
     if (qualifierCount > 0) {
-        LUC_LOG_DECL_EXTREME("parseQualifiers: total " << qualifierCount << " qualifier(s)");
+        LOG_DECL_EXTREME("parseQualifiers: total " << qualifierCount << " qualifier(s)");
     }
     return qs;
 }
@@ -415,7 +415,7 @@ QualifierSet Parser::parseQualifiers() {
 /**
  * @brief Parses a function reference for use in declarations and expressions.
  *
- * Grammar (from LUC_GRAMMAR.md, Shared Productions):
+ * Grammar (from GRAMMAR.md, Shared Productions):
  *   func_ref := type_reference                    -- int, string, Box<int>
  *             | IDENTIFIER                        -- local or imported name
  *             | IDENTIFIER '.' IDENTIFIER         -- module path: pkg.fn
@@ -472,7 +472,7 @@ QualifierSet Parser::parseQualifiers() {
  *     returns empty span (still creates the node with empty generic args).
  */
 ExprPtr Parser::parseFuncRef() {
-    LUC_LOG_EXPR_VERBOSE("parseFuncRef: entering at line " << ts_.currentLoc().line()
+    LOG_EXPR_VERBOSE("parseFuncRef: entering at line " << ts_.currentLoc().line()
                          << ", col " << ts_.currentLoc().column());
     SourceLocation loc = ts_.currentLoc();
 
@@ -481,11 +481,11 @@ ExprPtr Parser::parseFuncRef() {
     
     // Handle parenthesized expression for method reference object
     if (ts_.check(TokenType::LPAREN)) {
-        LUC_LOG_EXPR_EXTREME("parseFuncRef: parenthesized object expression");
+        LOG_EXPR_EXTREME("parseFuncRef: parenthesized object expression");
         ts_.advance(); // consume '('
         expr = parseExpr(false);
         if (!expr) {
-            LUC_LOG_EXPR("parseFuncRef: ERROR - expected expression in parentheses");
+            LOG_EXPR("parseFuncRef: ERROR - expected expression in parentheses");
             errorAt(DiagCode::E1008, "expected expression in parentheses");
             return arena_.make<UnknownExprAST>();
         }
@@ -499,20 +499,20 @@ ExprPtr Parser::parseFuncRef() {
         if (ts_.check(TokenType::IDENTIFIER)) {
             Token idenTok = ts_.advance();
             name = pool_.intern(idenTok.value);
-            LUC_LOG_EXPR_EXTREME("parseFuncRef: base identifier = '" << pool_.lookup(name) << "'");
+            LOG_EXPR_EXTREME("parseFuncRef: base identifier = '" << pool_.lookup(name) << "'");
         } else {
             Token typeTok = ts_.advance();
             name = pool_.intern(typeTok.value);
-            LUC_LOG_EXPR_EXTREME("parseFuncRef: primitive type name = '" << pool_.lookup(name) << "'");
+            LOG_EXPR_EXTREME("parseFuncRef: primitive type name = '" << pool_.lookup(name) << "'");
         }
         
         // Check for optional generic arguments
         ArenaSpan<TypePtr> genericArgs;
         if (ts_.check(TokenType::LESS) && looksLikeGenericTypeInstantiation()) {
-            LUC_LOG_EXPR_EXTREME("parseFuncRef: generic arguments for '" << pool_.lookup(name) << "'");
+            LOG_EXPR_EXTREME("parseFuncRef: generic arguments for '" << pool_.lookup(name) << "'");
             ts_.advance(); // consume '<'
             genericArgs = parseGenericArgs();
-            LUC_LOG_EXPR("parseFuncRef: parsed " << genericArgs.size() 
+            LOG_EXPR("parseFuncRef: parsed " << genericArgs.size() 
                          << " generic args for '" << pool_.lookup(name) << "'");
         }
         
@@ -522,7 +522,7 @@ ExprPtr Parser::parseFuncRef() {
         expr = node;
     }
     else {
-        LUC_LOG_EXPR("parseFuncRef: ERROR - expected identifier or '('");
+        LOG_EXPR("parseFuncRef: ERROR - expected identifier or '('");
         errorAt(DiagCode::E1003, "expected function name or '(' for method reference");
         return arena_.make<UnknownExprAST>();
     }
@@ -535,13 +535,13 @@ ExprPtr Parser::parseFuncRef() {
         if (ts_.check(TokenType::DOT)) {
             ts_.advance();
             if (!ts_.check(TokenType::IDENTIFIER)) {
-                LUC_LOG_EXPR("parseFuncRef: ERROR - expected identifier after '.'");
+                LOG_EXPR("parseFuncRef: ERROR - expected identifier after '.'");
                 errorAt(DiagCode::E1003, "expected identifier after '.'");
                 break;
             }
             SourceLocation fieldLoc = ts_.currentLoc();
             Token fieldTok = ts_.advance();
-            LUC_LOG_EXPR_EXTREME("parseFuncRef: dotted segment ." << fieldTok.value);
+            LOG_EXPR_EXTREME("parseFuncRef: dotted segment ." << fieldTok.value);
             
             auto node = arena_.make<FieldAccessExprAST>();
             node->loc = fieldLoc;
@@ -553,13 +553,13 @@ ExprPtr Parser::parseFuncRef() {
         else if (ts_.check(TokenType::COLON)) {
             ts_.advance(); // consume ':'
             if (!ts_.check(TokenType::IDENTIFIER)) {
-                LUC_LOG_EXPR("parseFuncRef: ERROR - expected method name after ':'");
+                LOG_EXPR("parseFuncRef: ERROR - expected method name after ':'");
                 errorAt(DiagCode::E1003, "expected method name after ':'");
                 return nullptr;
             }
             SourceLocation methodLoc = ts_.currentLoc();
             Token methodTok = ts_.advance();
-            LUC_LOG_EXPR_EXTREME("parseFuncRef: method reference :" << methodTok.value);
+            LOG_EXPR_EXTREME("parseFuncRef: method reference :" << methodTok.value);
             
             auto node = arena_.make<BehaviorAccessExprAST>();
             node->loc = methodLoc;
@@ -575,20 +575,20 @@ ExprPtr Parser::parseFuncRef() {
 
     // Generic arguments after dotted path
     if (!isMethodReference && !expr->isa<BehaviorAccessExprAST>() && ts_.check(TokenType::LESS)) {
-        LUC_LOG_EXPR_EXTREME("parseFuncRef: parsing generic arguments after path");
+        LOG_EXPR_EXTREME("parseFuncRef: parsing generic arguments after path");
         
         ts_.advance(); // consume '<'
         ArenaSpan<TypePtr> typeArgs = parseGenericArgs();
         
         if (auto* ident = expr->as<IdentifierExprAST>()) {
             if (ident->genericArgs.size() > 0) {
-                LUC_LOG_EXPR("parseFuncRef: WARNING - identifier already has generic args");
+                LOG_EXPR("parseFuncRef: WARNING - identifier already has generic args");
             }
             ident->genericArgs = typeArgs;
         } else if (auto* field = expr->as<FieldAccessExprAST>()) {
             field->genericArgs = typeArgs;
         } else {
-            LUC_LOG_EXPR("parseFuncRef: ERROR - cannot add generic args to node type");
+            LOG_EXPR("parseFuncRef: ERROR - cannot add generic args to node type");
             errorAt(DiagCode::E1006, "generic arguments are only allowed on identifiers and module paths");
         }
     }
@@ -678,7 +678,7 @@ int Parser::infixPrec(TokenType t) const {
             prec = PREC_NONE;
             break;
     }
-    LUC_LOG_EXPR_EXTREME("infixPrec: " << LucDebug::tokenTypeToString(t) << " -> " << prec);
+    LOG_EXPR_EXTREME("infixPrec: " << LucDebug::tokenTypeToString(t) << " -> " << prec);
     return prec;
 }
 
@@ -715,7 +715,7 @@ BinaryOp Parser::tokenToBinaryOp(TokenType t) const {
         case TokenType::SHR:                 op = BinaryOp::Shr; break;
         default:                             op = BinaryOp::Add; break;
     }
-    LUC_LOG_EXPR_EXTREME("tokenToBinaryOp: " << LucDebug::tokenTypeToString(t) << " -> " << static_cast<int>(op));
+    LOG_EXPR_EXTREME("tokenToBinaryOp: " << LucDebug::tokenTypeToString(t) << " -> " << static_cast<int>(op));
     return op;
 }
 
@@ -744,7 +744,7 @@ AssignOp Parser::tokenToAssignOp(TokenType t) const {
         case TokenType::SHR_ASSIGN:      op = AssignOp::ShrAssign; break;
         default:                         op = AssignOp::Assign; break;
     }
-    LUC_LOG_EXPR_EXTREME("tokenToAssignOp: " << LucDebug::tokenTypeToString(t) << " -> " << static_cast<int>(op));
+    LOG_EXPR_EXTREME("tokenToAssignOp: " << LucDebug::tokenTypeToString(t) << " -> " << static_cast<int>(op));
     return op;
 }
 
@@ -775,7 +775,7 @@ bool Parser::isAssignOp(TokenType t) const {
             result = false;
             break;
     }
-    LUC_LOG_EXPR_EXTREME("isAssignOp: " << LucDebug::tokenTypeToString(t) << " -> " << result);
+    LOG_EXPR_EXTREME("isAssignOp: " << LucDebug::tokenTypeToString(t) << " -> " << result);
     return result;
 }
 

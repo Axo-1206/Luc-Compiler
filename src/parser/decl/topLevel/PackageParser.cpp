@@ -18,6 +18,10 @@
  * On exit:  positioned after the package name (if successful)
  *           OR at recovery position (if error)
  * 
+ * ─── Note on Metadata ─────────────────────────────────────────────────────
+ * Doc comments are handled by the dispatcher (parse()).
+ * This function should NOT call harvestDocComment().
+ * 
  * ─── Error Recovery ───────────────────────────────────────────────────────
  * - Missing 'package' keyword: reports error, returns nullptr
  * - Missing package name: reports error, returns nullptr
@@ -28,15 +32,12 @@
 PackageDeclPtr Parser::parsePackageDecl() {
     LOG_DECL_VERBOSE("parsePackageDecl: entering");
 
-    // Harvest doc comments attached to this package declaration
-    auto doc = harvestDocComment();
-
     SourceLocation loc = ts_.currentLoc();
     
     // Check for 'package' keyword
     if (!ts_.check(TokenType::PACKAGE)) {
         LOG_DECL("parsePackageDecl: ERROR - expected 'package' keyword");
-        errorAt(DiagCode::E1001, "package", ts_.peek().value); // Expected keyword
+        errorAt(DiagCode::E1001, "package", ts_.peek().value);
         return nullptr;
     }
     ts_.advance(); // Consume 'package' keyword
@@ -53,13 +54,6 @@ PackageDeclPtr Parser::parsePackageDecl() {
     
     auto* node = arena_.make<PackageDeclAST>(name);
     node->loc = loc;
-
-        
-    // Attach doc comment if found
-    if (doc) {
-        node->doc = std::move(doc);
-        LOG_DECL_EXTREME("parsePackageDecl: attached doc comment to package");
-    }
     
     return node;
 }

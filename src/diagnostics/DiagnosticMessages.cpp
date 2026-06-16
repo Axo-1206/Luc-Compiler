@@ -24,8 +24,8 @@ std::string_view getMessage(DiagCode code) {
         case DiagCode::E1001: return "Expected keyword '%s', but found '%s'";
         case DiagCode::E1002: return "Expected an identifier aka %s, but found %s";
         case DiagCode::E1003: return "Expected type annotation, but found '%s'";
-        case DiagCode::E1004: return "Expected '%s' to open %s";
-        case DiagCode::E1005: return "Expected '%s' to close %s";
+        case DiagCode::E1004: return "Expected '%s' to open %s, but found %s";
+        case DiagCode::E1005: return "Expected '%s' to close %s, but found %s";
         case DiagCode::E1006: return "Expected expression after '=', but found %s";
 
         case DiagCode::E1101: return "Expected package name, found %s";

@@ -19,6 +19,10 @@
  * On entry: positioned at 'use' keyword
  * On exit:  positioned after the alias (or after the last path segment)
  * 
+ * ─── Note on Metadata ─────────────────────────────────────────────────────
+ * Doc comments and attributes are handled by the dispatcher (parseDeclaration).
+ * This function should NOT call harvestDocComment() or parseAttributes().
+ * 
  * ─── Module Path Format ────────────────────────────────────────────────────
  *   - Dotted identifiers: `std.io`, `renderer.core.math`
  *   - Minimum one identifier
@@ -33,15 +37,12 @@
 UseDeclPtr Parser::parseUseDecl(Visibility vis) {
     LOG_DECL_VERBOSE("parseUseDecl: entering");
     
-    // Harvest doc comments attached to this use declaration
-    auto doc = harvestDocComment();
-    
     SourceLocation loc = ts_.currentLoc();
     
     // Check for 'use' keyword (should be present if called correctly)
     if (!ts_.check(TokenType::USE)) {
         LOG_DECL("parseUseDecl: ERROR - expected 'use' keyword");
-        errorAt(DiagCode::E1001, "use", ts_.peek().value); // Expected keyword
+        errorAt(DiagCode::E1001, "use", ts_.peek().value);
         return nullptr;
     }
     ts_.advance(); // Consume 'use' keyword
@@ -71,7 +72,7 @@ UseDeclPtr Parser::parseUseDecl(Visibility vis) {
         }
         path.push_back(pool_.intern(ts_.advance().value));
         LOG_DECL_EXTREME("parseUseDecl: path segment " << path.size() 
-                             << " = " << pool_.lookup(path.back()));
+                         << " = " << pool_.lookup(path.back()));
     }
     
     // If there was an error in path parsing, abort
@@ -103,12 +104,6 @@ UseDeclPtr Parser::parseUseDecl(Visibility vis) {
             node->alias = pool_.intern(ts_.advance().value);
             LOG_DECL_EXTREME("parseUseDecl: alias = " << pool_.lookup(node->alias.value()));
         }
-    }
-    
-    // Attach doc comment if found
-    if (doc) {
-        node->doc = std::move(doc);
-        LOG_DECL_EXTREME("parseUseDecl: attached doc comment");
     }
     
     LOG_DECL_VERBOSE("parseUseDecl: success");

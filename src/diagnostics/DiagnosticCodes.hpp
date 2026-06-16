@@ -22,8 +22,8 @@ enum class DiagCode : uint32_t {
     E1001 = 1000,   ///< Expected keyword
     E1002,          ///< Expected an identifier.
     E1003,          ///< Expected type annotation
-    E1004,          ///< Expected '{, [, <'
-    E1005,          ///< Expected '}, ], >'
+    E1004,          ///< Expected '{, [, <, ('
+    E1005,          ///< Expected '}, ], >, )'
     E1006,          ///< Expected expression after '='
 
     // Speicalize codes
@@ -34,6 +34,7 @@ enum class DiagCode : uint32_t {
     E1105,          ///< Invalid context: 'use' declaration is not allowed inside a block
     E1106,          ///< Expected struct name
     // E1107,          ///< Expected generic parameter name
+    // E1108,          ///< Expected trait type in generic constraint
 
     // E1001 = 1000,   ///< Expected token '%s' but found '%s'.
     // E1002,          ///< Unexpected token '%s'.

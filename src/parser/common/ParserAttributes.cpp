@@ -51,7 +51,7 @@ std::vector<AttributePtr> Parser::parseAttributes() {
         AttributePtr attr = parseAttribute();
         if (attr) {
             attrCount++;
-            LUC_LOG_DECL_EXTREME("parseAttributes: parsed attribute #" << attrCount);
+            LOG_DECL_EXTREME("parseAttributes: parsed attribute #" << attrCount);
             attrs.push_back(attr);
         }
         // On parse failure, parseAttribute already advanced the token stream
@@ -59,7 +59,7 @@ std::vector<AttributePtr> Parser::parseAttributes() {
     }
     
     if (attrCount > 0) {
-        LUC_LOG_DECL_EXTREME("parseAttributes: total " << attrCount << " attribute(s)");
+        LOG_DECL_EXTREME("parseAttributes: total " << attrCount << " attribute(s)");
     }
     return attrs;
 }
@@ -91,13 +91,13 @@ AttributePtr Parser::parseAttribute() {
     
     // Attribute name is required – syntax error if missing
     if (!ts_.check(TokenType::IDENTIFIER)) {
-        LUC_LOG_DECL("parseAttribute: ERROR - expected attribute name after '@'");
+        LOG_DECL("parseAttribute: ERROR - expected attribute name after '@'");
         errorAt(DiagCode::E1003, "expected attribute name after '@'");
         return nullptr;
     }
     
     InternedString name = pool_.intern(ts_.advance().value);
-    LUC_LOG_DECL_EXTREME("parseAttribute: name = @" << pool_.lookup(name));
+    LOG_DECL_EXTREME("parseAttribute: name = @" << pool_.lookup(name));
     
     auto attr = arena_.make<AttributeAST>();
     attr->loc = loc;
@@ -105,14 +105,14 @@ AttributePtr Parser::parseAttribute() {
     
     // Parse optional argument list
     if (ts_.match(TokenType::LPAREN)) {
-        LUC_LOG_DECL_EXTREME("parseAttribute: parsing argument list");
+        LOG_DECL_EXTREME("parseAttribute: parsing argument list");
         std::vector<AttributeArgPtr> args;
         int argCount = 0;
         
         while (!ts_.check(TokenType::RPAREN) && !ts_.isAtEnd()) {
             // Handle commas between arguments
             if (!args.empty() && !ts_.check(TokenType::COMMA)) {
-                LUC_LOG_DECL("parseAttribute: ERROR - expected ',' between attribute arguments");
+                LOG_DECL("parseAttribute: ERROR - expected ',' between attribute arguments");
                 errorAt(DiagCode::E1002, "expected ',' between attribute arguments");
                 break;
             }
@@ -130,12 +130,12 @@ AttributePtr Parser::parseAttribute() {
             }
         }
         
-        LUC_LOG_DECL_EXTREME("parseAttribute: parsed " << argCount << " argument(s)");
+        LOG_DECL_EXTREME("parseAttribute: parsed " << argCount << " argument(s)");
         
         // Expect closing ')'
         if (!ts_.check(TokenType::RPAREN)) {
-            LUC_LOG_DECL("parseAttribute: ERROR - expected ')' after attribute arguments");
-            errorAt(DiagCode::E1011, "expected ')' after attribute arguments");
+            LOG_DECL("parseAttribute: ERROR - expected ')' after attribute arguments");
+            errorAt(DiagCode::E1005, ")", "attribute arguments", ts_.peek().value);
         } else {
             ts_.advance();
         }
@@ -177,7 +177,7 @@ AttributeArgPtr Parser::parseAttributeArgLiteral() {
     // String literal
     if (ts_.check(TokenType::STRING_LITERAL)) {
         InternedString value = pool_.intern(ts_.advance().value);
-        LUC_LOG_DECL_EXTREME("parseAttributeArgLiteral: string literal");
+        LOG_DECL_EXTREME("parseAttributeArgLiteral: string literal");
         return arena_.make<AttributeArgAST>(AttributeArgKind::StringLit, value);
     }
     
@@ -186,26 +186,26 @@ AttributeArgPtr Parser::parseAttributeArgLiteral() {
         ts_.check(TokenType::HEX_LITERAL) ||
         ts_.check(TokenType::BINARY_LITERAL)) {
         InternedString value = pool_.intern(ts_.advance().value);
-        LUC_LOG_DECL_EXTREME("parseAttributeArgLiteral: integer literal");
+        LOG_DECL_EXTREME("parseAttributeArgLiteral: integer literal");
         return arena_.make<AttributeArgAST>(AttributeArgKind::IntLit, value);
     }
     
     // Boolean literals
     if (ts_.check(TokenType::TRUE) || ts_.check(TokenType::FALSE)) {
         InternedString value = pool_.intern(ts_.advance().value);
-        LUC_LOG_DECL_EXTREME("parseAttributeArgLiteral: boolean literal");
+        LOG_DECL_EXTREME("parseAttributeArgLiteral: boolean literal");
         return arena_.make<AttributeArgAST>(AttributeArgKind::BoolLit, value);
     }
     
     // Type identifier (e.g., calling convention name)
     if (ts_.check(TokenType::IDENTIFIER)) {
         InternedString value = pool_.intern(ts_.advance().value);
-        LUC_LOG_DECL_EXTREME("parseAttributeArgLiteral: type identifier");
+        LOG_DECL_EXTREME("parseAttributeArgLiteral: type identifier");
         return arena_.make<AttributeArgAST>(AttributeArgKind::TypeIdent, value);
     }
     
     // Unexpected token
-    LUC_LOG_DECL("parseAttributeArgLiteral: ERROR - unexpected token");
+    LOG_DECL("parseAttributeArgLiteral: ERROR - unexpected token");
     errorAt(DiagCode::E1002, 
             "expected string, integer, boolean, or identifier in attribute argument");
     

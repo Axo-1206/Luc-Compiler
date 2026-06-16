@@ -128,7 +128,7 @@ ArenaSpan<GenericParamDeclPtr> Parser::parseGenericParamDecls() {
     // Expect closing '>'
     if (!ts_.check(TokenType::GREATER)) {
         LOG_DECL("parseGenericParamDecls: ERROR - expected '>' after generic parameters");
-        errorAt(DiagCode::E1005, ">", "generic parameter list");
+        errorAt(DiagCode::E1005, ">", "generic parameter list", ts_.peek().value);
         // Return what we have so far
     } else {
         ts_.advance(); // Consume '>'

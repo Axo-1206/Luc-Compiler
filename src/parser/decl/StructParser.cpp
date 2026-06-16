@@ -19,10 +19,9 @@
  * On entry: positioned at 'struct' keyword
  * On exit:  positioned after the closing '}'
  * 
- * ─── Doc Comment Support ───────────────────────────────────────────────────
- * - Block doc comments (/-- ... --/) immediately above struct
- * - Stacked line comments (-- lines) immediately above struct
- * - Trailing comments (-- comment) on the same line as struct
+ * ─── Note on Metadata ─────────────────────────────────────────────────────
+ * Doc comments and attributes are handled by the dispatcher (parseDeclaration).
+ * This function should NOT call harvestDocComment() or parseAttributes().
  * 
  * ─── Loop Safety ──────────────────────────────────────────────────────────
  * Uses saved position pattern when parsing fields. If parseFieldDecl() makes
@@ -32,23 +31,17 @@
  * - Missing struct name: reports error, returns nullptr
  * - Missing '{' after name: reports error, returns nullptr
  * - Invalid field: skips field, continues parsing remaining fields
- * - Missing '}': consume() reports error (returns partially built node)
+ * - Missing '}': reports error (returns partially built node)
  */
 StructDeclPtr Parser::parseStructDecl(Visibility vis) {
     LOG_DECL_VERBOSE("parseStructDecl: entering");
-    
-    // Harvest doc comments attached to this struct declaration
-    auto doc = harvestDocComment();
-    
-    // Parse attributes before the struct
-    auto attrs = parseAttributes();
     
     SourceLocation loc = ts_.currentLoc();
     
     // Check for 'struct' keyword (should be present if called correctly)
     if (!ts_.check(TokenType::STRUCT)) {
         LOG_DECL("parseStructDecl: ERROR - expected 'struct' keyword");
-        errorAt(DiagCode::E1001, "struct", ts_.peek().value); // Expected keyword
+        errorAt(DiagCode::E1001, "struct", ts_.peek().value);
         return nullptr;
     }
     ts_.advance(); // Consume 'struct' keyword
@@ -76,7 +69,7 @@ StructDeclPtr Parser::parseStructDecl(Visibility vis) {
         errorAt(DiagCode::E1004, "{", "struct body");
         return nullptr;
     }
-    ts_.advance();
+    ts_.advance(); // Consume '{'
 
     // Parse fields
     std::vector<FieldDeclPtr> fields;
@@ -90,14 +83,11 @@ StructDeclPtr Parser::parseStructDecl(Visibility vis) {
         ts_.match(TokenType::COMMA);
         
         // Check if we've reached the end after skipping separators
-        if (ts_.check(TokenType::RBRACE)) {
-            ts_.advance(); // consume '}'
-            break;
-        }
+        if (ts_.check(TokenType::RBRACE)) break;
 
         size_t savedPos = ts_.getPos();
         
-        // Parse field with its own doc comment and attributes
+        // Parse field (doc comments and attributes are NOT handled here)
         FieldDeclPtr field = parseFieldDecl();
         
         if (field) {
@@ -109,7 +99,7 @@ StructDeclPtr Parser::parseStructDecl(Visibility vis) {
         } else {
             consecutiveFailures++;
             LOG_DECL("parseStructDecl: ERROR - failed to parse field (attempt " 
-                         << consecutiveFailures << ")");
+                     << consecutiveFailures << ")");
             
             // Check for progress
             if (ts_.getPos() == savedPos && !ts_.isAtEnd()) {
@@ -137,21 +127,26 @@ StructDeclPtr Parser::parseStructDecl(Visibility vis) {
         }
     }
 
+    // Expect closing brace
+    if (!ts_.check(TokenType::RBRACE)) {
+        LOG_DECL("parseStructDecl: ERROR - expected '}' to close struct body");
+        errorAt(DiagCode::E1004, "}", "struct body");
+    } else {
+        ts_.advance(); // Consume '}'
+    }
+
     // Build the fields span
     auto builder = arena_.makeBuilder<FieldDeclPtr>();
     for (auto& f : fields) builder.push_back(f);
     ArenaSpan<FieldDeclPtr> fieldSpan = builder.build();
     
-    // Create the AST node only after successful parsing
+    // Create the AST node
     auto* node = arena_.make<StructDeclAST>();
     node->loc = loc;
     node->name = name;
     node->visibility = vis;
     node->genericParams = genericParams;
     node->fields = fieldSpan;
-    
-    // Attach metadata
-    attachMetadata(*node, std::move(doc), std::move(attrs));
     
     LOG_DECL_VERBOSE("parseStructDecl: parsed " << fieldCount << " field(s)");
     return node;
@@ -162,23 +157,22 @@ StructDeclPtr Parser::parseStructDecl(Visibility vis) {
  * 
  * Grammar: IDENTIFIER type [ `=` expr ]
  * 
- * Example: `pub r float = 1.0`
+ * Example: `r float = 1.0`
  * 
  * ─── Precondition ─────────────────────────────────────────────────────────
- * Caller should be positioned at the field name or visibility modifier.
+ * Caller should be positioned at the field name.
  * 
  * ─── Token Consumption ─────────────────────────────────────────────────────
- * On entry: positioned at field name or visibility keyword
+ * On entry: positioned at field name
  * On exit:  positioned after optional default value expression
  * 
- * ─── Doc Comment Support ───────────────────────────────────────────────────
- * Fields can have doc comments attached for documentation generation:
- *   -- The X coordinate
- *   x float
+ * ─── Note on Metadata ─────────────────────────────────────────────────────
+ * Fields do NOT have doc comments or attributes in Luc.
+ * (Attributes on fields are not supported by the grammar)
  * 
  * ─── Visibility ────────────────────────────────────────────────────────────
- * Fields can be marked as `pub` (package-visible) or `export` (public).
- * Private fields are the default (visible only within the struct).
+ * Fields do NOT have visibility modifiers in Luc.
+ * Visibility is controlled at the struct level only.
  * 
  * ─── Default Values ───────────────────────────────────────────────────────
  *   - Struct literals may omit fields with default values
@@ -191,12 +185,6 @@ StructDeclPtr Parser::parseStructDecl(Visibility vis) {
  */
 FieldDeclPtr Parser::parseFieldDecl() {
     LOG_DECL_EXTREME("parseFieldDecl: entering");
-    
-    // Harvest doc comments attached to this field
-    auto doc = harvestDocComment();
-    
-    // Parse attributes for this field
-    auto attrs = parseAttributes();
     
     SourceLocation loc = ts_.currentLoc();
 
@@ -236,9 +224,6 @@ FieldDeclPtr Parser::parseFieldDecl() {
     field->type = type;
     field->defaultVal = defaultVal;
     
-    // Attach metadata
-    attachMetadata(*field, std::move(doc), std::move(attrs));
-    
-    LOG_DECL_EXTREME("parseFieldDecl: success - field '" << pool_.lookup(name));
+    LOG_DECL_EXTREME("parseFieldDecl: success - field '" << pool_.lookup(name) << "'");
     return field;
 }

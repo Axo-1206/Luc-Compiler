@@ -46,10 +46,17 @@
  *           └── parseBaseType()
  *                 └── parsePrimitiveType / parseNamedType / parseArrayType / ...
  * 
- * @see ParserDecl.cpp for declaration parsers
- * @see ParserStmt.cpp for statement parsers
- * @see ParserExpr.cpp for expression parsers
- * @see ParserType.cpp for type parsers
+ * ## Flow of Metadata
+ *
+ * parse()
+ *  └── harvestDocComment() ──────► attached to program->decls in parse()
+ *  └── parsePackageDecl() ────────► no metadata (package has no attributes/dispatcher)
+ *  
+ * parseTopLevelDecl() / parseDeclaration()
+ *   └── parseAttributes() ─────────► collected BEFORE parsing declaration
+ *   └── parseStructDecl(vis) ──────► only parses struct-specific syntax
+ *   └── attachMetadata() ──────────► called by dispatcher after successful parse
+ *
  */
 
 #include "ast/BaseAST.hpp"
