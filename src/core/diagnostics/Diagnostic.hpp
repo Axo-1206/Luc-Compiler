@@ -12,8 +12,8 @@
 #pragma once
 
 #include "DiagnosticCodes.hpp"
-#include "ast/BaseAST.hpp"      // for SourceLocation
-#include "ast/support/InternedString.hpp"
+#include "../ast/BaseAST.hpp"      // for SourceLocation
+#include "../memory/InternedString.hpp"
 #include <vector>
 #include <string>
 #include <initializer_list>

@@ -84,7 +84,19 @@ do          await       async       spawn       join        and
 or          not         true        false       nil         err
 ```
 
+> [!IMPORTANT]
+> **Design Philosophy:** Lucid is designed as a **compiled-style** language
+> with a strict, explicit syntax to enable future compilation. The current
+> implementation is an **interpreter** that follows the same strict rules
+> to ensure code written today will work with the future compiled backend.
+> Performance characteristics differ between the interpreter and the
+> eventual compiler, but the language semantics remain identical.
+
 > [!NOTE]
+>
+> `async` and `parallel` are statement-level keywords, not type qualifiers.
+> They appear at the call site: `async x retrieveData()` / `await x` /
+> `parallel renderPhysics()`. See **Async / Await** and **Parallel**.
 >
 > `pub`, `export`, `extern` and `link` are **not** keywords. Visibility and
 > linkage are expressed as attributes: `@[export]`, `@[foreign("C")]`,
@@ -301,7 +313,7 @@ let len   int       = parts.length          -- OK: . for struct field
 | `value.field` | struct value   | if `let`   | `player.health` |
 
 The compiler rejects `module:member = ...` at the assignment site regardless
-of the member's internal mutability. This is enforced syntactically —
+of the member's internal mutability qualifier. This is enforced syntactically —
 `:` never produces an l-value.
 
 #### Depth of the Read-Only Guarantee
@@ -453,7 +465,8 @@ the storage decision behind it.
 primitive_type  = int_type | float_type | 'bool' | 'byte'
                 | 'string' | 'char' | 'nil'
                 (* 'any' is intentionally absent — all types are explicit in Lucid.
-                   Raw foreign memory uses ptr<byte> instead. *)
+                   Raw foreign memory (ptr<T>) is supported in the interpreter through
+                   FFI bindings. In compiled mode, these map to native pointers. *)
 
 int_type        = 'int8'  | 'int16'  | 'int32'  | 'int64'
                 | 'uint8' | 'uint16' | 'uint32' | 'uint64'
@@ -496,24 +509,77 @@ type_arg        = type | INT_LIT
 
 ---
 
-Here's the updated grammar section with the `const` field feature, along with a new subsection explaining the rules:
+## Trait Declaration
 
----
+A trait is a pure **field contract** — a named set of fields (name and type
+only) that a struct promises to contain. Traits have no methods, no behavior,
+no qualifiers, and no default values. They exist solely to express structural
+requirements for data polymorphism.
 
-Here's the corrected Struct and Trait section with the proper grammar and rules:
+```ebnf
+trait_decl  = 'trait' IDENTIFIER [ generic_params ] '{' { trait_field } '}'
 
----
+trait_field = IDENTIFIER type
+              (* name and type only — no qualifiers, no defaults, no behavior *)
+```
 
-Ah, I understand now! A `const` field works exactly like a normal field, but with two key differences:
+```lucid
+trait Vector2 {
+    x float
+    y float
+}
 
-1. It cannot be reassigned after construction
-2. It cannot be nullable or fallible
+trait Named {
+    name string
+}
 
-The default value rules are the same as normal fields:
-- **Has default** → can be omitted during initialization
-- **No default** → must be provided during initialization
+trait Bounded {
+    minVal float
+    maxVal float
+}
 
-Here's the corrected Struct section:
+-- generic trait
+trait Container<T> {
+    value T
+    count int
+}
+```
+
+### Rules
+
+- Trait fields declare **name and type only** — no `const`/`let`, no
+  default values. Qualifiers and defaults belong to the implementing struct.
+- A struct implementing a trait must declare all the trait's fields at the
+  **top level** with matching names and types.
+- Field type mismatch is a **compile error** at the struct declaration site.
+- Two traits requiring the same field name with **different types** is a
+  **compile error** at the struct declaration — there is no silent merging.
+  Same name, same type across two traits is fine — satisfied once.
+- Traits may be used as **field types** in structs — a field typed as a trait
+  accepts any struct implementing that trait.
+- Traits may be used as **parameter types** in functions — inside the function
+  body only the trait's fields are accessible on that parameter.
+- Traits may be used as **generic constraints** — `<T : Trait>` means T must
+  implement Trait. See **Generic Constraints**.
+
+```lucid
+-- name conflict: same field, different types — compile error
+trait A { x float }
+trait B { x int   }
+
+struct Bad : A, B {   -- ERROR: field x required as float by A and int by B
+    x float           -- which one?
+}
+
+-- name conflict: same field, same type — fine, satisfied once
+trait A { x float }
+trait B { x float, y float }
+
+struct Both : A, B {  -- OK: x satisfies both A and B
+    x float
+    y float
+}
+```
 
 ---
 
@@ -527,17 +593,18 @@ struct_decl     = 'struct' IDENTIFIER [ generic_params ]
                   [ ':' trait_ref { ',' trait_ref } ]
                   '{' { struct_field } '}'
 
-struct_field    = { attribute_list } [ 'const' ] IDENTIFIER type [ '=' expr ]
-                  (* optional 'const' marks the field as immutable after construction *)
-                  (* name then type — Go style *)
-                  (* optional default value *)
+struct_field    = { attribute_list } IDENTIFIER type [ '=' expr ]
+                  (* mutable field by default — same as let *)
+                | { attribute_list } IDENTIFIER 'const' type [ '=' expr ]
+                  (* const field — cannot be reassigned after construction *)
+                  (* name then type, optional default value *)
 
 trait_ref       = IDENTIFIER
                 | IDENTIFIER '<' type_arg { ',' type_arg } '>'
 
 generic_params  = '<' generic_param { ',' generic_param } '>'
 generic_param   = IDENTIFIER
-                | IDENTIFIER ':' trait_ref { '+' trait_ref }
+                | IDENTIFIER ':' trait_ref { ',' trait_ref }
                   (* constrained generic — T must implement listed traits *)
 ```
 
@@ -589,149 +656,10 @@ struct Config {
 }
 ```
 
-### Const Fields
-
-A struct field may be marked with the `const` keyword to make it **immutable after construction**. This is a property of the field itself, not the containing variable:
-
-```lucid
-struct Counter {
-    const step int = 1   -- const field with default
-    total int = 0        -- mutable by default
-}
-
-let c Counter = Counter { }
-c.total = 5       -- OK: total is mutable
-c.step  = 2       -- ERROR: step is const — read-only even though c is mutable
-```
-
-#### Rules for Const Fields
-
-| Rule                  | Description                                                                                                                        |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Read-Only**         | `const` fields cannot be reassigned after construction, even when the containing variable is declared with `let`.                  |
-| **Type Restrictions** | A `const` field may **not** be nullable (`T?`) or fallible (`T!`). It must be a plain, non-nullable, non-fallible type.            |
-| **Default Value**     | A `const` field may have a default value (`= expr`). If it has a default, it must be omitted during initialization.                |
-| **Required at Init**  | If a `const` field does **not** have a default value, it must be provided a value during struct initialization.                    |
-| **Function Types**    | A `const` field of function type fixes the behavior for the lifetime of the value — useful for callbacks that should never change. |
-
-```lucid
--- VALID: const field with default
-struct Validator {
-    const check (int) -> bool = (n int) -> bool { return n > 0 }
-}
-
--- VALID: const field without default
-struct Config {
-    const maxRetries int
-    const timeout float = 5.0
-}
-
--- VALID: struct initialization — const fields with defaults can be omitted
-let v Validator = Validator { }
-
--- VALID: struct initialization — const fields without defaults must be provided
-let cfg Config = Config {
-    maxRetries = 3
-    -- timeout = 5.0  -- optional (has default)
-}
-
--- VALID: both const fields with defaults
-struct Defaults {
-    const a int = 1
-    const b string = "hello"
-}
-
-let d Defaults = Defaults { }   -- OK: both have defaults
-
--- VALID: override const field with default (allowed during initialization)
-let d2 Defaults = Defaults {
-    a = 42   -- OK: providing a value during initialization is allowed
-    b = "world"
-}
-
--- INVALID: const field with nullable type
-struct BadNullable {
-    const value int? = nil   -- ERROR: const field cannot be nullable
-}
-
--- INVALID: const field with fallible type
-struct BadFallible {
-    const value int! = err   -- ERROR: const field cannot be fallible
-}
-
--- INVALID: const field without default and no value provided
-struct Config {
-    const maxRetries int
-}
-
-let bad Config = Config { }   -- ERROR: const field 'maxRetries' has no default and must be initialized
-```
-
-#### Why Const Fields?
-
-Const fields serve two purposes:
-
-1. **Immutable Behavior**: For function-typed fields, `const` ensures the behavior is fixed at construction and cannot be swapped later:
-
-```lucid
-struct Logger {
-    const sink (string) -> () = (msg string) -> () { io:printl(msg) }
-}
-
-let log Logger = Logger { }
-log.sink = (msg string) -> () { system:writeToFile("app.log", msg) }   -- ERROR: sink is const
-```
-
-2. **Immutable Data**: For data fields, `const` guarantees the value never changes, making the struct easier to reason about:
-
-```lucid
-struct Connection {
-    const host string = "localhost"
-    const port int = 8080
-    socket int   -- mutable
-}
-
-let conn Connection = Connection { }
-conn.host = "0.0.0.0"   -- ERROR: const
-conn.port = 9090        -- ERROR: const
-conn.socket = 43        -- OK: socket is mutable
-```
-
-#### Field-Level Const vs Declaration Const
-
-|                    | `const` variable binding     | `const` struct field           |
-| ------------------ | ---------------------------- | ------------------------------ |
-| **Applies to**     | The variable binding         | The struct field itself        |
-| **Controls**       | Reassignment of the variable | Reassignment of the field      |
-| **Defaults to**    | `let` (mutable)              | mutable                        |
-| **Default Value**  | Optional                     | Optional                       |
-| **Initialization** | At declaration               | Must be provided if no default |
-| **Example**        | `const x int = 5`            | `struct S { const x int = 5 }` |
-
-```lucid
--- Demonstration of the difference
-struct Thing {
-    const a int = 1   -- field is const, has default
-    b int = 2         -- field is mutable, has default
-}
-
--- const variable: cannot reassign the variable
-const t1 Thing = Thing { }
-t1 = Thing { }   -- ERROR: t1 is const
-
--- let variable: can reassign the variable, but const fields stay read-only
-let t2 Thing = Thing { }
-t2.b = 20              -- OK: b is mutable
-t2.a = 5               -- ERROR: a is const
-t2 = Thing { }         -- OK: t2 is mutable
-```
-
 ### Struct Initialization
 
 Structs are initialized with a struct literal — field names followed by `=`
-and a value. Fields with default values may be omitted. **Const fields follow
-the same rules** — if they have defaults, they can be omitted; if not, they
-must be provided.
+and a value. Fields with default values may be omitted:
 
 ```lucid
 -- all fields explicit
@@ -740,30 +668,6 @@ const p Point = Point { x = 3.0, y = 4.0 }
 -- omit fields that have defaults
 const origin Point = Point {}          -- x=0.0, y=0.0 from defaults
 const shifted Point = Point { x = 5.0 } -- x=5.0, y=0.0 from default
-
--- const fields with and without defaults
-struct Connection {
-    const host string          -- no default, must be provided
-    const port int = 8080      -- has default, can be omitted
-    timeout float = 5.0
-}
-
--- VALID: const field without default provided
-let conn Connection = Connection {
-    host = "localhost"
-    timeout = 10.0  -- optional (has default)
-}
-
--- VALID: override const field with default
-let conn2 Connection = Connection {
-    host = "0.0.0.0"
-    port = 9090   -- OK: providing a value during initialization is allowed
-}
-
--- INVALID: const field without default missing
-let bad Connection = Connection {
-    timeout = 10.0  -- ERROR: const field 'host' has no default and must be initialized
-}
 
 -- nested struct
 struct Rect {
@@ -779,15 +683,13 @@ const r Rect = Rect {
 }
 
 -- generic struct
-struct Box<T> {
-    const value T
-}
+struct Box<T> { value T }
 
 const b1 Box<int>    = Box<int>    { value = 42 }
 const b2 Box<string> = Box<string> { value = "hello" }
 const b3 Box<Point>  = Box<Point>  { value = Point { x = 1.0, y = 2.0 } }
 
--- mutable struct — mutable fields can be reassigned
+-- mutable struct — fields can be reassigned
 let player Player = Player { name = "hero" }
 player.health = 80
 player.speed  = 1.5
@@ -820,37 +722,50 @@ if e2.target != nil {
 
 ### Const Fields and Function-Typed Fields
 
-A field declared with `const` cannot be reassigned through `field_expr`, even
+A field qualified `const` cannot be reassigned through `field_expr`, even
 when the containing variable is itself `let`. Field-level `const` is
 part of the struct's own definition, not something the holder of a mutable
-variable can override:
+variable can override — `player Player` makes `player`'s *mutable*
+fields reassignable through `player.field = ...`, but a field the struct
+itself declared `const` stays read-only regardless:
 
 ```lucid
 struct Counter {
-    const step int = 1   -- fixed for the lifetime of every Counter value
-    total int = 0
+    step    int   -- fixed for the lifetime of every Counter value
+    total     int
 }
 
-let c Counter = Counter { }
-c.total = 5       -- OK: total is mutable
-c.step  = 2       -- ERROR: step is const — read-only even though c is mutable
+let c Counter = Counter { step = 1  total = 0 }
+c.total = 5       -- OK: total is let
+c.step  = 2       -- ERROR: step is — read-only even though c is let
 ```
 
-This applies the same way to a field of **function type**:
+This applies the same way to a field of **function type**. Luc introduced
+`impl` partly to prevent a struct's behavior from being reassigned after
+construction — Lucid has no `impl` and no methods at all (see the opening
+note on removed features), so this concern only ever applies to an ordinary
+field that happens to hold a function value, and `const` already covers it
+with no further mechanism needed:
 
 ```lucid
 struct Validator {
-    const check (int) -> bool = (n int) -> bool { return n > 0 }
+    check (int) -> bool   -- fixed behavior, set once at construction
 }
 
-const positive Validator = Validator { }
+const positive Validator = Validator {
+    check = (n int) -> bool { return n > 0 }
+}
 
 positive.check = (n int) -> bool { return n < 0 }   -- ERROR: check is const
 
-const result bool = positive.check(5)   -- OK: calling through a const field
+const result bool = positive.check(5)   -- OK: calling through a
+                                                  -- const field is unaffected;
+                                                  -- only reassignment is blocked
 ```
 
-A field left mutable (the default) can be reassigned freely:
+A field left `let` (the default, same as any other declaration) can be
+reassigned freely, including to a different function value — useful for
+genuinely swappable behavior, like a configurable callback:
 
 ```lucid
 struct Logger {
@@ -860,221 +775,6 @@ struct Logger {
 let log Logger = Logger { }
 log.sink = (msg string) -> () { system:writeToFile("app.log", msg) }   -- OK
 ```
-
----
-
-Here's the updated Trait section with `const` support in trait fields:
-
----
-
-## Trait Declaration
-
-A trait is a pure **field contract** — a named set of fields (name, type, and optionally const-ness) that a struct promises to contain. Traits have no methods, no behavior, and no default values. They exist solely to express structural requirements for data polymorphism.
-
-```ebnf
-trait_decl  = 'trait' IDENTIFIER [ generic_params ] '{' { trait_field } '}'
-
-trait_field = [ 'const' ] IDENTIFIER type
-              (* optional 'const' requires the implementing struct to
-                 declare this field as const *)
-              (* name and type only — no defaults, no behavior *)
-```
-
-```lucid
-trait Vector2 {
-    x float
-    y float
-}
-
-trait Named {
-    name string
-}
-
-trait Bounded {
-    minVal float
-    maxVal float
-}
-
-trait ImmutableConfig {
-    const maxRetries int
-    const timeout float
-}
-
--- generic trait
-trait Container<T> {
-    value T
-    count int
-}
-```
-
-### Rules
-
-- A struct implementing a trait must declare all the trait's fields at the
-  **top level** with matching names, types, and const-ness.
-- If a trait field is marked `const`, the implementing struct **must** also
-  declare that field as `const`.
-- Field type mismatch is an **error** at the struct declaration site.
-- Two traits requiring the same field name with **different types** is an
-  **error** at the struct declaration — there is no silent merging.
-  Same name, same type across two traits is fine — satisfied once.
-- Two traits requiring the same field name is an **error** at the struct declaration. If one trait requires `const` and the other does not, the struct must declare it as `const` to satisfy
-  both.
-- Traits may be used as **field types** in structs — a field typed as a trait
-  accepts any struct implementing that trait.
-- Traits may be used as **parameter types** in functions — inside the function
-  body only the trait's fields are accessible on that parameter.
-- Traits may be used as **generic constraints** — `<T : Trait>` means T must
-  implement Trait. See **Generic Constraints**.
-
-```lucid
--- name conflict: same field, different types — error
-trait A { x float }
-trait B { x int   }
-
-struct Bad : A, B {   -- ERROR: field x required as float by A and int by B
-    x float           -- which one?
-}
-
--- name conflict: same field, same type — fine, satisfied once
-trait A { x float }
-trait B { x float, y float }
-
-struct Both : A, B {  -- OK: x satisfies both A and B
-    x float
-    y float
-}
-
--- const conflict: one trait requires const, the other doesn't
-trait A { x float }       -- x can be mutable or const
-trait B { const x float } -- x must be const
-
--- OK: struct declares x as const, satisfying both
-struct BothOK : A, B {
-    const x float
-}
-
--- ERROR: struct declares x as mutable, fails B's const requirement
-struct BothBad : A, B {
-    x float   -- ERROR: trait B requires 'const x float'
-}
-```
-
-### Const Requirement Examples
-
-```lucid
--- Trait with mixed const requirements
-trait Config {
-    const appName string       -- must be const
-    version int                -- can be mutable or const
-    const debug bool          -- must be const
-}
-
--- Valid implementation: all const requirements satisfied
-struct ProductionConfig : Config {
-    const appName string = "MyApp"
-    version int = 1
-    const debug bool = false
-}
-
--- Valid implementation: non-const trait fields can be const too
-struct StrictConfig : Config {
-    const appName string = "MyApp"
-    const version int = 1      -- version is const even though trait doesn't require it
-    const debug bool = false
-}
-
--- INVALID: missing const on appName
-struct BadConfig : Config {
-    appName string = "MyApp"   -- ERROR: Config requires 'const appName string'
-    version int = 1
-    const debug bool = false
-}
-
--- INVALID: missing const on debug
-struct BadConfig2 : Config {
-    const appName string = "MyApp"
-    version int = 1
-    debug bool = false         -- ERROR: Config requires 'const debug bool'
-}
-```
-
-### Trait Constraints on Generic Parameters
-
-Traits are used as constraints on generic type parameters using the `:` syntax.
-When a trait has `const` requirements, the implementing type must satisfy them:
-
-```lucid
--- Single constraint
-const magnitude<T : Vector2> (v T) -> float = {
-    return sqrt(v.x * v.x + v.y * v.y)
-}
-
--- Multiple constraints on one parameter (separated by '+')
-const describe<T : Vector2 + Named> (v T) -> string = {
-    return v.name + " at (" + stringFromFloat(v.x) + ", " + stringFromFloat(v.y) + ")"
-}
-
--- Generic function with const trait constraint
-const logConfig<T : Config> (cfg T) -> string = {
-    -- 'appName' is const, guaranteed by the trait
-    return "App: " + cfg.appName + ", v" + stringFromInt(cfg.version)
-}
-
--- Multiple constrained parameters
-struct Pair<A : Named, B : Named> {
-    first  A
-    second B
-}
-
--- Trait with generic arguments
-trait Container<T> {
-    const value T
-    count int
-}
-
-struct Box<U : Container<int>> {
-    container U
-}
-
--- Valid: Box requires U to implement Container<int>
-const box Box<BoxContainer> = Box {
-    container = BoxContainer { value = 42 }
-}
-```
-
-> [!NOTE]
-> 1. **Const Matching**: When a struct implements a trait, any field marked `const` in the trait must also be marked `const` in the struct. If the struct declares it as mutable, emit an error.
-> 2. **Type Matching**: All trait fields must have matching types in the implementing struct. Type mismatch is an error.
-> 3. **Trait as Type**: When a trait is used as a field type or parameter type, it accepts any struct implementing that trait. Inside the body, only the trait's fields are accessible. The const-ness of fields in the trait is respected — if a trait field is `const`, it cannot be reassigned through the trait reference.
-> 4. **Generic Trait Constraints**: Trait constraints on generic parameters are resolved at instantiation time. The compiler verifies that the concrete type implements all required traits, including const requirements.
-
-### Trait Const Conflict Resolution
-
-```lucid
-trait A {
-    x float          -- x can be mutable or const
-}
-
-trait B {
-    const x float    -- x must be const
-}
-
--- Both traits satisfied: x is const
-struct Both : A, B {
-    const x float    -- OK: satisfies both
-}
-
-trait C {
-    const x int      -- x must be const int
-}
-
--- ERROR: conflict between A (float) and C (int), regardless of const
-struct Conflict : A, C {
-    const x float    -- ERROR: A requires float, C requires int
-}
-```
-
----
 
 ## Enum Declaration
 
@@ -1148,9 +848,9 @@ func_type       = param_group '->' return_type
                   (* a function type is always a single param group *)
 ```
 
-**Multiple return values** multiple return are wrapped inside `()`, this is 
-not tuple type but a way to allow the parser to detect a group of multiple return,
-the call site store the results with multiple variables
+**Multiple return values** are declared with a tuple return type and
+destructured at the call site. Both the function and its caller are explicit
+about the number and types of returned values:
 
 ```lucid
 const parseInt (s string) -> (int, bool) = {
@@ -1280,9 +980,9 @@ to right. The only difference from a plain multi-param function is that `()()`
 groups instead of `(,)` commas, which tells the compiler to make each group
 independently callable.
 
-The compiler expands Form 2 recursively and exhaustively into Form 1 before
-type checking. The written body is never modified — only wrapper layers are
-generated around it.
+The language processor expands Form 2 recursively and exhaustively into Form 1
+before semantic analysis. The written body is never modified — only wrapper
+layers are generated around it.
 
 ```lucid
 -- as written
@@ -1300,8 +1000,8 @@ const add (a int) -> (b int) -> int = {
 
 ### Currying and Partial Application
 
-Form 2 (`()()`) is pure textual shorthand for Form 1. The compiler expands it
-recursively before type checking. The body is never modified.
+Form 2 (`()()`) is pure textual shorthand for Form 1. The language processor
+expands it recursively before semantic analysis. The body is never modified.
 
 The core idea:
 - `(a T, b U)` — both values arrive in one call
@@ -1346,6 +1046,8 @@ clamp0to100(200)   -- 100
 -- [_]string: slice — the runtime owns the argument buffer, main gets a
 -- read-only view. [*]string would be wrong here: that implies main owns a
 -- heap copy of all arguments, which the runtime never hands over.
+-- In interpreter mode, @[aot] is optional and has no effect;
+-- it becomes meaningful when using the future compiled backend.
 @[export, aot] const main (args [_]string) -> int = {
     return 0
 }
@@ -1365,6 +1067,12 @@ always compiled in exactly one of the two; `@[aot]` is the default:
 @[aot]   -- ahead-of-time: produces a native binary at build time (default)
 @[jit]   -- just-in-time:  compiles and executes at runtime
 ```
+
+> [!NOTE]
+> **Implementation Status:** These attributes are planned for the future
+> compiled backend. In the current interpreter-only implementation, both
+> `@[aot]` and `@[jit]` are accepted but have no effect. The interpreter
+> always executes source code directly.
 
 Both combine with `@[export]` in the same bracket — `attribute_list` is one
 `@[...]` with comma-separated items, not separate brackets stacked together
@@ -1391,7 +1099,7 @@ Both combine with `@[export]` in the same bracket — `attribute_list` is one
 
 Two or more declaration with the same name but different parameter signatures are
 overloads. The compiler picks the correct overload at the call site based on
-argument types. Overloads that differ only in return type are an error —
+argument types. Overloads that differ only in return type are a compile error —
 the compiler cannot resolve them from the call site alone.
 
 ```ebnf
@@ -1403,7 +1111,7 @@ the compiler cannot resolve them from the call site alone.
 ### Rules
 
 - Overloads must differ in **parameter count or parameter types**.
-- Differing only in return type is an **error**.
+- Differing only in return type is a **compile error**.
 - A generic function and a concrete overload of the same name coexist — the
   concrete overload takes priority when argument types match exactly.
 - Cross-module overloads with the same name must be qualified at the call
@@ -1429,7 +1137,7 @@ process<string>("hi")   -- generic: "generic"
 process<int>(42)        -- concrete wins: "concrete int"
 process(42)             -- concrete wins: "concrete int"
 
--- return-type-only difference: error
+-- return-type-only difference: compile error
 const bad (v int) -> string = { ... }
 const bad (v int) -> int    = { ... }
 -- ERROR: overloads differ only in return type — unresolvable at call site
@@ -1488,7 +1196,7 @@ generic_args    = '<' type { ',' type } '>'
 ### Rules
 
 - Every type parameter must be used at least once in the parameter list or
-  return type — an unused `T` is an error.
+  return type — an unused `T` is a compile error.
 - Type parameters are resolved strictly at the call/instantiation site —
   there is no type inference across call boundaries.
 - Generic functions and concrete overloads of the same name coexist — the
@@ -1702,7 +1410,7 @@ const s Box<string> = rebox<int, string>(b)(stringFromInt)
 
 ## Compiler Directives: Attributes, Qualifiers, and Intrinsics
 
-Attributes `@[]` and compiler intrinsics `#` provide instructions to the compiler or execute compile-time operations.
+Attributes `@[]` and compiler intrinsics `#` provide instructions to the compiler or execute compile-time operations. The `~[...]` qualifier syntax has been removed entirely — mutability is now expressed by the `let`/`const` declaration keywords, and `async`/`parallel` are statement keywords, not type modifiers.
 
 ### 1. Attributes `@[]`
 
@@ -1718,24 +1426,26 @@ attr_arg        = STRING_LIT | INT_LIT | FLOAT_LIT | BOOL_LIT | IDENTIFIER
 
 #### Built-in Attributes
 
-| Attribute              | Valid on                  | Meaning                                                  |
-| ---------------------- | ------------------------- | -------------------------------------------------------- |
-| `@[export]`            | any top-level declaration | Visible outside this module                              |
-| `@[foreign("abi")]`    | function declaration      | Implemented in a foreign language; ABI string e.g. `"C"` |
-| `@[link("name")]`      | module or declaration     | Link against this native library                         |
-| `@[deprecated("msg")]` | any declaration           | Compiler warning at use sites                            |
-| `@[inline]`            | function declaration      | Hint to inline at call sites                             |
-| `@[noinline]`          | function declaration      | Prevent inlining                                         |
-| `@[aot]`               | `main` only               | Compile ahead-of-time to native binary (default)         |
-| `@[jit]`               | `main` only               | Compile and execute via JIT at runtime                   |
+| Attribute              | Valid on                  | Meaning                                                                                            |
+| ---------------------- | ------------------------- | -------------------------------------------------------------------------------------------------- |
+| `@[export]`            | any top-level declaration | Visible outside this module                                                                        |
+| `@[foreign("abi")]`    | function declaration      | Implemented in a foreign language; ABI string e.g. `"C"`                                           |
+| `@[link("name")]`      | module or declaration     | Link against this native library                                                                   |
+| `@[deprecated("msg")]` | any declaration           | Compiler warning at use sites                                                                      |
+| `@[inline]`            | function declaration      | Hint to inline at call sites                                                                       |
+| `@[noinline]`          | function declaration      | Prevent inlining                                                                                   |
+| `@[aot]`               | `main` only               | Compile ahead-of-time to native binary (default) — planned; currently no effect in the interpreter |
+| `@[jit]`               | `main` only               | Compile and execute via JIT at runtime — planned; currently no effect in the interpreter           |
 
 **Rules:**
 - `@[foreign]` requires the function body to be empty `{}` — the implementation
-  is resolved by the linker.
+  is resolved by the linker (AOT/JIT) or dynamic loading (interpreter).
 - `@[aot]` and `@[jit]` are mutually exclusive and only valid on `main`.
 - `main` is always compiled in exactly one of these two modes. `@[aot]` is
   the default — writing `@[export] const main` with neither attribute present
   is shorthand for `@[export, aot] const main`.
+- In the current interpreter implementation, `@[aot]` and `@[jit]` are
+  accepted but have no effect. They are reserved for the future compiled backend.
 - Attributes are a **fixed, closed set** — there is no user-defined or
   namespaced attribute form.
 
@@ -2123,258 +1833,50 @@ do {
 } while i > 0
 ```
 
-### `for` Loops
+### `for`
 
 `for` has two forms: **range iteration**, over a numeric `start..end` (or
-`start..<end`) sequence with optional step, and **collection iteration**,
-over an existing array or slice.
+`start..<end`) sequence with no backing collection, and **collection
+iteration**, over an existing array. **Both forms require an explicit type
+annotation on every loop variable.** Lucid does not infer a loop variable's
+type from context — not from a range's literal bounds, and not from a
+collection's already-known element type. This matches **Variable
+Declaration**: a type is always written, even where the answer looks
+unambiguous, because the compiler does not guess.
 
-### Range Iteration
-
-Range iteration loops over a numeric sequence. The syntax **requires both an index and a value**:
-
-```ebnf
-range_for       = 'for' range_var ',' range_var 'in' range_iter [ '..' expr ] block
-
-range_var       = IDENTIFIER type
-                | '_'                           (* ignored value, no type required *)
-
-range_iter      = expr range_op expr            (* start range_op end *)
-range_op        = '..' | '..<'
-```
-
-**Both the index and value must be present** — you cannot omit one. Use `_` to ignore either.
-
-The loop variable's type must be numeric (`int`, `float`, and so on). The
-end bound's inclusivity is controlled by `range_op`:
+**Range iteration** — the loop variable's type must be numeric (`int`,
+`float`, and so on). The end bound's inclusivity is controlled by `range_op`,
+matching **Range Expressions**:
 
 ```lucid
-for i int, v int in 0..10  { 
-    io:printl(stringFromInt(i) + ": " + stringFromInt(v)) 
-}    -- 0 through 10 inclusive
-
-for i int, v int in 0..<10 { 
-    io:printl(stringFromInt(i) + ": " + stringFromInt(v)) 
-}    -- 0 through 9, end excluded
+for i int in 0..10  { io:printl(stringFromInt(i)) }    -- 0 through 10 inclusive
+for i int in 0..<10 { io:printl(stringFromInt(i)) }    -- 0 through 9, end excluded
 ```
 
 An optional trailing `..` *expr* sets the step. Without it, the step is `1`:
 
 ```lucid
-for i int, v int in 0..10..2 { 
-    io:printl(stringFromInt(i) + ": " + stringFromInt(v)) 
-}  -- 0, 2, 4, 6, 8, 10 — step of 2
-
-for i int, v int in 0..<10..3 { 
-    io:printl(stringFromInt(i) + ": " + stringFromInt(v)) 
-} -- 0, 3, 6, 9 — step of 3
+for i int in 0..10..2 { io:printl(stringFromInt(i)) }  -- 0, 2, 4, 6, 8, 10 — step of 2
 ```
 
-The step must be a positive integer expression. A zero or negative step is a
-compile-time error.
-
-### Collection Iteration
-
-Collection iteration loops over an existing array or slice. The syntax **requires both an index and a value**:
-
-```ebnf
-collection_for  = 'for' collection_var ',' collection_var 'in' expr block
-
-collection_var  = IDENTIFIER type
-                | '_'                           (* ignored value, no type required *)
-
--- First variable is always the index (int)
--- Second variable is the value (element type of the collection)
-```
-
-Every loop variable still requires its own type annotation when named, even
-though the collection's own declaration already fixes it. This matches
-**Variable Declaration**: a type is always written, even where the answer
-looks unambiguous, because the compiler does not guess.
+**Collection iteration** — every loop variable still requires its own type
+annotation, even though the collection's own declaration already fixes it.
+Value-only, or index and value (the index is always `int`; the value must
+match the collection's element type):
 
 ```lucid
 use std.array as arr
 
 const nums [*]int = [1, 2, 3, 4, 5]
 
--- Both index and value required
-for i int, v int in nums {
-    log(stringFromInt(i) + ": " + stringFromInt(v))
-}
-```
-
-### The Ignored Value (`_`)
-
-Use `_` when you don't need a loop variable. The ignored value does **not**
-require a type annotation, and attempting to access it is a compile error.
-
-```lucid
--- Ignore the value, only need the index
-for i int, _ in nums {
-    log(stringFromInt(i))
-}
-
--- Ignore the index, only need the value
-for _, v int in nums {
+-- value only
+for v int in nums {
     log(stringFromInt(v))
 }
 
--- Ignore everything (just loop N times)
-for _, _ in nums {
-    log("processing")
-}
-
--- Range with ignored index and value
-for _, _ in 0..10 {
-    log("iteration")
-}
-
--- ERROR: attempting to access an ignored value
-for _, v int in nums {
-    log(stringFromInt(_))  -- ERROR: cannot access ignored value '_'
-}
-```
-
-### Range with Index and Value (Enforced)
-
-Range iteration **always** binds both index and value, where the index is the
-loop counter:
-
-```lucid
--- Range with index and value (required)
-for i int, v int in 0..10 {
-    log(stringFromInt(i) + ": " + stringFromInt(v))
-}
-
--- Ignore index, only need value
-for _, v int in 0..10 {
-    log(stringFromInt(v))
-}
-
--- Ignore value, only need index
-for i int, _ in 0..10 {
-    log(stringFromInt(i))
-}
-
--- With step
-for i int, v int in 0..10..2 {
-    log(stringFromInt(i) + ": " + stringFromInt(v))
-}
-```
-
-### Range with Custom Step
-
-The step expression can be any numeric expression:
-
-```lucid
-const stepSize int = 3
-
--- Variable step
-for i int, v int in 0..<20..stepSize {
-    log(stringFromInt(i) + ": " + stringFromInt(v))  -- 0:0, 1:3, 2:6, 3:9, 4:12, 5:15, 6:18
-}
-
--- Step computed at runtime
-for i int, v int in 0..100..computeStep() {
-    log(stringFromInt(i) + ": " + stringFromInt(v))
-}
-```
-
-### Complete Grammar
-
-```ebnf
-for_stmt        = 'for' for_binding ',' for_binding 'in' for_iterable [ '..' expr ] block
-
-for_binding     = IDENTIFIER type              (* named variable with explicit type *)
-                | '_'                          (* ignored value, no type required *)
-
-for_iterable    = range_iter                   (* range: start..end or start..<end *)
-                | expr                         (* collection or other iterable *)
-
-range_iter      = expr range_op expr           (* start range_op end *)
-range_op        = '..' | '..<'
-```
-
-### Rules
-
-1. **Index and Value Required**: Both an index and a value must be present in
-   every `for` loop. Use `_` to ignore either.
-
-2. **Type Annotation Required**: Every named loop variable has an explicit type.
-   Lucid does not infer loop variable types (matches var_decl's no-inference rule).
-
-3. **Ignored Values**: `_` requires no type annotation. Attempting to use `_` in
-   the loop body is a compile error.
-
-4. **Range Type**: For range loops, both index and value types must be numeric
-   (`int`, `float`, etc.). They must be the same type.
-
-5. **Collection Element Type**: For collection loops, the value type must match
-   the collection's element type. The index is always `int`.
-
-6. **Step Expression**: The step must be a positive numeric expression. Zero or
-   negative steps are compile-time errors.
-
-7. **Valid Body**: `break`, `continue`, and `return` are valid inside the loop body.
-
-### Examples
-
-```lucid
--- Basic range loop (both index and value required)
-for i int, v int in 0..10 {
-    io:printl(stringFromInt(i) + ": " + stringFromInt(v))
-}
-
--- Range with step
-for i int, v int in 0..10..2 {
-    io:printl(stringFromInt(i) + ": " + stringFromInt(v))  -- 0:0, 1:2, 2:4, 3:6, 4:8, 5:10
-}
-
--- Range with exclusive end
-for i int, v int in 0..<10 {
-    io:printl(stringFromInt(i) + ": " + stringFromInt(v))  -- 0:0 through 9:9
-}
-
--- Ignore value, keep index
-for i int, _ in 0..10 {
-    io:printl(stringFromInt(i))  -- 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
-}
-
--- Ignore index, keep value
-for _, v int in 0..10 {
-    io:printl(stringFromInt(v))  -- 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
-}
-
--- Ignore both (just loop N times)
-for _, _ in 0..10 {
-    io:printl("iteration")
-}
-
--- Collection iteration (both index and value required)
+-- index and value
 for i int, v int in nums {
-    io:printl(stringFromInt(i) + ": " + stringFromInt(v))
-}
-
--- Collection with ignored index
-for _, v int in nums {
-    io:printl(stringFromInt(v))
-}
-
--- Collection with ignored value
-for i int, _ in nums {
-    io:printl(stringFromInt(i))
-}
-
--- Collection with both ignored
-for _, _ in nums {
-    io:printl("processing")
-}
-
--- Nested loops
-for i int, _ in 0..5 {
-    for j int, _ in 0..5 {
-        io:printl(stringFromInt(i * j))
-    }
+    log(stringFromInt(i) + ": " + stringFromInt(v))
 }
 ```
 
@@ -2400,7 +1902,7 @@ switch dir {
     case Direction.West:  { moveLeft() }
 }
 
--- missing variant: error
+-- missing variant: compile error
 switch dir {
     case Direction.North: { moveUp() }
     case Direction.South: { moveDown() }
@@ -2516,6 +2018,7 @@ expr            = literal
                 | func_literal
                 | struct_literal
                 | array_literal
+                | tuple_expr
                 | pipeline_expr
                 | compose_expr
                 | fallback_expr
@@ -2549,10 +2052,10 @@ module_expr     = IDENTIFIER ':' IDENTIFIER     (* module member access — neve
 unary_expr      = ( '-' | 'not' | '~' ) expr
 
 binary_expr     = expr binary_op expr
-binary_op       = '+' | '-' | '*' | '/' | '%' | '**'
+binary_op       = '+' | '-' | '*' | '/' | '%' | '^'
                 | '==' | '!=' | '<' | '<=' | '>' | '>='
                 | 'and' | 'or'
-                | '&&' | '|' | '^' | '<<' | '>>'
+                | '&&' | '||' | '~^' | '<<' | '>>'
 
 func_literal    = param_group { param_group } '->' type block
                   (* anonymous function — Form 2 *)
@@ -2564,6 +2067,8 @@ struct_literal  = IDENTIFIER '{' { field_init } '}'
 field_init      = IDENTIFIER '=' expr
 
 array_literal   = '[' [ expr { ',' expr } ] ']'
+
+tuple_expr      = '(' expr ',' expr { ',' expr } ')'
 
 generic_expr    = IDENTIFIER '<' type_arg { ',' type_arg } '>' '(' [ arg_list ] ')'
 ```
@@ -2602,7 +2107,7 @@ switch score {
 
 A range is not a standalone collection value with its own type — it only
 appears in the three positions above. Writing a bare range anywhere else
-(e.g. `const r = 0..10`) is an error; there is no
+(e.g. `const r = 0..10`) is a compile error; there is no
 general-purpose range type to assign it to.
 
 ### Logical Operators
@@ -2681,9 +2186,9 @@ Integer types only. `&&` and `||` are bitwise AND/OR (not logical — those use 
 | Operator | Name                |
 | -------- | ------------------- |
 | `&&`     | bitwise AND         |
-| `\|`     | bitwise OR          |
-| `^`      | bitwise XOR         |
-| `~`      | bitwise NOT (unary) |
+| `\|\|`   | bitwise OR          |
+| `~^`     | bitwise XOR         |
+| `~~`     | bitwise NOT (unary) |
 | `<<`     | left shift          |
 | `>>`     | right shift         |
 
@@ -2738,7 +2243,7 @@ const scale (factor float)(v float) -> float = { return v * factor }
 ### Curry Functions in Pipelines
 
 `|>` fills exactly one parameter group. A curried function with remaining
-unfilled groups is an error as a pipeline step. Pre-apply first:
+unfilled groups is a compile error as a pipeline step. Pre-apply first:
 
 ```lucid
 const clamp (lo int)(hi int)(v int) -> int = {
@@ -2759,7 +2264,7 @@ const clamp0to100 (v int) -> int = clamp(0)(100)
 ### Generic Functions in Pipelines
 
 Generic functions must be instantiated with explicit type arguments at the
-pipeline step site. An uninstantiated generic is an error:
+pipeline step site. An uninstantiated generic is a compile error:
 
 ```lucid
 const identity<T> (v T) -> T = { return v }
@@ -2919,6 +2424,14 @@ handler somewhere else up the call stack.
 there is no separate error type to declare. A function either succeeds with
 `T` or fails with the bare `err` sentinel:
 
+```ebnf
+qualified_type  = '~[' type_qual_item { ',' type_qual_item } ']' type
+                | type '?'                  (* nullable: T or nil *)
+                | type '!'                  (* fallible: T or err *)
+                | type '?' '!'              (* nullable and fallible: T, nil, or err *)
+                  (* '?!' is the only valid order — '!?' is rejected by the parser *)
+```
+
 ```lucid
 int!         -- holds either int or err
 string!      -- holds either string or err
@@ -2928,7 +2441,7 @@ User?!       -- holds either User, nil, or err — three possible states
 ### `!` on Array Types
 
 `!` binds to the **element type** of an array, never to the array itself —
-the same rule already established for `?`
+the same rule already established for `?` (see **Built-in Qualifiers**):
 
 ```lucid
 [*]int! -- array of fallible int — each element is independently
@@ -3298,6 +2811,12 @@ require every arithmetic or index expression to carry `!` in its type either
   and no check exists at runtime. A literal index into a slice (`[_]T`) or
   dynamic array (`[*]T`) does **not** qualify, since their length is not part
   of the type and cannot be proven at compile time.
+
+> [!NOTE]
+> **Interpreter Mode:** The interpreter always performs runtime checks for
+> division and indexing operations. The compile-time proof optimization
+> (eliminating the check entirely for provably-safe literals) will be available
+> in the future compiled backend.
 - If the compiler **cannot prove** this (e.g. dividing by a variable, indexing
   with a runtime-computed index, or indexing a slice/dynamic array at all),
   the operation is checked at runtime. Left unhandled, a failing check
@@ -3706,9 +3225,9 @@ const rc &Player = a    -- read-only shared reference
 
 To guarantee memory safety and eliminate dangling pointers without using a Garbage Collector or a complex compile-time borrow checker, references (`&T`) are strictly scoped. They are allowed to flow *downward* (into nested calls), but never *upward or sideways*.
 
-1. **No Struct Storage:** A struct field cannot have a reference type (e.g., `field &T` is an error).
-2. **No Array/Slice Storage:** An array or slice cannot store reference types (e.g., `[*]&T` or `[_]&T` is an error).
-3. **No Reference Returns:** A function cannot return a reference type (e.g., `-> &T` is an error).
+1. **No Struct Storage:** A struct field cannot have a reference type (e.g., `field &T` is a compile error).
+2. **No Array/Slice Storage:** An array or slice cannot store reference types (e.g., `[*]&T` or `[_]&T` is a compile error).
+3. **No Reference Returns:** A function cannot return a reference type (e.g., `-> &T` is a compile error).
 
 As a result, a reference (`&T`) can only exist in two places:
 *   As a **function parameter** (e.g., `const process (p &Player)`).
@@ -4041,6 +3560,11 @@ const len float = vector2Length(c)
 
 Foreign functions are declared with `@[foreign("abi")]`. The body must be empty `{}` — the implementation is resolved by the linker. Multiple attributes can be combined into a single `@[...]` list.
 
+> [!NOTE]
+> **Interpreter Mode:** In the current interpreter implementation, `@[foreign]`
+> functions are resolved through dynamic linking (dlopen/dlsym) at runtime.
+> The compiler backend will eventually resolve these at link time.
+
 ```ebnf
 foreign_decl    = '@[' foreign_attr { ',' link_attr } ']' func_decl
                   (* func body must be empty '{}' *)
@@ -4201,7 +3725,7 @@ io:printl(user.name + ": " + profile.bio)
 **If `await` is never called**, the async operation runs until the main thread terminates — at which point all unawaited async operations are also terminated. The variables bound by `async` remain unset if `await` is never reached.
 
 > [!WARNING]
-> The compiler **warns** about unawaited async operations when the scope exits:
+> The language processor **warns** about unawaited async operations when the scope exits:
 >
 > ```lucid
 > const process () -> () = {
@@ -4209,7 +3733,7 @@ io:printl(user.name + ": " + profile.bio)
 >     async result = fetchData(url)
 >     
 >     -- If we exit without awaiting, the async operation is terminated
->     -- COMPILER WARNING: 'result' was bound by async but never awaited
+>     -- WARNING: 'result' was bound by async but never awaited
 > }
 > ```
 
@@ -4572,16 +4096,16 @@ spawn _ = backgroundTask()    -- Clearly: I don't care about the result
 spawn result = heavyWork()    -- Clearly: I'll join this eventually
 ```
 
-### Compiler Enforcement
+### Enforcement
 
-The compiler **warns** about named spawns that are never joined:
+The language processor **warns** about named spawns that are never joined:
 
 ```lucid
 const process () -> int = {
     spawn result = heavyWork()   -- result is never joined
     return 0
 }
--- COMPILER WARNING: spawned result 'result' is never joined
+-- WARNING: spawned result 'result' is never joined
 ```
 
 To silence the warning, either join the result or explicitly discard it:

@@ -9,34 +9,22 @@
 
 #pragma once
 #include <string>
+#include <vector>
 #include <unordered_map>
 #include <unordered_set>
 
-// ─── Forward Declarations ──────────────────────────────────────────────
-
-enum class TokenType;
-
-// ─── Token Definition ──────────────────────────────────────────────────
-
-struct Token {
-    TokenType type;
-    std::string value;     // raw lexeme
-    int line;
-    int column;
-    
-    // Optional: source file name for error reporting
-    std::string filename;
-    
-    // Helper methods
-    bool is_operator() const;
-    bool is_literal() const;
-    bool is_keyword() const;
-    std::string to_string() const;
-};
-
-// ─── TokenType Enum ────────────────────────────────────────────────────
-
-enum class TokenType {
+/**
+ * @brief All possible token types in the Lucid language.
+ * 
+ * This is a plain enum (not enum class) for convenience:
+ * - Values can be used directly in switch statements
+ * - Bitwise operations work naturally
+ * - No need for static_cast when comparing
+ * 
+ * @note The prefix `TOKEN_` is not used because the enum name itself
+ *       provides context: `TokenType::IDENTIFIER`.
+ */
+enum TokenType {
     // ─── End of File ────────────────────────────────────────────────────
     EOF_TOKEN,
 
@@ -217,7 +205,33 @@ enum class TokenType {
     UNKNOWN         // unrecognized character
 };
 
-// ─── Token Utility Functions ──────────────────────────────────────────
+/**
+ * @brief A single token produced by the lexer.
+ * 
+ * Tokens carry:
+ * - The token type (IDENTIFIER, INT_LITERAL, etc.)
+ * - The raw lexeme (the actual text from source)
+ * - Source location (line, column)
+ * - Source file name (for error reporting)
+ */
+struct Token {
+    TokenType type;
+    std::string value;     // raw lexeme
+    int line;
+    int column;
+    std::string filename;  // source file name for error reporting
+    
+    // ─── Helper Methods ──────────────────────────────────────────────────
+    
+    bool is_operator() const;
+    bool is_literal() const;
+    bool is_keyword() const;
+    std::string to_string() const;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Token Utility Functions (implementation)
+// ─────────────────────────────────────────────────────────────────────────────
 
 inline bool Token::is_operator() const {
     switch (type) {
@@ -347,7 +361,9 @@ inline bool Token::is_keyword() const {
     }
 }
 
-// ─── Token Type Name Mapping ──────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Token Type Name Mapping
+// ─────────────────────────────────────────────────────────────────────────────
 
 inline std::string token_type_name(TokenType type) {
     static const std::unordered_map<TokenType, std::string> names = {
@@ -492,7 +508,9 @@ inline std::string Token::to_string() const {
     return result;
 }
 
-// ─── Keyword Check ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Keyword Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 inline bool is_keyword(const std::string& str) {
     static const std::unordered_set<std::string> keywords = {
@@ -514,8 +532,6 @@ inline bool is_keyword(const std::string& str) {
     };
     return keywords.find(str) != keywords.end();
 }
-
-// ─── Lexer Helper: Check if string is keyword ────────────────────────
 
 inline TokenType keyword_to_type(const std::string& str) {
     static const std::unordered_map<std::string, TokenType> keyword_map = {
