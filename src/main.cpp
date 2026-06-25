@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <unordered_set>
 
+#include "parser/lexer.hpp"
+
 namespace fs = std::filesystem;
 
 int main(int argc, char* argv[]) {
