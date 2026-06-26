@@ -1,15 +1,19 @@
 /**
  * @file debugMacros.hpp
- * @brief Developer debug logging macros.
+ * @brief Developer debug logging macros - Modern C++ streaming version.
  * 
  * These macros are for internal development tracing ONLY.
  * User-facing diagnostics are in Diagnostic.hpp.
  * 
  * ## Usage
  * 
- *   LOG_MINIMAL("Parser", "Starting parse");    // Always shown (level 0)
- *   LOG("Parser", "Parsing function");          // Normal detail (level 1)
- *   LOG_DETAIL("Parser", "Token: %s", tok);     // Verbose detail (level 2)
+ *   LOG_MINIMAL("Parser", "Starting parse");           // Always shown (level 0)
+ *   LOG("Parser", "Parsing function: ", name);         // Normal detail (level 1)
+ *   LOG_DETAIL("Parser", "Token: ", tok.value);        // Verbose detail (level 2)
+ * 
+ *   // Any type with operator<< works:
+ *   LOG_PARSER("Module '", usePath, "' not found");
+ *   LOG_PARSER("Expected ", expected, " but got ", actual);
  * 
  * ## Build Configuration
  * 
@@ -33,7 +37,7 @@
 #include <sstream>
 #include <iomanip>
 #include <chrono>
-#include <cstdarg>
+#include <utility>
 
 namespace debug {
 
@@ -115,31 +119,85 @@ inline std::string timestamp() {
     return ss.str();
 }
 
-} // namespace debug
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Core Logging Macros
+// Modern C++ Streaming Logger
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * @brief Internal macro that does the actual logging.
+ * @brief Build a message from variadic arguments using stream syntax.
+ * 
+ * This is the modern C++ replacement for printf-style formatting.
+ * It handles any type that has an operator<< defined.
+ * 
+ * @tparam Args The types of the arguments
+ * @param args The arguments to format
+ * @return std::string The formatted message
+ * 
+ * ## How It Works
+ * 
+ * The function uses a parameter pack expansion with a dummy array
+ * to evaluate each argument in order, streaming them into the
+ * ostringstream. The dummy array trick ensures left-to-right
+ * evaluation order (guaranteed in C++11 for braced initializers).
+ */
+template<typename... Args>
+std::string buildMessage(Args&&... args) {
+    std::ostringstream oss;
+    // Use a dummy array to expand the parameter pack
+    // The comma operator ensures each argument is streamed in order
+    int dummy[] = {0, (oss << std::forward<Args>(args), 0)...};
+    (void)dummy;  // Suppress unused variable warning
+    return oss.str();
+}
+
+/**
+ * @brief Log a message with the given component and level.
+ * 
+ * @param component The subsystem name (PARSER, LEXER, etc.)
+ * @param level The verbosity level required (0, 1, 2)
+ * @param message The message to log
+ */
+inline void logMessage(const char* component, int level, const std::string& message) {
+    if (isEnabled(component) && verbosity() >= level) {
+        stream() << "[" << timestamp() << "] "
+                 << "[" << component << "] "
+                 << message << std::endl;
+    }
+}
+
+} // namespace debug
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core Logging Macros (Modern C++ Version)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * @brief Internal macro that does the actual logging with streaming.
+ * 
+ * This macro uses the buildMessage template to format the log message
+ * with full type safety.
  * 
  * @param COMPONENT  The subsystem name (PARSER, LEXER, etc.)
  * @param LEVEL      The verbosity level required (0, 1, 2)
- * @param FORMAT     printf-style format string
- * @param ...        Format arguments
+ * @param ...        The message parts (any number of arguments)
+ * 
+ * ## Performance Note
+ * 
+ * The macro checks isEnabled() and verbosity() before building the
+ * message, so if logging is disabled, the buildMessage function
+ * is never called. This means zero overhead when debug is off.
  */
-#define LOG_CORE(COMPONENT, LEVEL, FORMAT, ...) \
+#define LOG_CORE(COMPONENT, LEVEL, ...) \
     do { \
         if (debug::isEnabled(COMPONENT) && debug::verbosity() >= (LEVEL)) { \
             debug::stream() << "[" << debug::timestamp() << "] " \
                             << "[" << COMPONENT << "] " \
-                            << debug::format(FORMAT, ##__VA_ARGS__) << std::endl; \
+                            << debug::buildMessage(__VA_ARGS__) << std::endl; \
         } \
     } while(0)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public Logging Macros (3 levels, 7 components)
+// Public Logging Macros (3 levels)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─── Level 0: Minimal (major events only) ───────────────────────────────────
@@ -158,54 +216,66 @@ inline std::string timestamp() {
     LOG_CORE(COMPONENT, 2, __VA_ARGS__)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Component-Specific Aliases (optional, for convenience)
+// Component-Specific Aliases
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define LOG_PARSER_MINIMAL(...)        LOG("PARSER", __VA_ARGS__)
-#define LOG_PARSER(...)        LOG("PARSER", __VA_ARGS__)
-#define LOG_PARSER_DETAIL(...) LOG_DETAIL("PARSER", __VA_ARGS__)
+// Parser
+#define LOG_PARSER_MINIMAL(...)        LOG_MINIMAL("PARSER", __VA_ARGS__)
+#define LOG_PARSER(...)                LOG("PARSER", __VA_ARGS__)
+#define LOG_PARSER_DETAIL(...)         LOG_DETAIL("PARSER", __VA_ARGS__)
 
-#define LOG_LEXER_MINIMAL(...)        LOG("LEXER", __VA_ARGS__)
-#define LOG_LEXER(...)         LOG("LEXER", __VA_ARGS__)
-#define LOG_LEXER_DETAIL(...)  LOG_DETAIL("LEXER", __VA_ARGS__)
+// Lexer
+#define LOG_LEXER_MINIMAL(...)         LOG_MINIMAL("LEXER", __VA_ARGS__)
+#define LOG_LEXER(...)                 LOG("LEXER", __VA_ARGS__)
+#define LOG_LEXER_DETAIL(...)          LOG_DETAIL("LEXER", __VA_ARGS__)
 
-// #define LOG_SEMANTIC(...)      LOG("SEMANTIC", __VA_ARGS__)
-// #define LOG_SEMANTIC_DETAIL(...) LOG_DETAIL("SEMANTIC", __VA_ARGS__)
+// Semantic
+#define LOG_SEMANTIC_MINIMAL(...)      LOG_MINIMAL("SEMANTIC", __VA_ARGS__)
+#define LOG_SEMANTIC(...)              LOG("SEMANTIC", __VA_ARGS__)
+#define LOG_SEMANTIC_DETAIL(...)       LOG_DETAIL("SEMANTIC", __VA_ARGS__)
 
-// #define LOG_CODEGEN(...)       LOG("CODEGEN", __VA_ARGS__)
-// #define LOG_CODEGEN_DETAIL(...) LOG_DETAIL("CODEGEN", __VA_ARGS__)
+// CodeGen
+#define LOG_CODEGEN_MINIMAL(...)       LOG_MINIMAL("CODEGEN", __VA_ARGS__)
+#define LOG_CODEGEN(...)               LOG("CODEGEN", __VA_ARGS__)
+#define LOG_CODEGEN_DETAIL(...)        LOG_DETAIL("CODEGEN", __VA_ARGS__)
 
-// #define LOG_TYPE(...)          LOG("TYPE", __VA_ARGS__)
-// #define LOG_TYPE_DETAIL(...)   LOG_DETAIL("TYPE", __VA_ARGS__)
+// Type
+#define LOG_TYPE_MINIMAL(...)          LOG_MINIMAL("TYPE", __VA_ARGS__)
+#define LOG_TYPE(...)                  LOG("TYPE", __VA_ARGS__)
+#define LOG_TYPE_DETAIL(...)           LOG_DETAIL("TYPE", __VA_ARGS__)
 
-#define LOG_INTERPRETER(...)   LOG("INTERPRETER", __VA_ARGS__)
-#define LOG_INTERPRETER_DETAIL(...) LOG_DETAIL("INTERPRETER", __VA_ARGS__)
+// Interpreter
+#define LOG_INTERPRETER_MINIMAL(...)   LOG_MINIMAL("INTERPRETER", __VA_ARGS__)
+#define LOG_INTERPRETER(...)           LOG("INTERPRETER", __VA_ARGS__)
+#define LOG_INTERPRETER_DETAIL(...)    LOG_DETAIL("INTERPRETER", __VA_ARGS__)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: printf-style formatting (safe, no heap allocation)
+// Usage Examples in Comments
 // ─────────────────────────────────────────────────────────────────────────────
 
-namespace debug {
-    inline std::string format(const char* fmt, ...) {
-        va_list args;
-        va_start(args, fmt);
-        
-        // Determine required size
-        va_list args_copy;
-        va_copy(args_copy, args);
-        int size = vsnprintf(nullptr, 0, fmt, args_copy);
-        va_end(args_copy);
-        
-        if (size <= 0) {
-            va_end(args);
-            return std::string(fmt);  // Fallback to raw format string
-        }
-        
-        // Format the string
-        std::string result(size + 1, '\0');
-        vsnprintf(&result[0], result.size(), fmt, args);
-        result.pop_back();  // Remove null terminator
-        va_end(args);
-        return result;
-    }
-}
+/*
+ * === Usage Examples ===
+ * 
+ * // Simple logging with just a string
+ * LOG_PARSER("Starting parse of: ", filePath);
+ * 
+ * // Logging with multiple arguments (any types)
+ * LOG_PARSER("Parsed declaration #", declCount, " (", kindName, ")");
+ * 
+ * // Logging with InternedString (resolved to string)
+ * LOG_PARSER("Module '", usePath, "' not found");
+ * 
+ * // Logging with mixed types
+ * LOG_PARSER("Expected ", expected, " but got ", actual);
+ * 
+ * // Using different verbosity levels
+ * LOG_PARSER_MINIMAL("Parsing complete: ", filePath);
+ * LOG_PARSER("Parsed ", declCount, " declarations");
+ * LOG_PARSER_DETAIL("Token: ", token.value, " at ", token.line, ":", token.column);
+ * 
+ * // With SourceLocation
+ * LOG_PARSER("Error at ", loc.line(), ":", loc.column());
+ * 
+ * // With any custom type that has operator<<
+ * LOG_PARSER("Value: ", myCustomType);
+ */
