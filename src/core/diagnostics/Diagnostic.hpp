@@ -36,7 +36,7 @@ enum class DiagnosticSeverity {
 // DiagnosticCategory  — Identifies which compiler sub‑system emitted the diagnostic
 // ─────────────────────────────────────────────────────────────────────────────
 enum class DiagnosticCategory {
-    General,  ///< Misc or driver errors.
+    General,  ///< Misc or driver errors or file/module problem
     Lexical,  ///< Scanner/tokenization errors.
     Syntax,   ///< Parser/grammar errors.
     Semantic, ///< Type‑checking or logic errors.

@@ -1,0 +1,589 @@
+/**
+ * @file ParserState.cpp
+ * @brief TokenStream and ParserState implementation.
+ * 
+ * This file implements the core state management for the parser:
+ * - TokenStream: Safe token consumption with comment skipping
+ * - ParserState: Mutable context for a parsing session
+ * 
+ * ## TokenStream
+ * 
+ * The TokenStream wraps a vector of tokens and provides safe accessors that
+ * automatically skip comments. This makes comments invisible to the grammar
+ * (they are harvested separately for documentation generation).
+ * 
+ * ### Key Features
+ * - **Comment Skipping**: All peek/advance methods skip LINE_COMMENT,
+ *   DOC_COMMENT, and BLOCK_COMMENT tokens automatically.
+ * - **Position Management**: Save and restore positions for lookahead and
+ *   error recovery.
+ * - **Lookahead**: Peek at future tokens without consuming them.
+ * - **EOF Handling**: Returns a sentinel EOF token when at the end.
+ * 
+ * ### Usage Example
+ * 
+ * ```cpp
+ * TokenStream stream(tokens, "example.lucid");
+ * 
+ * // Check current token
+ * if (stream.check(TokenType::IDENTIFIER)) {
+ *     Token tok = stream.advance();  // Consumes and skips following comments
+ * }
+ * 
+ * // Lookahead
+ * TokenType next = stream.peekNextType();
+ * 
+ * // Save position for recovery
+ * size_t saved = stream.getPos();
+ * // ... try parsing ...
+ * if (failed) stream.setPos(saved);
+ * ```
+ * 
+ * ## ParserState
+ * 
+ * The ParserState holds all mutable context for a parsing session. It is
+ * passed by reference to all parsing functions, making the parser reentrant
+ * and testable.
+ * 
+ * ### Key Features
+ * - **Token Stream**: The current token stream being consumed.
+ * - **Allocators**: References to StringPool and ASTArena.
+ * - **Error Tracking**: Collects diagnostics and tracks error count.
+ * - **Context Tracking**: Tracks spawn depth, async context, and declaration
+ *   context (top-level, local, function, loop).
+ * - **Doc Comments**: Stores pending doc comments for attachment.
+ * 
+ * ### Usage Example
+ * 
+ * ```cpp
+ * auto tokens = lexer::tokenize(source, path);
+ * TokenStream stream(std::move(tokens), pool.intern(path));
+ * ParserState state(std::move(stream), pool.intern(path), pool, arena);
+ * 
+ * // Report an error
+ * state.error("Unexpected token");
+ * 
+ * // Check if in spawn context
+ * if (state.isSpawnContext()) { restrict operations }
+ * 
+ * // Check if in async context
+ * if (state.isAsyncContext()) { allow await }
+ * ```
+ * 
+ * @see ParserState.hpp for the struct definitions
+ * @see Parser.hpp for the main parser API
+ */
+
+#include "parser/Parser.hpp"
+#include "core/diagnostics/DiagnosticCodes.hpp"
+#include "debug/DebugMacros.hpp"
+#include "debug/DebugUtils.hpp"
+#include "parser/ModuleResolver.hpp"
+
+namespace parser {
+
+// =============================================================================
+// Sentinel EOF Token
+// =============================================================================
+
+/**
+ * @brief Sentinel EOF token returned when the token stream is exhausted.
+ * 
+ * This token has type `EOF_TOKEN` and empty fields. It is used to avoid
+ * null pointer checks when accessing the current token.
+ */
+const Token TokenStream::eofToken_ = {TokenType::EOF_TOKEN, "", 0, 0, ""};
+
+// =============================================================================
+// TokenStream - Construction
+// =============================================================================
+
+/**
+ * @brief Construct a TokenStream from a vector of tokens.
+ * 
+ * @param tokens   The vector of tokens to wrap (takes ownership via move).
+ * @param filePath The source file path (interned for error reporting).
+ * 
+ * ## Comments
+ * 
+ * Comments are NOT stripped from the token vector. Instead, they are skipped
+ * transparently by all peek/advance methods. This allows doc comments to be
+ * harvested by scanning backward from declarations.
+ * 
+ * ## Memory Ownership
+ * 
+ * The TokenStream takes ownership of the token vector via move. The tokens
+ * remain in memory for the lifetime of the TokenStream.
+ */
+TokenStream::TokenStream(std::vector<Token> tokens, InternedString filePath)
+    : tokens_(std::move(tokens))
+    , filePath_(filePath) {}
+
+// =============================================================================
+// TokenStream - Token Consumption
+// =============================================================================
+
+/**
+ * @brief Return the current token without consuming it.
+ * 
+ * This method automatically skips comments, returning the first non-comment
+ * token at or after the current position. If no non-comment token exists,
+ * the sentinel EOF token is returned.
+ * 
+ * ## Comment Skipping
+ * 
+ * Comments (LINE_COMMENT, DOC_COMMENT, and BLOCK_COMMENT) are transparently
+ * skipped. This means the grammar never sees comments directly. They are
+ * harvested separately via `harvestDocComment()`.
+ * 
+ * ## Performance
+ * 
+ * This method is O(n) in the worst case (when skipping many comments), but
+ * comments are typically few and far between. The `skipCommentsFrom()` method
+ * is optimized for sequential access.
+ * 
+ * @return const Token& The current non-comment token, or EOF token.
+ */
+const Token& TokenStream::peek() const {
+    if (pos_ >= tokens_.size()) {
+        return eofToken_;
+    }
+    // Skip comments from the current position
+    size_t next = skipCommentsFrom(pos_);
+    if (next >= tokens_.size()) {
+        return eofToken_;
+    }
+    return tokens_[next];
+}
+
+/**
+ * @brief Consume and return the current token.
+ * 
+ * This method advances the position past the current token and any following
+ * comments. The consumed token is returned.
+ * 
+ * ## Comment Skipping
+ * 
+ * After consuming the current token, the position is advanced past any
+ * comments that follow. This ensures that the next call to `peek()` or
+ * `advance()` will see the next non-comment token.
+ * 
+ * ## Performance
+ * 
+ * This method is O(1) plus the cost of skipping comments (O(n) in worst case).
+ * 
+ * @return Token The consumed token. If at EOF, returns EOF token.
+ */
+Token TokenStream::advance() {
+    if (pos_ >= tokens_.size()) {
+        return eofToken_;
+    }
+    Token result = tokens_[pos_];
+    pos_++;
+    // Skip any comments that follow
+    pos_ = skipCommentsFrom(pos_);
+    return result;
+}
+
+/**
+ * @brief Check if the current token is of the given type.
+ * 
+ * This method peeks at the current token (skipping comments) and compares
+ * its type to the given type.
+ * 
+ * @param type The token type to check against.
+ * @return true if the current token is of the given type, false otherwise.
+ */
+bool TokenStream::check(TokenType type) const {
+    return peek().type == type;
+}
+
+/**
+ * @brief Check if the current token matches any of the given types.
+ * 
+ * @param types A list of token types to check against.
+ * @return true if the current token matches any of the given types.
+ */
+bool TokenStream::checkAny(std::initializer_list<TokenType> types) const {
+    TokenType current = peek().type;
+    for (auto t : types) {
+        if (current == t) return true;
+    }
+    return false;
+}
+
+/**
+ * @brief If the current token matches the given type, consume and return it.
+ * 
+ * This is a convenient combination of `check()` and `advance()`.
+ * 
+ * @param type The token type to match.
+ * @return true if the token was matched and consumed, false otherwise.
+ */
+bool TokenStream::match(TokenType type) {
+    if (check(type)) {
+        advance();
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief Consume the current token, expecting it to be of the given type.
+ * 
+ * This method advances and returns the token without checking its type.
+ * The caller is responsible for verifying the type before calling this
+ * method, or handling the error case separately.
+ * 
+ * ## Error Handling
+ * 
+ * This method does NOT report errors. It is the caller's responsibility to
+ * check the token type before consuming it. If the token type doesn't match,
+ * the caller should report an error and handle recovery.
+ * 
+ * @param type The expected token type.
+ * @return Token The consumed token. If at EOF, returns EOF token.
+ * 
+ * @see check() for verifying token type
+ * @see match() for combined check-and-consume
+ */
+Token TokenStream::consume(TokenType type) {
+    if (check(type)) {
+        return advance();
+    }
+    // Error will be reported by caller
+    return eofToken_;
+}
+
+/**
+ * @brief Check if the token stream is at the end.
+ * 
+ * @return true if the current position is past the end of the token vector.
+ */
+bool TokenStream::isAtEnd() const {
+    return pos_ >= tokens_.size() || peek().type == TokenType::EOF_TOKEN;
+}
+
+/**
+ * @brief Get the current source location.
+ * 
+ * @return SourceLocation The location of the current token (or EOF location).
+ */
+SourceLocation TokenStream::currentLoc() const {
+    const Token& tok = peek();
+    return SourceLocation(tok.line, tok.column);
+}
+
+// =============================================================================
+// TokenStream - Lookahead
+// =============================================================================
+
+/**
+ * @brief Get the type of the next token (after the current one).
+ * 
+ * This method skips comments and returns the type of the next non-comment
+ * token after the current position.
+ * 
+ * @return TokenType The type of the next token, or EOF_TOKEN if none.
+ */
+TokenType TokenStream::peekNextType() const {
+    size_t next = skipCommentsFrom(pos_ + 1);
+    if (next >= tokens_.size()) return TokenType::EOF_TOKEN;
+    return tokens_[next].type;
+}
+
+/**
+ * @brief Get the next token without consuming it.
+ * 
+ * @return const Token& The next token (skipping comments), or EOF token.
+ */
+const Token& TokenStream::peekNext() const {
+    size_t next = skipCommentsFrom(pos_ + 1);
+    if (next >= tokens_.size()) return eofToken_;
+    return tokens_[next];
+}
+
+/**
+ * @brief Get a token at an offset from the current position.
+ * 
+ * This method allows arbitrary lookahead without consuming tokens. The
+ * offset is relative to the current position, NOT counting comments.
+ * 
+ * @param offset The number of tokens ahead to peek at.
+ * @return const Token& The token at the given offset, or EOF token.
+ */
+const Token& TokenStream::peekAt(size_t offset) const {
+    size_t idx = pos_ + offset;
+    if (idx >= tokens_.size()) return eofToken_;
+    // Skip comments from this position
+    idx = skipCommentsFrom(idx);
+    if (idx >= tokens_.size()) return eofToken_;
+    return tokens_[idx];
+}
+
+/**
+ * @brief Check if a token type is a primitive type.
+ * 
+ * This method identifies token types that represent primitive types:
+ * - Boolean: bool
+ * - Integers: int8, int16, int32, int64, uint8, uint16, uint32, uint64,
+ *   byte, short, int, long, ubyte, ushort, uint, ulong
+ * - Floating point: float, double, decimal
+ * - Text: string, char
+ * 
+ * @param type The token type to check.
+ * @return true if the token type is a primitive type, false otherwise.
+ */
+bool TokenStream::isPrimitiveTypeToken(TokenType type) const {
+    switch (type) {
+        case TokenType::TYPE_BOOL:
+        case TokenType::TYPE_INT8:
+        case TokenType::TYPE_INT16:
+        case TokenType::TYPE_INT32:
+        case TokenType::TYPE_INT64:
+        case TokenType::TYPE_UINT8:
+        case TokenType::TYPE_UINT16:
+        case TokenType::TYPE_UINT32:
+        case TokenType::TYPE_UINT64:
+        case TokenType::TYPE_BYTE:
+        case TokenType::TYPE_SHORT:
+        case TokenType::TYPE_INT:
+        case TokenType::TYPE_LONG:
+        case TokenType::TYPE_UBYTE:
+        case TokenType::TYPE_USHORT:
+        case TokenType::TYPE_UINT:
+        case TokenType::TYPE_ULONG:
+        case TokenType::TYPE_FLOAT:
+        case TokenType::TYPE_DOUBLE:
+        case TokenType::TYPE_DECIMAL:
+        case TokenType::TYPE_STRING:
+        case TokenType::TYPE_CHAR:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// =============================================================================
+// TokenStream - Position Management
+// =============================================================================
+
+/**
+ * @brief Skip comments from a given position.
+ * 
+ * This method advances the position past any LINE_COMMENT, DOC_COMMENT, and
+ * BLOCK_COMMENT tokens, returning the index of the first non-comment token.
+ * 
+ * ## Comment Types
+ * 
+ * - `LINE_COMMENT`: `-- comment` (line comments)
+ * - `DOC_COMMENT`: `/-- ... --/` (doc comments)
+ * - `BLOCK_COMMENT`: `/- ... -/` (block comments)
+ * 
+ * ## Performance
+ * 
+ * This method is O(n) where n is the number of consecutive comments. Comments
+ * are typically few, so this is fast.
+ * 
+ * @param start The starting position to skip comments from.
+ * @return size_t The position of the first non-comment token.
+ */
+size_t TokenStream::skipCommentsFrom(size_t start) const {
+    while (start < tokens_.size()) {
+        TokenType type = tokens_[start].type;
+        if (type == TokenType::LINE_COMMENT || 
+            type == TokenType::DOC_COMMENT ||
+            type == TokenType::BLOCK_COMMENT) {
+            start++;
+        } else {
+            break;
+        }
+    }
+    return start;
+}
+
+/**
+ * @brief Convert a token to a SourceLocation.
+ * 
+ * @param tok The token to convert.
+ * @return SourceLocation The location of the token.
+ */
+SourceLocation TokenStream::locOf(const Token& tok) const {
+    return SourceLocation(tok.line, tok.column);
+}
+
+// =============================================================================
+// ParserState Implementation
+// =============================================================================
+
+// =============================================================================
+// ParserState - Error Reporting
+// =============================================================================
+
+/**
+ * @brief Report an error at the current token location.
+ * 
+ * This is a convenience method that uses the current token's location for
+ * the error. It creates a Diagnostic with severity Error and category Syntax.
+ * 
+ * @param message The error message.
+ * 
+ * ## Error Handling
+ * 
+ * The error is added to the `errors` vector and the `hasErrors` flag is set
+ * to true. The parser continues to parse to collect more errors (error
+ * recovery is handled by the caller).
+ */
+void ParserState::error(const std::string& message) {
+    error(currentLoc(), message);
+}
+
+/**
+ * @brief Report an error at a specific location.
+ * 
+ * This method allows reporting errors at arbitrary locations (e.g., when
+ * a token was expected but not found, the location of the missing token
+ * can be specified).
+ * 
+ * @param loc     The source location of the error.
+ * @param message The error message.
+ * 
+ * ## Usage
+ * 
+ * ```cpp
+ * // Report error at the location of a token
+ * state.error(tokenLoc, "Unexpected token");
+ * 
+ * // Report error at a saved location (e.g., after lookahead)
+ * state.error(savedLoc, "Missing '}'");
+ * ```
+ */
+void ParserState::error(const SourceLocation& loc, const std::string& message) {
+    errors.push_back({
+        DiagnosticSeverity::Error,
+        DiagnosticCategory::Syntax,
+        filePath,
+        loc,
+        DiagCode::E1001,  // Generic syntax error
+        {message}
+    });
+    hasErrors = true;
+    consecutiveErrors++;
+}
+
+/**
+ * @brief Report an error with a diagnostic code.
+ * 
+ * This method allows reporting errors with specific diagnostic codes, which
+ * enables better error reporting with standardized messages and formatting.
+ * 
+ * @param loc  The source location of the error.
+ * @param code The diagnostic code (e.g., DiagCode::E1102).
+ * @param args Format arguments for the diagnostic message.
+ * 
+ * ## Usage
+ * 
+ * ```cpp
+ * state.error(loc, DiagCode::E1102, {"use"});
+ * // Outputs: "Expected module path after keyword 'use'"
+ * ```
+ * 
+ * @see DiagCode for available diagnostic codes
+ * @see DiagnosticMessages for message templates
+ */
+void ParserState::error(SourceLocation loc, DiagCode code, 
+                        std::initializer_list<std::string> args) {
+    errors.push_back({
+        DiagnosticSeverity::Error,
+        DiagnosticCategory::Syntax,
+        filePath,
+        loc,
+        code,
+        std::vector<std::string>(args.begin(), args.end())
+    });
+    hasErrors = true;
+    consecutiveErrors++;
+}
+
+// =============================================================================
+// ParserState - Context Queries
+// =============================================================================
+
+/**
+ * @brief Check if we can safely continue parsing.
+ * 
+ * This method returns true if no errors have been reported. It is used
+ * to determine whether to continue parsing after an error.
+ * 
+ * @return true if no errors have been reported, false otherwise.
+ * 
+ * ## Usage
+ * 
+ * ```cpp
+ * if (!state.canContinue()) {
+ *     return nullptr;
+ * }
+ * ```
+ */
+bool ParserState::canContinue() const {
+    // If we've had too many consecutive errors, stop to avoid cascading
+    return consecutiveErrors < 10 && !hasErrors;
+}
+
+// =============================================================================
+// ParserState - Convenience Methods
+// =============================================================================
+
+/**
+ * @brief Get the current token location.
+ * 
+ * This is a convenience wrapper around `TokenStream::currentLoc()`.
+ * 
+ * @return SourceLocation The location of the current token.
+ */
+SourceLocation ParserState::currentLoc() const {
+    return stream.currentLoc();
+}
+
+// =============================================================================
+// Module Import Implementation
+// =============================================================================
+
+ProgramAST* ParserState::importModule(InternedString usePath) {
+    // Check if already imported in this file
+    auto it = importedModules.find(usePath);
+    if (it != importedModules.end()) {
+        return it->second;
+    }
+    
+    // Use callback to import
+    if (importCallback) {
+        std::string usePathStr = std::string(pool.lookup(usePath));
+        ProgramAST* ast = importCallback(usePathStr);
+        if (ast) {
+            importedModules[usePath] = ast;
+            return ast;
+        }
+    }
+    
+    // Use module resolver directly
+    if (moduleResolver) {
+        InternedString filePath = moduleResolver->resolveUsePath(usePath);
+        if (filePath.isValid()) {
+            // Check if already parsed
+            ProgramAST* ast = moduleResolver->getParsedModule(filePath);
+            if (ast) {
+                importedModules[usePath] = ast;
+                return ast;
+            }
+            
+            // Parse the module (this would need access to the session)
+            // This is why we prefer the callback approach
+        }
+    }
+    
+    error("Module not found: " + std::string(pool.lookup(usePath)));
+    return nullptr;
+}
+
+} // namespace parser

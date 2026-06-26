@@ -161,11 +161,11 @@ inline std::string timestamp() {
 // Component-Specific Aliases (optional, for convenience)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define LOG_PARSER_MINIAL(...)        LOG("PARSER", __VA_ARGS__)
+#define LOG_PARSER_MINIMAL(...)        LOG("PARSER", __VA_ARGS__)
 #define LOG_PARSER(...)        LOG("PARSER", __VA_ARGS__)
 #define LOG_PARSER_DETAIL(...) LOG_DETAIL("PARSER", __VA_ARGS__)
 
-#define LOG_LEXER_MINIAL(...)        LOG("LEXER", __VA_ARGS__)
+#define LOG_LEXER_MINIMAL(...)        LOG("LEXER", __VA_ARGS__)
 #define LOG_LEXER(...)         LOG("LEXER", __VA_ARGS__)
 #define LOG_LEXER_DETAIL(...)  LOG_DETAIL("LEXER", __VA_ARGS__)
 

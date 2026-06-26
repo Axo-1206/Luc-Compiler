@@ -10,14 +10,20 @@
 
 #include "core/Tokens.hpp"
 #include "core/ast/BaseAST.hpp"
+#include "core/ast/DeclAST.hpp"
 #include "core/ast/ExprAST.hpp"
+#include "core/ast/StmtAST.hpp"
+#include "core/ast/TypeAST.hpp"
 #include "core/memory/ASTArena.hpp"
 #include "core/memory/StringPool.hpp"
 #include "core/diagnostics/Diagnostic.hpp"
+#include "ModuleResolver.hpp"
 
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <optional>
+#include <initializer_list>
 
 namespace parser {
 
@@ -29,8 +35,8 @@ namespace parser {
  * @brief Wraps a vector of tokens with safe accessors and comment skipping.
  * 
  * TokenStream is the primary interface for consuming tokens during parsing.
- * It automatically skips LINE_COMMENT and DOC_COMMENT tokens, making them
- * invisible to the grammar (they are harvested separately).
+ * It automatically skips LINE_COMMENT, DOC_COMMENT, and BLOCK_COMMENT tokens,
+ * making them invisible to the grammar (they are harvested separately).
  * 
  * ## Usage Example
  * 
@@ -39,7 +45,7 @@ namespace parser {
  *       Token tok = stream.advance();
  *       // use tok
  *   }
- *   stream.consume(TokenType::LBRACE, "expected '{'");
+ *   stream.consume(TokenType::LBRACE);
  * 
  * ## Position Management
  * 
@@ -51,7 +57,7 @@ struct TokenStream {
     // ─── Construction ──────────────────────────────────────────────────
     
     TokenStream() = default;
-    TokenStream(std::vector<Token> tokens, const std::string& filePath = "<unknown>");
+    TokenStream(std::vector<Token> tokens, InternedString filePath);
     
     // ─── Token Consumption ────────────────────────────────────────────
     
@@ -78,6 +84,9 @@ struct TokenStream {
     
     /** @brief Get the current source location. */
     SourceLocation currentLoc() const;
+    
+    /** @brief Get the file path this stream represents. */
+    InternedString getFilePath() const { return filePath_; }
     
     // ─── Lookahead ──────────────────────────────────────────────────────
     
@@ -122,7 +131,7 @@ struct TokenStream {
 private:
     std::vector<Token> tokens_;
     size_t pos_ = 0;
-    std::string filePath_;
+    InternedString filePath_;
     
     static const Token eofToken_;
 };
@@ -132,15 +141,14 @@ private:
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * @brief Mutable state for a single parsing session.
+ * @brief Mutable state for a single parsing session (one file).
  * 
  * All parsing functions receive this struct by reference.
  * This makes the parser reentrant and testable.
  * 
  * ## Lifetime
  * 
- * Created once per file being parsed. For imported files, a new
- * ParserState is created with the same pool and arena.
+ * Created once per file being parsed.
  * 
  * ## Thread Safety
  * 
@@ -149,10 +157,9 @@ private:
  * ## Memory Ownership
  * 
  * - `stream`: Owns the token vector (moved in)
- * - `pool`: Reference to shared StringPool (owned by ProcessingSession)
- * - `arena`: Reference to shared ASTArena (owned by ProcessingSession)
- * - `errors`: Owns diagnostic messages
- * - `importedModules`: Owns imported ASTs (arena-allocated)
+ * - `pool`: Reference to shared StringPool
+ * - `arena`: Reference to shared ASTArena
+ * - `errors`: Owns diagnostic messages for this file
  * 
  * ## Usage Example
  * 
@@ -166,87 +173,81 @@ private:
  */
 struct ParserState {
     // ─── Core State ──────────────────────────────────────────────────────
+
+    TokenStream stream;     // The token stream being consumed (mutable)
+    InternedString filePath; // Source file path (for error reporting and module identity)
+    StringPool& pool;       // String interner (shared across all files)
+    ASTArena& arena;        // AST allocator (shared across all files)
+
+    // ─── Module Support ──────────────────────────────────────────────────
     
-    /// The token stream being consumed (mutable)
-    TokenStream stream;
+    // Module resolver for importing modules
+    ModuleResolver* moduleResolver = nullptr; 
+
+    // Imported modules in this file (use path -> AST)
+    std::unordered_map<InternedString, ProgramAST*> importedModules;
     
-    /// Source file path (for error reporting)
-    InternedString filePath;
-    
-    /// String interner (shared across all files)
-    StringPool& pool;
-    
-    /// AST allocator (shared across all files)
-    ASTArena& arena;
+    // Callback to import a module (set by CompilerSession)
+    std::function<ProgramAST*(const std::string&)> importCallback;
     
     // ─── Error Tracking ──────────────────────────────────────────────────
     
-    /// True if any error has been reported during parsing
-    bool hasErrors = false;
-    
-    /// Collected diagnostic messages
-    std::vector<Diagnostic> errors;
-    
-    /// Consecutive error count (used to prevent infinite loops in lists)
-    int consecutiveErrors = 0;
+    bool hasErrors = false;         // True if any error has been reported during parsing
+    std::vector<Diagnostic> errors; // Collected diagnostic messages for this file
+    int consecutiveErrors = 0;      // Consecutive error count (used to prevent infinite loops in lists)
     
     // ─── Context Tracking ────────────────────────────────────────────────
     
-    /// Depth of parallel body nesting (to restrict return/break/continue)
-    int parallelDepth = 0;
+    /**
+     * @brief Depth of spawn/join nesting (OS thread parallelism).
+     * 
+     * Tracks how deeply we're nested in spawn/join operations.
+     * Used to enforce thread-safety rules.
+     * 
+     * Grammar reference: spawn/join (Parallelism, OS threads)
+     */
+    int spawnDepth = 0;
     
-    /// True if currently parsing an async function body (await allowed)
-    bool inAsyncBody = false;
+    /**
+     * @brief True if currently parsing inside an async context.
+     * 
+     * Tracks that we're in a function that can use await.
+     * Used to validate async/await pairing.
+     * 
+     * Grammar reference: async/await (Concurrency, event loop)
+     */
+    bool inAsyncContext = false;
     
-    /// Current declaration context (top-level vs local)
+    /// Current declaration context
     enum class Context {
         TopLevel,   // File-level declarations
         Local,      // Inside a block (function body, etc.)
         Function,   // Inside a function body (return allowed)
         Loop,       // Inside a loop body (break/continue allowed)
+        Spawn,      // Inside a spawned thread (spawn restrictions)
+        Async,      // Inside an async operation (await allowed)
     };
     Context context = Context::TopLevel;
-    
-    // ─── Module System ──────────────────────────────────────────────────
-    
-    /**
-     * @brief Map from module path to imported ProgramAST.
-     * 
-     * Used to resolve symbols from imported modules.
-     * The ASTs are arena-allocated and owned by the same arena.
-     */
-    std::unordered_map<InternedString, ProgramAST*> importedModules;
-    
-    /**
-     * @brief Modules currently being parsed (to detect circular imports).
-     * 
-     * When parsing a module, its path is pushed onto this stack.
-     * If we encounter a use declaration for a path already in the stack,
-     * it's a circular import error.
-     */
-    std::vector<InternedString> parsingStack;
     
     // ─── Doc Comment Harvesting ──────────────────────────────────────────
     
     /// Last harvested doc comment (stored between harvest and attachment)
     std::optional<DocComment> pendingDoc;
     
-    // ─── Qualifier Registry ─────────────────────────────────────────────
-    
-    /// Reference to the global qualifier registry (for validation)
-    // QualifierRegistry& qualifiers; // To be added when implemented
-    
     // ─── Constructor ─────────────────────────────────────────────────────
     
     /**
-     * @brief Create a new parser state.
+     * @brief Create a new parser state for a single file.
      * 
      * @param s Token stream (ownership taken)
      * @param path File path (interned)
      * @param p String pool reference
      * @param a AST arena reference
      */
-    ParserState(TokenStream&& s, InternedString path, StringPool& p, ASTArena& a)
+    ParserState(TokenStream&& s, 
+                InternedString path, 
+                StringPool& p, 
+                ASTArena& a)
         : stream(std::move(s))
         , filePath(path)
         , pool(p)
@@ -265,13 +266,28 @@ struct ParserState {
     void error(SourceLocation loc, DiagCode code, std::initializer_list<std::string> args = {});
     
     /// Check if we can safely continue parsing
-    bool canContinue() const { return !hasErrors; }
+    bool canContinue() const;
     
-    /// Check if we're in a parallel body
-    bool isParallel() const { return parallelDepth > 0; }
+    /// Check if we're in a spawn context (parallelism)
+    bool isSpawnContext() const { return spawnDepth > 0; }
     
-    /// Check if we're in an async body
-    bool isAsync() const { return inAsyncBody; }
+    /// Check if we're in an async context (concurrency)
+    bool isAsyncContext() const { return inAsyncContext; }
+    
+    /// Get the current token location
+    SourceLocation currentLoc() const;
+
+    // ─── Module Import ──────────────────────────────────────────────────
+    
+    /**
+     * @brief Import a module by its use path.
+     * 
+     * This uses the importCallback to actually load the module.
+     * 
+     * @param usePath The import path (e.g., "std.io")
+     * @return ProgramAST* The imported module AST, or nullptr on error
+     */
+    ProgramAST* importModule(InternedString usePath);
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
