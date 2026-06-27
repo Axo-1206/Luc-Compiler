@@ -74,6 +74,10 @@ EnumDeclAST* parseEnumDecl(TokenStream& stream, ParserContext& ctx);
 TraitDeclAST* parseTraitDecl(TokenStream& stream, ParserContext& ctx);
 StructDeclAST* parseStructDecl(TokenStream& stream, ParserContext& ctx);
 
+FieldDeclPtr parseFieldDecl(TokenStream& stream, ParserContext& ctx);
+EnumVariantPtr parseEnumVariant(TokenStream& stream, ParserContext& ctx);
+TraitFieldPtr parseTraitField(TokenStream& stream, ParserContext& ctx);
+
 // ─── Statements ────────────────────────────────────────────────────────────
 
 StmtAST* parseStmt(TokenStream& stream, ParserContext& ctx);
@@ -150,19 +154,16 @@ ArenaSpan<AttributePtr> parseAttributes(TokenStream& stream, ParserContext& ctx)
 AttributePtr parseAttribute(TokenStream& stream, ParserContext& ctx);
 AttributeArgPtr parseAttributeArgLiteral(TokenStream& stream, ParserContext& ctx);
 
-ArenaSpan<ExprAST*> parseArgList(TokenStream& stream, ParserContext& ctx);
-ArenaSpan<TypeAST*> parseReturnList(TokenStream& stream, ParserContext& ctx);
-std::vector<ParamPtr> parseParamList(TokenStream& stream, ParserContext& ctx);
-std::vector<InternedString> parseUsePath(TokenStream& stream, ParserContext& ctx);
-
 GenericParamDeclPtr parseGenericParamDecl(TokenStream& stream, ParserContext& ctx);
 ArenaSpan<GenericParamDeclPtr> parseGenericParamDecls(TokenStream& stream, ParserContext& ctx);
 TypePtr parseGenericArg(TokenStream& stream, ParserContext& ctx);
 ArenaSpan<TypePtr> parseGenericArgs(TokenStream& stream, ParserContext& ctx);
 
-FieldDeclPtr parseFieldDecl(TokenStream& stream, ParserContext& ctx);
-EnumVariantPtr parseEnumVariant(TokenStream& stream, ParserContext& ctx);
-TraitFieldPtr parseTraitField(TokenStream& stream, ParserContext& ctx);
+ArenaSpan<ExprAST*> parseArgList(TokenStream& stream, ParserContext& ctx);
+ArenaSpan<TypeAST*> parseReturnList(TokenStream& stream, ParserContext& ctx);
+std::vector<ParamPtr> parseParamList(TokenStream& stream, ParserContext& ctx);
+std::vector<InternedString> parseUsePath(TokenStream& stream, ParserContext& ctx);
+
 TraitRefPtr parseTraitRef(TokenStream& stream, ParserContext& ctx);
 
 ExprPtr parseLvalue(TokenStream& stream, ParserContext& ctx);

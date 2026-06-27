@@ -453,8 +453,7 @@ UseDeclAST* parseUseDecl(TokenStream& stream, ParserContext& ctx) {
                 // NOTE: if the module is empty then we simply don't care and
                 // move on
                 // ============================================================
-                ctx.error(loc, "Failed to read module: '", usePath, "'");
-                synchronize(stream, ctx);
+                ctx.note(loc, "Failed to read module: '", usePath, "'");
                 return useDecl;
             }
             

@@ -245,8 +245,7 @@ struct IdentifierExprAST : ExprAST {
     InternedString name;
     ArenaSpan<TypePtr> genericArgs;
 
-    explicit IdentifierExprAST(InternedString n)
-        : ExprAST(ASTKind::IdentifierExpr), name(n) {}
+    explicit IdentifierExprAST() : ExprAST(ASTKind::IdentifierExpr) {}
 };
 
 /**
@@ -271,7 +270,7 @@ struct FieldAccessExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::FieldAccessExpr;
 
     ExprPtr object;
-    InternedString field;
+    InternedString fieldName;
     ArenaSpan<TypePtr> genericArgs; // Generic function instantiation
 
     FieldAccessExprAST() : ExprAST(ASTKind::FieldAccessExpr) {}
@@ -309,8 +308,8 @@ struct FieldAccessExprAST : ExprAST {
 struct ModuleAccessExprAST : ExprAST {
     static constexpr ASTKind staticKind = ASTKind::ModuleAccessExpr;
 
-    InternedString module;
-    InternedString member;
+    InternedString moduleName;
+    InternedString memberName;
     ArenaSpan<TypePtr> genericArgs; // Generic function instantiation
 
     ModuleAccessExprAST() : ExprAST(ASTKind::ModuleAccessExpr) {}
