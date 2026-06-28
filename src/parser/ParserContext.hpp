@@ -19,6 +19,8 @@
 #include "core/memory/ASTArena.hpp"
 #include "core/memory/StringPool.hpp"
 #include "core/diagnostics/Diagnostic.hpp"
+#include "core/diagnostics/DiagnosticCodes.hpp"
+#include "TokenStream.hpp"
 #include "ModuleResolver.hpp"
 
 #include <vector>
@@ -38,10 +40,30 @@ namespace parser {
  * - Error reporting with variadic templates
  * - Context tracking (spawn/async depth)
  * 
+ * ## Error Reporting API
+ * 
+ * All error reporting functions automatically use the current token location
+ * from the TokenStream. The API is:
+ * 
+ * ```cpp
+ * // Simple error at current token location
+ * ctx.error(DiagCode::E1002, "expected", "found");
+ * 
+ * // Error at a specific location (rarely needed)
+ * ctx.errorAt(loc, DiagCode::E1002, "expected", "found");
+ * 
+ * // Warning at current token location
+ * ctx.warning(DiagCode::W0001, "message");
+ * 
+ * // Note at current token location (no code)
+ * ctx.note("Informational message");
+ * ```
+ * 
  * ## Usage
  * 
  * ```cpp
  * ParserContext ctx(pool, arena, resolver);
+ * TokenStream stream(tokens, filePath);
  * 
  * // Parse a file - ctx is shared across all recursive parses
  * auto* ast = parse("main.lucid", source, ctx);
@@ -214,95 +236,88 @@ public:
     // Public Error Reporting API
     // ─────────────────────────────────────────────────────────────────────────
     
+    /**
+     * @brief Report an error at a specific location.
+     * 
+     * @tparam Args The types of the format arguments
+     * @param loc The source location
+     * @param code The diagnostic code
+     * @param args The format arguments for the error message
+     * 
+     * ## Usage Examples
+     * 
+     * ```cpp
+     * // Error at a specific location (rarely needed)
+     * ctx.errorAt(loc, DiagCode::E1002, expected, found);
+     * ```
+     */
     template<typename... Args>
-    void error(Args&&... args) {
-        errorImpl(DiagCode::E0001, std::forward<Args>(args)...);
-    }
-    
-    template<typename... Args>
-    void error(const SourceLocation& loc, Args&&... args) {
-        error(loc, buildMessage(std::forward<Args>(args)...));
-    }
-    
-    template<typename... Args>
-    void warning(Args&&... args) {
-        warningImpl(DiagCode::W0001, std::forward<Args>(args)...);
-    }
-    
-    template<typename... Args>
-    void note(Args&&... args) {
-        noteImpl(std::forward<Args>(args)...);
-    }
-    
-private:
-    template<typename T>
-    struct is_diag_code : std::false_type {};
-    
-    template<>
-    struct is_diag_code<DiagCode> : std::true_type {};
-    
-    template<typename... Args>
-    void errorImpl(DiagCode defaultCode, Args&&... args) {
-        if constexpr (sizeof...(Args) > 0) {
-            using FirstType = typename std::decay<decltype(std::get<0>(std::forward_as_tuple(args...)))>::type;
-            if constexpr (std::is_same<FirstType, DiagCode>::value) {
-                DiagCode code = std::get<0>(std::forward_as_tuple(args...));
-                std::string message = buildRemaining(std::forward<Args>(args)...);
-                addDiagnostic(DiagnosticSeverity::Error, 
-                              DiagnosticCategory::Syntax,
-                              SourceLocation(),  // Will be set by caller with location
-                              code,
-                              message);
-                return;
-            }
-        }
-        std::string message = buildMessage(std::forward<Args>(args)...);
+    void errorAt(const SourceLocation& loc, DiagCode code, Args&&... args) {
         addDiagnostic(DiagnosticSeverity::Error, 
                       DiagnosticCategory::Syntax,
-                      SourceLocation(),
-                      defaultCode,
-                      message);
+                      loc,
+                      code,
+                      buildMessage(std::forward<Args>(args)...));
     }
     
-    template<typename First, typename... Rest>
-    std::string buildRemaining(First&& first, Rest&&... rest) {
-        return buildMessage(std::forward<Rest>(rest)...);
-    }
-    
+    /**
+     * @brief Report a warning at a specific location.
+     */
     template<typename... Args>
-    void warningImpl(DiagCode defaultCode, Args&&... args) {
-        if constexpr (sizeof...(Args) > 0) {
-            using FirstType = typename std::decay<decltype(std::get<0>(std::forward_as_tuple(args...)))>::type;
-            if constexpr (std::is_same<FirstType, DiagCode>::value) {
-                DiagCode code = std::get<0>(std::forward_as_tuple(args...));
-                std::string message = buildRemaining(std::forward<Args>(args)...);
-                addDiagnostic(DiagnosticSeverity::Warning, 
-                              DiagnosticCategory::Syntax,
-                              SourceLocation(),
-                              code,
-                              message);
-                return;
-            }
-        }
-        std::string message = buildMessage(std::forward<Args>(args)...);
+    void warningAt(const SourceLocation& loc, DiagCode code, Args&&... args) {
         addDiagnostic(DiagnosticSeverity::Warning, 
                       DiagnosticCategory::Syntax,
-                      SourceLocation(),
-                      defaultCode,
-                      message);
+                      loc,
+                      code,
+                      buildMessage(std::forward<Args>(args)...));
     }
     
+    // ─────────────────────────────────────────────────────────────────────────
+    // Convenience: Error with location from TokenStream
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    /**
+     * @brief Report an error using the current location from a TokenStream.
+     * 
+     * This is the primary error reporting function used by parser functions.
+     * 
+     * @tparam Args The types of the format arguments
+     * @param stream The token stream to get the current location from
+     * @param code The diagnostic code
+     * @param args The format arguments for the error message
+     * 
+     * ## Usage Examples
+     * 
+     * ```cpp
+     * // Error at current token location
+     * ctx.error(stream, DiagCode::E1002, expected, found);
+     * ```
+     */
     template<typename... Args>
-    void noteImpl(Args&&... args) {
-        std::string message = buildMessage(std::forward<Args>(args)...);
-        addDiagnostic(DiagnosticSeverity::Note, 
-                      DiagnosticCategory::General,
-                      SourceLocation(),
-                      DiagCode::E0001,
-                      message);
+    void error(TokenStream& stream, DiagCode code, Args&&... args) {
+        addDiagnostic(DiagnosticSeverity::Error, 
+                      DiagnosticCategory::Syntax,
+                      stream.currentLoc(),
+                      code,
+                      buildMessage(std::forward<Args>(args)...));
     }
     
-public:
+    /**
+     * @brief Report a warning using the current location from a TokenStream.
+     */
+    template<typename... Args>
+    void warning(TokenStream& stream, DiagCode code, Args&&... args) {
+        addDiagnostic(DiagnosticSeverity::Warning, 
+                      DiagnosticCategory::Syntax,
+                      stream.currentLoc(),
+                      code,
+                      buildMessage(std::forward<Args>(args)...));
+    }
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Context Queries
+    // ─────────────────────────────────────────────────────────────────────────
+    
     /**
      * @brief Check if we can safely continue parsing.
      */
