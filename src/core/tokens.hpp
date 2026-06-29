@@ -176,6 +176,7 @@ enum TokenType {
     // ─── Delimiters ─────────────────────────────────────────────────────
     COMMA,      // ,
     SEMICOLON,  // ;        (optional, but accepted)
+    NEWLINE,    // \n       (newline, used as separator)
     LPAREN,     // (
     RPAREN,     // )
     LBRACE,     // {
