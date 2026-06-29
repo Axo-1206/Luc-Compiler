@@ -1263,9 +1263,18 @@ ArenaSpan<TypeAST*> parseReturnList(TokenStream& stream, ParserContext& ctx) {
  * use mylib                     → ["mylib"]
  * ```
  * 
+ * ## Error Handling
+ * 
+ * - Trailing '.' (e.g., `std.io.`) → reports E1106
+ * - Missing identifier after '.' → reports E1002
+ * - Empty path → reports E1002
+ * 
  * @param stream The token stream for the current file
  * @param ctx The parsing context
- * @return std::vector<InternedString> The path components
+ * @return std::vector<InternedString> The path components (empty on error)
+ *
+ * @note this function does not consume `;`, the top level function already
+ *       does it
  */
 std::vector<InternedString> parseUsePath(TokenStream& stream, ParserContext& ctx) {
     LOG_PARSER_DETAIL("parseUsePath: parsing use path");
@@ -1274,7 +1283,7 @@ std::vector<InternedString> parseUsePath(TokenStream& stream, ParserContext& ctx
     
     // Expect at least one identifier
     if (!stream.check(TokenType::IDENTIFIER)) {
-        ctx.error(stream, DiagCode::E1002, stream.peekValue());
+        ctx.error(stream, DiagCode::E1002, "identifier in use path", stream.peekValue());
         return pathParts;
     }
     
@@ -1283,10 +1292,28 @@ std::vector<InternedString> parseUsePath(TokenStream& stream, ParserContext& ctx
     pathParts.push_back(ctx.pool.intern(tok.value));
     
     // Parse additional identifiers separated by '.'
-    while (stream.match(TokenType::DOT)) {
+    while (stream.check(TokenType::DOT)) {
+        stream.advance(); // Consume '.'
+        
+        // ─── Check for trailing '.' ─────────────────────────────────────
+        // If we see EOF, 'as', or something that can't start an identifier,
+        // it's a trailing dot error
+        if (stream.isAtEnd()) {
+            ctx.error(stream, DiagCode::E1106); // Unexpected trailing '.'
+            break;
+        }
+        
+        // Check for 'as' after dot - this means trailing dot before alias
+        if (stream.check(TokenType::AS)) {
+            ctx.error(stream, DiagCode::E1106); // Unexpected trailing '.'
+            // Don't consume 'as' - let the caller handle it
+            break;
+        }
+        
+        // Error if no identifier was found after '.'
         if (!stream.check(TokenType::IDENTIFIER)) {
-            ctx.error(stream.currentLoc(), "Expected identifier after '.' in use path");
-            synchronize(stream, ctx);
+            ctx.error(stream, DiagCode::E1002, "identifier after '.'", stream.peekValue());
+            synchronizeTo(stream, ctx, {TokenType::AS, TokenType::SEMICOLON});
             break;
         }
         
@@ -1324,6 +1351,11 @@ std::vector<InternedString> parseUsePath(TokenStream& stream, ParserContext& ctx
  * : Container<int>   → name="Container",  genericArgs=[Int]
  * ```
  * 
+ * ## Important Note
+ * 
+ * This function does NOT consume `:`. The caller (parseGenericParamDecl)
+ * already consumes the `:` before calling this function.
+ * 
  * @param stream The token stream for the current file
  * @param ctx The parsing context
  * @return TraitRefPtr The parsed trait reference, or nullptr on error
@@ -1333,7 +1365,7 @@ TraitRefPtr parseTraitRef(TokenStream& stream, ParserContext& ctx) {
     
     // Expect an identifier for the trait name
     if (!stream.check(TokenType::IDENTIFIER)) {
-        ctx.error(loc, "Expected trait name");
+        ctx.error(stream, DiagCode::E1002, "trait name", stream.peekValue());
         synchronize(stream, ctx);
         return nullptr;
     }

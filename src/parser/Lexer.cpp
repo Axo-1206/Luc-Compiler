@@ -71,9 +71,7 @@ inline char peek_char(const LexerState& state, int offset = 0) {
 
 inline void advance(LexerState& state) {
     if (is_at_end(state)) return;
-    
-    char c = current_char(state);
-    if (c == '\n') {
+    if (current_char(state) == '\n') {
         state.line++;
         state.column = 1;
     } else {
@@ -107,12 +105,14 @@ inline Token error_token(const std::string& message, const LexerState& state) {
     return Token{TokenType::UNKNOWN, message, state.line, state.column};
 }
 
-// ─── Skip Whitespace (but NOT newlines) ─────────────────────────────
+// ─── Skip Whitespace ─────────────────────────────────────────────────
 
 void skip_whitespace(LexerState& state) {
     while (!is_at_end(state)) {
         char c = current_char(state);
         if (c == ' ' || c == '\t' || c == '\r') {
+            advance(state);
+        } else if (c == '\n') {
             advance(state);
         } else {
             break;
@@ -786,33 +786,7 @@ Token lex_operator_or_punctuation(LexerState& state) {
         return Token{TokenType::VARIADIC, "...", start_line, start_col};
     }
     
-    // ─── NEWLINE ─────────────────────────────────────────────────────
-    if (c == '\n') {
-        advance(state);
-        return Token{TokenType::NEWLINE, "\n", start_line, start_col};
-    }
-    
-    // Unknown/Unrecognized character
-    // Check if it's a non-ASCII character (Japanese, Chinese, Korean, etc.)
-    unsigned char uc = static_cast<unsigned char>(c);
-    if (uc > 0x7F) {
-        // Non-ASCII character - only valid inside strings
-        // Since we're outside a string, report as unknown
-        std::string msg = "Invalid character outside string: '";
-        msg += c;
-        msg += "' (non-ASCII characters are only allowed inside strings)";
-        advance(state);
-        
-        // Skip any additional bytes of a multi-byte UTF-8 character
-        // This prevents the lexer from getting confused by multi-byte sequences
-        // UTF-8 continuation bytes start with 10xxxxxx (0x80-0xBF)
-        while (!is_at_end(state) && (static_cast<unsigned char>(current_char(state)) & 0xC0) == 0x80) {
-            advance(state);
-        }
-        
-        return Token{TokenType::UNKNOWN, msg, start_line, start_col};
-    }
-    
+    // Unknown character
     std::string msg = "Unexpected character: '";
     msg += c;
     msg += "'";
@@ -838,6 +812,7 @@ Token next_token(detail::LexerState& state) {
             return detail::lex_doc_comment(state);
         }
         // Block comment: /- (not followed by another -)
+        // Note: Doc comment check must come first, then block comment
         return detail::lex_block_comment(state);
     }
     
@@ -864,7 +839,7 @@ Token next_token(detail::LexerState& state) {
         return detail::lex_char(state);
     }
     
-    // Operators and punctuation (including NEWLINE)
+    // Operators and punctuation
     return detail::lex_operator_or_punctuation(state);
 }
 

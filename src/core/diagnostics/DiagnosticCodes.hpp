@@ -2,7 +2,7 @@
 #include <cstdint>
 
 enum class DiagCode : uint32_t {
-    // ========== 0000–0099: Environment ==========  
+    // ========== 0000–0099: Environment ==========
     E0001 = 0,      ///< Unknown Error
     E0002,          ///< Too many consecutive errors. Aborting...
     E0003,          ///< File not found or inaccessible.
@@ -14,6 +14,7 @@ enum class DiagCode : uint32_t {
     E0102,          ///< Unterminated string literal.
     E0103,          ///< Unterminated raw string literal.
     E0104,          ///< Unterminated block comment.
+    E0105,          ///< Uknown character.
 
     // ========== 1000–1999: Parsing (Syntax) ==========
     // General codes
@@ -34,6 +35,7 @@ enum class DiagCode : uint32_t {
     E1103,          ///< Trailing comma
     E1104,          ///< Expected attribute argument literal
     E1105,          ///< Unexpected trailing '+' in generic constraints
+    E1106,          ///< Unexpected trailing '.' in path
 
    
 

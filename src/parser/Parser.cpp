@@ -403,6 +403,7 @@ bool parseInternal(TokenStream& stream, ParserContext& ctx, std::vector<DeclPtr>
         }
         
         // ─── Parse a top-level declaration ──────────────────────────────
+        // The declaration parser will consume its own terminating ';'
         auto* decl = parseTopLevelDecl(stream, ctx);
         
         // ─── Check if we're at EOF after parsing a declaration ──────────
@@ -515,6 +516,13 @@ DeclAST* parseTopLevelDecl(TokenStream& stream, ParserContext& ctx) {
         }
         return parseVarDecl(stream, ctx);
     }
+
+    // ─── Consume semicolon ────────────────────────────────────────────────
+    if (!stream.match(TokenType::SEMICOLON)) {
+        ctx.error(stream, DiagCode::E1007, ";", stream.peekValue());
+        synchronize(stream, ctx);
+        // Continue anyway - return the declaration
+    }
     
     // Unknown declaration
     ctx.error(stream, DiagCode::E1008, stream.peekValue());
@@ -550,6 +558,8 @@ DeclAST* parseTopLevelDecl(TokenStream& stream, ParserContext& ctx) {
  * @param stream The token stream for the current file
  * @param ctx The parsing context
  * @return UseDeclAST* The use declaration AST node, or nullptr on error
+ *
+ * @note the caller of this function already consume `;`
  */
 UseDeclAST* parseUseDecl(TokenStream& stream, ParserContext& ctx) {
     LOG_PARSER("Enter UseDecl");

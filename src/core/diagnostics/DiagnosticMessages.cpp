@@ -17,6 +17,7 @@ std::string_view getMessage(DiagCode code) {
         case DiagCode::E0102: return "Unterminated string literal.";
         case DiagCode::E0103: return "Unterminated raw string literal.";
         case DiagCode::E0104: return "Unterminated block comment.";
+        case DiagCode::E0105: return "Unknown character.";
 
         // ========== 1000–1999: Parsing (Syntax) ==========
         case DiagCode::E1001: return "Expected keyword '%s', but found '%s'";
@@ -35,6 +36,7 @@ std::string_view getMessage(DiagCode code) {
         case DiagCode::E1103: return "Unexpected trailing comma";
         case DiagCode::E1104: return "Expected argument literal (string, integer, float, bool, or identifier), but found %s";
         case DiagCode::E1105: return "Unexpected trailing '+' in generic constraints";
+        case DiagCode::E1106: return "Unexpected trailing '.' in path";
 
         // case DiagCode::E1104: return "Visibility modifier '%s' not allowed in local declaration";
         // // case DiagCode::E1105: return "Invalid context: 'use' declaration is not allowed inside a block";
