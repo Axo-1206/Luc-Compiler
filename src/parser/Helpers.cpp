@@ -175,6 +175,29 @@ std::optional<DocComment> harvestDocComment(TokenStream& stream, ParserContext& 
  * | `@[inline]`            | function declaration      | Hint to inline at call sites                   |
  * | `@[noinline]`          | function declaration      | Prevent inlining                               |
  * 
+ * parseAttributes()
+ *   │
+ *   ├── Consumes '@'
+ *   ├── Consumes '['
+ *   │
+ *   ├── while (not ']') {
+ *   │     │
+ *   │     └── parseAttribute()
+ *   │           │
+ *   │           ├── Parses name
+ *   │           ├── if '(' then consumes '('
+ *   │           │   │
+ *   │           │   └── while (not ')') {
+ *   │           │         ├── parseAttributeArgLiteral()
+ *   │           │         └── if ',' then consumes ','
+ *   │           │       }
+ *   │           │
+ *   │           └── Consumes ')'  (owned by parseAttribute)
+ *   │
+ *   │     if ',' then consumes ','  (owned by parseAttributes)
+ *   │
+ *   └── Consumes ']'  (owned by parseAttributes)
+ * 
  * @param stream The token stream for the current file
  * @param ctx The parsing context
  * @return ArenaSpan<AttributePtr> The parsed attributes (empty if none)
@@ -449,74 +472,6 @@ AttributeArgPtr parseAttributeArgLiteral(TokenStream& stream, ParserContext& ctx
 }
 
 // =============================================================================
-// parseGenericParamDecl - Parse a single generic parameter declaration
-// =============================================================================
-
-/**
- * @brief Parse a single generic parameter declaration.
- * 
- * Grammar: `IDENTIFIER [ ':' trait_ref { '+' trait_ref } ]`
- * 
- * ## Examples
- * 
- * ```lucid
- * struct Box<T> { ... }                    // T (unconstrained)
- * const magnitude<T : Vector2> (v T) ...   // T constrained by Vector2
- * struct Pair<A : Named + Serializable>    // A constrained by Named and Serializable
- * ```
- * 
- * @param stream The token stream for the current file
- * @param ctx The parsing context
- * @return GenericParamDeclPtr The parsed generic parameter, or nullptr on error
- */
-GenericParamDeclPtr parseGenericParamDecl(TokenStream& stream, ParserContext& ctx) {
-    SourceLocation loc = stream.currentLoc();
-    
-    // Expect an identifier for the parameter name
-    if (!stream.check(TokenType::IDENTIFIER)) {
-        ctx.error(loc, "Expected generic parameter name");
-        synchronize(stream, ctx);
-        return nullptr;
-    }
-    
-    Token nameTok = stream.advance();
-    InternedString name = ctx.pool.intern(nameTok.value);
-    
-    // Create the generic parameter node
-    auto* param = ctx.arena.make<GenericParamDeclAST>(name);
-    param->loc = loc;
-    
-    // Check for constraints (optional)
-    if (stream.match(TokenType::COLON)) {
-        std::vector<TraitRefPtr> constraints;
-        
-        // Parse trait references separated by '+'
-        do {
-            TraitRefPtr traitRef = parseTraitRef(stream, ctx);
-            if (traitRef) {
-                constraints.push_back(traitRef);
-            } else {
-                ctx.error(stream.currentLoc(), "Expected trait reference after ':' or '+'");
-                synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::GREATER});
-                break;
-            }
-        } while (stream.match(TokenType::PLUS));
-        
-        // Build the constraints span
-        auto builder = ctx.arena.makeBuilder<TraitRefPtr>();
-        for (auto* tr : constraints) {
-            builder.push_back(tr);
-        }
-        param->constraints = builder.build();
-    }
-    
-    LOG_PARSER_DETAIL("parseGenericParamDecl: parsed parameter '", 
-                       ctx.toString(name), "' with ", param->constraints.size(), " constraints");
-    
-    return param;
-}
-
-// =============================================================================
 // parseGenericParamDecls - Parse a list of generic parameters
 // =============================================================================
 
@@ -533,6 +488,25 @@ GenericParamDeclPtr parseGenericParamDecl(TokenStream& stream, ParserContext& ct
  * const process<T : Vector2, U> (v T) ...  // <T : Vector2, U>
  * ```
  * 
+ * ## Error Handling
+ * 
+ * - Empty list `<>` → reports E1009
+ * - Trailing comma `<T, >` → reports E1103
+ * - Trailing plus `<T : Vector2 + >` → reports E1105
+ * - Missing `>` at EOF → reports E1005
+ * 
+ * parseGenericParamDecls()
+ *  ├── Consumes '<'
+ *  ├── parseGenericParamDecl()
+ *  │   ├── Parses "T"
+ *  │   ├── Consumes ':'
+ *  │   ├── Parses "Vector2"
+ *  │   ├── Consumes '+'
+ *  │   ├── Sees '>' → reports E1105, breaks (does NOT consume '>')
+ *  │   └── Returns param
+ *  ├── Sees '>' → consumes '>'
+ *  └── Returns
+ * 
  * @param stream The token stream for the current file
  * @param ctx The parsing context
  * @return ArenaSpan<GenericParamDeclPtr> The parsed generic parameters (empty on error)
@@ -544,34 +518,76 @@ ArenaSpan<GenericParamDeclPtr> parseGenericParamDecls(TokenStream& stream, Parse
     
     // Expect '<' to start the list
     if (!stream.check(TokenType::LESS)) {
-        ctx.error(stream.currentLoc(), "Expected '<' for generic parameters");
+        ctx.error(stream, DiagCode::E1004, "<", "generic parameter list", stream.peekValue());
         return ctx.arena.makeBuilder<GenericParamDeclPtr>().build();
     }
     stream.advance(); // Consume '<'
     
+    // Check for empty generic parameter list: <>
+    if (stream.check(TokenType::GREATER)) {
+        ctx.error(stream, DiagCode::E1009, "generic parameter", ">");
+        stream.advance(); // Consume '>'
+        return ctx.arena.makeBuilder<GenericParamDeclPtr>().build();
+    }
+    
     // Parse parameters until we hit '>'
-    while (!stream.check(TokenType::GREATER) && !stream.isAtEnd()) {
+    while (!stream.isAtEnd()) {
+        // ─── Parse a single generic parameter ───────────────────────────
         GenericParamDeclPtr param = parseGenericParamDecl(stream, ctx);
         if (param) {
             params.push_back(param);
+        } else {
+            // Error already reported, try to recover
+            synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::GREATER});
+            if (stream.check(TokenType::COMMA)) {
+                stream.advance();
+            } else if (stream.check(TokenType::GREATER)) {
+                // We found the closing '>', consume it and exit
+                stream.advance();
+                break;
+            } else {
+                // No recovery token found - break to avoid infinite loop
+                break;
+            }
+            continue;
         }
         
-        // Check for comma separator
+        // ─── Check for comma separator ──────────────────────────────────
         if (stream.check(TokenType::COMMA)) {
             stream.advance(); // Consume comma
-        } else if (!stream.check(TokenType::GREATER)) {
-            ctx.error(stream.currentLoc(), "Expected ',' or '>' in generic parameter list");
+            
+            // Check for trailing comma: <T, U, >
+            if (stream.check(TokenType::GREATER)) {
+                ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
+                stream.advance(); // Consume '>'
+                break;
+            }
+            
+            // Check if we're at EOF after comma
+            if (stream.isAtEnd()) {
+                ctx.error(stream, DiagCode::E1005, ">", "generic parameter list", "<EOF>");
+                break;
+            }
+            
+            // Continue to parse next parameter
+        } else if (stream.check(TokenType::GREATER)) {
+            // End of generic parameter list
+            stream.advance(); // Consume '>'
+            break;
+        } else {
+            // Unexpected token
+            ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or '>'");
             synchronizeTo(stream, ctx, {TokenType::GREATER});
+            if (stream.check(TokenType::GREATER)) {
+                stream.advance(); // Consume '>' and exit
+            }
             break;
         }
     }
     
-    // Expect '>' to close the list
-    if (!stream.check(TokenType::GREATER)) {
-        ctx.error(stream.currentLoc(), "Expected '>' to close generic parameter list");
-        synchronizeTo(stream, ctx, {TokenType::GREATER});
-    } else {
-        stream.advance(); // Consume '>'
+    // ─── Check if we exited because of EOF ──────────────────────────────
+    if (stream.isAtEnd()) {
+        ctx.error(stream, DiagCode::E1005, ">", "generic parameter list", "<EOF>");
     }
     
     // Build the ArenaSpan
@@ -586,55 +602,113 @@ ArenaSpan<GenericParamDeclPtr> parseGenericParamDecls(TokenStream& stream, Parse
 }
 
 // =============================================================================
-// parseGenericArg - Parse a single generic argument
+// parseGenericParamDecl - Parse a single generic parameter declaration
 // =============================================================================
 
 /**
- * @brief Parse a single generic argument.
+ * @brief Parse a single generic parameter declaration.
  * 
- * Grammar: `type | INT_LIT`
- * 
- * Generic arguments are concrete types or integer literals supplied at
- * instantiation sites. They are resolved against the generic parameters
- * during semantic analysis.
+ * Grammar: `IDENTIFIER [ ':' trait_ref { '+' trait_ref } ]`
  * 
  * ## Examples
  * 
  * ```lucid
- * Box<int>              → type argument: int
- * Buffer<Vec2>          → type argument: Vec2
- * Array<10, float>      → integer literal: 10, type: float
- * Map<string, int>      → type arguments: string, int
+ * struct Box<T> { ... }                    // T (unconstrained)
+ * const magnitude<T : Vector2> (v T) ...   // T constrained by Vector2
+ * struct Pair<A : Named + Serializable>    // A constrained by Named and Serializable
  * ```
+ * 
+ * ## Error Handling
+ * 
+ * - Trailing '+' (e.g., `T : Vector2 +`) → reports E1105
+ * - Missing trait after '+' → reports E1009
  * 
  * @param stream The token stream for the current file
  * @param ctx The parsing context
- * @return TypePtr The parsed generic argument, or nullptr on error
+ * @return GenericParamDeclPtr The parsed generic parameter, or nullptr on error
+ * 
+ * @note This function does NOT consume `>` or `,`. That is handled by
+ *       the caller (parseGenericParamDecls).
  */
-TypePtr parseGenericArg(TokenStream& stream, ParserContext& ctx) {
+GenericParamDeclPtr parseGenericParamDecl(TokenStream& stream, ParserContext& ctx) {
     SourceLocation loc = stream.currentLoc();
     
-    // Check for integer literal argument (e.g., Array<10, float>)
-    if (stream.check(TokenType::INT_LITERAL) ||
-        stream.check(TokenType::HEX_LITERAL) ||
-        stream.check(TokenType::BINARY_LITERAL) ||
-        stream.check(TokenType::CHAR_LITERAL)) {
-        
-        // Integer literal as a type argument is special - it's used for
-        // compile-time constant parameters (like array sizes)
-        // For now, we treat it as a primitive type with the literal value.
-        // In the future, this might need a dedicated AST node.
-        
-        // Parse it as a primitive type with the literal value
-        // This is a simplified approach - a full implementation might need
-        // a dedicated IntegerLiteraLESSypeAST node.
-        ctx.error(loc, "Integer literals as generic arguments are not yet supported. Use a type instead.");
-        stream.advance(); // Consume the literal to make progress
+    // Expect an identifier for the parameter name
+    if (!stream.check(TokenType::IDENTIFIER)) {
+        ctx.error(stream, DiagCode::E1002, "generic parameter name", stream.peekValue());
+        synchronize(stream, ctx);
         return nullptr;
     }
     
-    // Otherwise, parse it as a type
-    return parseType(stream, ctx);
+    Token nameTok = stream.advance();
+    InternedString name = ctx.pool.intern(nameTok.value);
+    
+    // Create the generic parameter node
+    auto* param = ctx.arena.make<GenericParamDeclAST>(name);
+    param->loc = loc;
+    
+    // Check for constraints (optional)
+    if (stream.match(TokenType::COLON)) {
+        std::vector<TraitRefPtr> constraints;
+        bool hasConstraint = false;
+        
+        // Parse trait references separated by '+'
+        while (!stream.isAtEnd()) {
+            // ─── Check for trailing '+' ────────────────────────────────
+            if (stream.check(TokenType::PLUS)) {
+                if (!hasConstraint) {
+                    // '+' before any trait - trailing plus error
+                    ctx.error(stream, DiagCode::E1105);
+                    stream.advance(); // Consume '+'
+                    continue;
+                } else {
+                    // '+' after a trait - check if it's a trailing plus
+                    stream.advance(); // Consume '+'
+                    
+                    // If we're at EOF, '>', or ',', it's a trailing plus
+                    if (stream.isAtEnd()) {
+                        break;
+                    } else if (stream.check(TokenType::GREATER) || stream.check(TokenType::COMMA)) {
+                        ctx.error(stream, DiagCode::E1105);
+                        // IMPORTANT: We DO NOT consume '>' or ',' here.
+                        // The caller (parseGenericParamDecls) will handle the closing '>'
+                        // or the next parameter after ','.
+                        break;
+                    }
+                    // Otherwise, continue to parse next trait
+                    continue;
+                }
+            }
+            
+            // Parse a trait reference
+            TraitRefPtr traitRef = parseTraitRef(stream, ctx);
+            if (traitRef) {
+                constraints.push_back(traitRef);
+                hasConstraint = true;
+            } else {
+                ctx.error(stream, DiagCode::E1009, "trait reference after ':' or '+'", stream.peekValue());
+                synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::GREATER});
+                break;
+            }
+            
+            // Check if we've reached the end of constraints
+            if (!stream.check(TokenType::PLUS)) {
+                break;
+            }
+        }
+        
+        // Build the constraints span
+        auto builder = ctx.arena.makeBuilder<TraitRefPtr>();
+        for (auto* tr : constraints) {
+            builder.push_back(tr);
+        }
+        param->constraints = builder.build();
+    }
+    
+    LOG_PARSER_DETAIL("parseGenericParamDecl: parsed parameter '", 
+                       ctx.toString(name), "' with ", param->constraints.size(), " constraints");
+    
+    return param;
 }
 
 // =============================================================================
@@ -652,8 +726,14 @@ TypePtr parseGenericArg(TokenStream& stream, ParserContext& ctx) {
  * Box<int>                          → <int>
  * Buffer<Vec2>                      → <Vec2>
  * Map<string, int>                  → <string, int>
- * Array<10, float>                  → <10, float>
  * ```
+ * 
+ * ## Error Handling
+ * 
+ * - Empty list `<>` → reports E1009
+ * - Trailing comma `<int, >` → reports E1103
+ * - Missing `>` at EOF → reports E1005
+ * - Invalid argument → parseType handles the error
  * 
  * @param stream The token stream for the current file
  * @param ctx The parsing context
@@ -666,34 +746,75 @@ ArenaSpan<TypePtr> parseGenericArgs(TokenStream& stream, ParserContext& ctx) {
     
     // Expect '<' to start the list
     if (!stream.check(TokenType::LESS)) {
-        ctx.error(stream.currentLoc(), "Expected '<' for generic arguments");
+        ctx.error(stream, DiagCode::E1004, "<", "generic argument list", stream.peekValue());
         return ctx.arena.makeBuilder<TypePtr>().build();
     }
     stream.advance(); // Consume '<'
     
+    // Check for empty generic argument list: <>
+    if (stream.check(TokenType::GREATER)) {
+        ctx.error(stream, DiagCode::E1009, "generic argument", ">");
+        stream.advance(); // Consume '>'
+        return ctx.arena.makeBuilder<TypePtr>().build();
+    }
+    
     // Parse arguments until we hit '>'
-    while (!stream.check(TokenType::GREATER) && !stream.isAtEnd()) {
-        TypePtr arg = parseGenericArg(stream, ctx);
+    while (!stream.isAtEnd()) {
+        // Parse a type as the generic argument
+        TypePtr arg = parseType(stream, ctx);
         if (arg) {
             args.push_back(arg);
+        } else {
+            // Error already reported by parseType, try to recover
+            synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::GREATER});
+            if (stream.check(TokenType::COMMA)) {
+                stream.advance();
+            } else if (stream.check(TokenType::GREATER)) {
+                stream.advance(); // Consume '>' and exit
+                break;
+            } else {
+                // No recovery token found - break to avoid infinite loop
+                break;
+            }
+            continue;
         }
         
         // Check for comma separator
         if (stream.check(TokenType::COMMA)) {
             stream.advance(); // Consume comma
-        } else if (!stream.check(TokenType::GREATER)) {
-            ctx.error(stream.currentLoc(), "Expected ',' or '>' in generic argument list");
+            
+            // Check for trailing comma: <int, string, >
+            if (stream.check(TokenType::GREATER)) {
+                ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
+                stream.advance(); // Consume '>'
+                break;
+            }
+            
+            // Check if we're at EOF after comma
+            if (stream.isAtEnd()) {
+                ctx.error(stream, DiagCode::E1005, ">", "generic argument list", "<EOF>");
+                break;
+            }
+            
+            // Continue to parse next argument
+        } else if (stream.check(TokenType::GREATER)) {
+            // End of generic argument list
+            stream.advance(); // Consume '>'
+            break;
+        } else {
+            // Unexpected token
+            ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or '>'");
             synchronizeTo(stream, ctx, {TokenType::GREATER});
+            if (stream.check(TokenType::GREATER)) {
+                stream.advance(); // Consume '>' and exit
+            }
             break;
         }
     }
     
-    // Expect '>' to close the list
-    if (!stream.check(TokenType::GREATER)) {
-        ctx.error(stream.currentLoc(), "Expected '>' to close generic argument list");
-        synchronizeTo(stream, ctx, {TokenType::GREATER});
-    } else {
-        stream.advance(); // Consume '>'
+    // ─── Check if we exited because of EOF ──────────────────────────────
+    if (stream.isAtEnd()) {
+        ctx.error(stream, DiagCode::E1005, ">", "generic argument list", "<EOF>");
     }
     
     // Build the ArenaSpan

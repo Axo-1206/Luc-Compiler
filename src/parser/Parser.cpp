@@ -234,13 +234,153 @@ ProgramAST* parse(const std::string& path,
 /**
  * @brief Parse the internal declarations of a single file.
  * 
- * This does NOT handle imports - it only parses the declarations within
- * the current file. Imports are handled by parseUseDecl().
+ * This function is the core of the parser's file-level processing. It consumes
+ * tokens from the stream and produces a collection of top-level declarations.
  * 
- * @param stream The token stream for the file
- * @param ctx The parsing context
- * @param outDecls Output vector to collect declarations
- * @return true if parsing succeeded, false on fatal error
+ * ## Program Flow
+ * 
+ * ```
+ * parseInternal()
+ *     │
+ *     ├── 1. Setup Phase
+ *     │   ├── Log entry
+ *     │   └── Initialize tracking variables
+ *     │       ├── declCount = 0
+ *     │       ├── consecutiveFailures = 0
+ *     │       └── lastPos = stream.getPos()
+ *     │
+ *     ├── 2. Main Parsing Loop
+ *     │   │
+ *     │   └── while (!stream.isAtEnd() && consecutiveFailures < MAX)
+ *     │       │
+ *     │       ├── 2.1 Harvest Doc Comment
+ *     │       │   └── harvestDocComment() → scans backward for attached comments
+ *     │       │
+ *     │       ├── 2.2 Skip Stray Semicolons
+ *     │       │   └── if (stream.check(SEMICOLON)) → advance() and continue
+ *     │       │
+ *     │       ├── 2.3 Parse Declaration
+ *     │       │   └── parseTopLevelDecl()
+ *     │       │       │
+ *     │       │       ├── USE → parseUseDecl()
+ *     │       │       │   └── Imports module (recursive)
+ *     │       │       │
+ *     │       │       ├── STRUCT → parseStructDecl()
+ *     │       │       │
+ *     │       │       ├── ENUM → parseEnumDecl()
+ *     │       │       │
+ *     │       │       ├── TRAIT → parseTraitDecl()
+ *     │       │       │
+ *     │       │       └── LET/CONST → parseVarDecl() or parseFuncDecl()
+ *     │       │
+ *     │       ├── 2.4 Progress Check
+ *     │       │   │
+ *     │       │   ├── if (stream.getPos() == savedPos)
+ *     │       │   │   ├── No progress → consecutiveFailures++
+ *     │       │   │   ├── Log stuck token
+ *     │       │   │   ├── Force consume token if not at EOF
+ *     │       │   │   └── if (consecutiveFailures > 5)
+ *     │       │   │       └── synchronize() → aggressive recovery
+ *     │       │   │
+ *     │       │   ├── else if (decl != nullptr)
+ *     │       │   │   ├── declCount++
+ *     │       │   │   ├── consecutiveFailures = 0
+ *     │       │   │   ├── lastPos = stream.getPos()
+ *     │       │   │   ├── Attach doc comment if present
+ *     │       │   │   └── outDecls.push_back(decl)
+ *     │       │   │
+ *     │       │   └── else
+ *     │       │       └── consecutiveFailures = 0
+ *     │       │           (made progress but returned nullptr)
+ *     │       │
+ *     │       └── 2.5 Critical Stuck Detection
+ *     │           └── if (stream.getPos() == lastPos && consecutiveFailures > 10)
+ *     │               ├── Log critical stuck
+ *     │               ├── Force consume token
+ *     │               └── lastPos = stream.getPos()
+ *     │
+ *     ├── 3. Error Handling
+ *     │   │
+ *     │   ├── if (consecutiveFailures >= MAX)
+ *     │   │   ├── ctx.error(stream, DiagCode::E0002, MAX)
+ *     │   │   └── return false
+ *     │   │
+ *     │   └── if (stream.isAtEnd() && ctx.hasErrors)
+ *     │       └── Log that errors occurred (safety net)
+ *     │
+ *     └── 4. Return
+ *         ├── LOG_PARSER_MINIMAL("Parsed N declarations")
+ *         └── return true
+ * ```
+ * 
+ * ## Error Recovery Strategy
+ * 
+ * The parser uses a multi-level error recovery strategy:
+ * 
+ * ### Level 1: Per-Declaration Recovery
+ * - Each declaration parser attempts to recover from local errors
+ * - Returns nullptr on failure, allowing the loop to continue
+ * 
+ * ### Level 2: Progress Detection
+ * - If the stream position doesn't advance, we force consume a token
+ * - Prevents infinite loops on malformed input
+ * 
+ * ### Level 3: Panic Recovery
+ * - After 5 consecutive failures, call `synchronize()`
+ * - Skips tokens until a statement/declaration boundary is found
+ * 
+ * ### Level 4: Abort
+ * - After 100 consecutive failures, abort parsing
+ * - Prevents infinite loops in pathological cases
+ * 
+ * ## Declaration Collection
+ * 
+ * All successfully parsed declarations are collected into `outDecls`:
+ * - Each declaration has its doc comment attached (if any)
+ * - Declarations are stored in source order
+ * - Imported modules are parsed recursively via `parseUseDecl()`
+ * 
+ * ## Token Stream State
+ * 
+ * After this function completes, the token stream will be at:
+ * - EOF (normal case)
+ * - A recovery point (if errors occurred)
+ * - The position where parsing was aborted (fatal error)
+ * 
+ * ## Thread Safety
+ * 
+ * Not thread-safe. Requires exclusive access to the token stream.
+ * 
+ * @param stream The token stream for the file being parsed.
+ *              This stream is consumed during parsing.
+ * @param ctx The parsing context (shared across all files).
+ *           Contains error tracking, allocators, and module resolver.
+ * @param outDecls Output vector to collect successfully parsed declarations.
+ *                Each declaration will have its doc comment attached.
+ *                The vector is cleared by the caller before calling this function.
+ * 
+ * @return true if parsing succeeded (including with recoverable errors).
+ *         false if a fatal error occurred and parsing was aborted.
+ * 
+ * ## Usage Example
+ * 
+ * ```cpp
+ * std::vector<DeclPtr> decls;
+ * if (!parseInternal(stream, ctx, decls)) {
+ *     // Fatal error - cannot continue
+ *     return nullptr;
+ * }
+ * // All declarations are in decls
+ * ```
+ * 
+ * @note This function does NOT handle imports directly. Imports are handled
+ *       by parseUseDecl() which is called from parseTopLevelDecl().
+ *       The imported module's declarations are collected recursively
+ *       when parseUseDecl() calls parse() on the imported file.
+ * 
+ * @warning If this function returns false, the token stream may be in an
+ *          inconsistent state. The caller should not attempt to continue
+ *          parsing the same file.
  */
 bool parseInternal(TokenStream& stream, ParserContext& ctx, std::vector<DeclPtr>& outDecls) {
     LOG_PARSER_MINIMAL("Parsing internal declarations of: ", 

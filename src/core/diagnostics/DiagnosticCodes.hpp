@@ -33,6 +33,7 @@ enum class DiagCode : uint32_t {
     E1102,          ///< Expected name alias after keyword 'as'
     E1103,          ///< Trailing comma
     E1104,          ///< Expected attribute argument literal
+    E1105,          ///< Unexpected trailing '+' in generic constraints
 
     // E1105,          ///< Invalid context: 'use' declaration is not allowed inside a block
     // E1106,          ///< Invalid argument for attribute

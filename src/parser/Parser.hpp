@@ -156,7 +156,6 @@ AttributeArgPtr parseAttributeArgLiteral(TokenStream& stream, ParserContext& ctx
 
 GenericParamDeclPtr parseGenericParamDecl(TokenStream& stream, ParserContext& ctx);
 ArenaSpan<GenericParamDeclPtr> parseGenericParamDecls(TokenStream& stream, ParserContext& ctx);
-TypePtr parseGenericArg(TokenStream& stream, ParserContext& ctx);
 ArenaSpan<TypePtr> parseGenericArgs(TokenStream& stream, ParserContext& ctx);
 
 ArenaSpan<ExprAST*> parseArgList(TokenStream& stream, ParserContext& ctx);
