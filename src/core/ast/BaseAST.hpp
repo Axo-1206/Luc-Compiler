@@ -158,7 +158,6 @@ enum class ASTKind : uint16_t {
     PrimitiveType,
     NamedType,
     ArrayType,
-    GenericParamRef,
     NullableType,
     FallibleType,
     CombinedType,      // T?!

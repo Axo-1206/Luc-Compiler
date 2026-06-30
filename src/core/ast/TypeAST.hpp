@@ -132,36 +132,6 @@ struct NamedTypeAST : TypeAST {
 };
 
 /**
- * @brief Represents a use of a generic type parameter as a type.
- *
- * This node appears wherever a type expression may refer to a type variable
- * that was declared by a GenericParamDeclAST. It acts as a leaf in the type
- * AST, standing for an unknown type that will be instantiated later.
- *
- * @example
- *   const identity<T> (v T) -> T { ... }      // the T in parameter and return
- *   struct Box<T> { value T }                 // the T in field type
- *
- * ─── Semantic Role ─────────────────────────────────────────────────────────
- * The `declaration` field is set during semantic analysis to point to the
- * GenericParamDeclAST that declared this variable. This allows the type system
- * to know which type parameter is being referenced, including its constraints.
- *
- * @field name        The name of the type parameter being referenced (e.g., "T").
- * @field declaration Pointer to the declaration that introduced this parameter
- *                    (set during type resolution, initially nullptr).
- */
-struct GenericParamRefAST : TypeAST {
-    static constexpr ASTKind staticKind = ASTKind::GenericParamRef;
-
-    InternedString name;
-    GenericParamDeclAST* declaration = nullptr;   // back‑pointer to the declaration
-
-    explicit GenericParamRefAST(InternedString n)
-        : TypeAST(ASTKind::GenericParamRef), name(n) {}
-};
-
-/**
  * @brief Wraps an inner type with the nullable suffix `?`.
  *
  * @example

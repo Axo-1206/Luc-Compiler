@@ -246,7 +246,7 @@ ArenaSpan<AttributePtr> parseAttributes(TokenStream& stream, ParserContext& ctx)
             attrs.push_back(attr);
         } else {
             // Error already reported, try to recover
-            synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::RBRACKET});
+            synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RBRACKET);
             if (stream.check(TokenType::COMMA)) {
                 stream.advance();
             }
@@ -273,7 +273,7 @@ ArenaSpan<AttributePtr> parseAttributes(TokenStream& stream, ParserContext& ctx)
         } else {
             // Unexpected token
             ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or ']'");
-            synchronizeTo(stream, ctx, {TokenType::RBRACKET});
+            synchronizeTo(stream, ctx, TokenType::RBRACKET);
             if (stream.check(TokenType::RBRACKET)) {
                 stream.advance();
             }
@@ -343,7 +343,7 @@ AttributePtr parseAttribute(TokenStream& stream, ParserContext& ctx) {
                     args.push_back(arg);
                 } else {
                     // Error already reported, try to recover
-                    synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::RPAREN});
+                    synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RPAREN);
                     if (stream.check(TokenType::COMMA)) {
                         stream.advance();
                     }
@@ -369,7 +369,7 @@ AttributePtr parseAttribute(TokenStream& stream, ParserContext& ctx) {
                 } else {
                     // Unexpected token
                     ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or ')'");
-                    synchronizeTo(stream, ctx, {TokenType::RPAREN});
+                    synchronizeTo(stream, ctx, TokenType::RPAREN);
                     if (stream.check(TokenType::RPAREN)) {
                         stream.advance();
                     }
@@ -538,7 +538,7 @@ ArenaSpan<GenericParamDeclPtr> parseGenericParamDecls(TokenStream& stream, Parse
             params.push_back(param);
         } else {
             // Error already reported, try to recover
-            synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::GREATER});
+            synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::GREATER);
             if (stream.check(TokenType::COMMA)) {
                 stream.advance();
             } else if (stream.check(TokenType::GREATER)) {
@@ -577,7 +577,7 @@ ArenaSpan<GenericParamDeclPtr> parseGenericParamDecls(TokenStream& stream, Parse
         } else {
             // Unexpected token
             ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or '>'");
-            synchronizeTo(stream, ctx, {TokenType::GREATER});
+            synchronizeTo(stream, ctx, TokenType::GREATER);
             if (stream.check(TokenType::GREATER)) {
                 stream.advance(); // Consume '>' and exit
             }
@@ -687,7 +687,7 @@ GenericParamDeclPtr parseGenericParamDecl(TokenStream& stream, ParserContext& ct
                 hasConstraint = true;
             } else {
                 ctx.error(stream, DiagCode::E1009, "trait reference after ':' or '+'", stream.peekValue());
-                synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::GREATER});
+                synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::GREATER);
                 break;
             }
             
@@ -766,7 +766,7 @@ ArenaSpan<TypePtr> parseGenericArgs(TokenStream& stream, ParserContext& ctx) {
             args.push_back(arg);
         } else {
             // Error already reported by parseType, try to recover
-            synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::GREATER});
+            synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::GREATER);
             if (stream.check(TokenType::COMMA)) {
                 stream.advance();
             } else if (stream.check(TokenType::GREATER)) {
@@ -804,7 +804,7 @@ ArenaSpan<TypePtr> parseGenericArgs(TokenStream& stream, ParserContext& ctx) {
         } else {
             // Unexpected token
             ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or '>'");
-            synchronizeTo(stream, ctx, {TokenType::GREATER});
+            synchronizeTo(stream, ctx, TokenType::GREATER);
             if (stream.check(TokenType::GREATER)) {
                 stream.advance(); // Consume '>' and exit
             }
@@ -900,7 +900,7 @@ std::vector<ParamPtr> parseParamList(TokenStream& stream, ParserContext& ctx) {
         // ─── 2. Parse parameter name ─────────────────────────────────────
         if (!stream.check(TokenType::IDENTIFIER)) {
             ctx.error(stream, DiagCode::E1002, "parameter name", stream.peekValue());
-            synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::RPAREN});
+            synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RPAREN);
             if (stream.check(TokenType::COMMA)) {
                 stream.advance();
             } else if (stream.check(TokenType::RPAREN)) {
@@ -918,7 +918,7 @@ std::vector<ParamPtr> parseParamList(TokenStream& stream, ParserContext& ctx) {
         
         if (isVariadic && hasVariadic) {
             ctx.error(stream, DiagCode::E1010, "parameter group", "only one variadic parameter is allowed on each group");
-            synchronizeTo(stream, ctx, {TokenType::RPAREN});
+            synchronizeTo(stream, ctx, TokenType::RPAREN);
             if (stream.check(TokenType::RPAREN)) {
                 stream.advance();
             }
@@ -929,7 +929,7 @@ std::vector<ParamPtr> parseParamList(TokenStream& stream, ParserContext& ctx) {
         TypePtr type = parseType(stream, ctx);
         if (!type) {
             ctx.error(stream, DiagCode::E1009, "parameter type", stream.peekValue());
-            synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::RPAREN});
+            synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RPAREN);
             if (stream.check(TokenType::COMMA)) {
                 stream.advance();
             } else if (stream.check(TokenType::RPAREN)) {
@@ -956,7 +956,7 @@ std::vector<ParamPtr> parseParamList(TokenStream& stream, ParserContext& ctx) {
         if (stream.check(TokenType::COMMA)) {
             if (hasVariadic) {
                 ctx.error(stream, DiagCode::E1010, "parameter group", "variadic parameter must be the last parameter");
-                synchronizeTo(stream, ctx, {TokenType::RPAREN});
+                synchronizeTo(stream, ctx, TokenType::RPAREN);
                 if (stream.check(TokenType::RPAREN)) {
                     stream.advance();
                 }
@@ -985,7 +985,7 @@ std::vector<ParamPtr> parseParamList(TokenStream& stream, ParserContext& ctx) {
         } else {
             // Unexpected token
             ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or ')'");
-            synchronizeTo(stream, ctx, {TokenType::RPAREN});
+            synchronizeTo(stream, ctx, TokenType::RPAREN);
             if (stream.check(TokenType::RPAREN)) {
                 stream.advance(); // Consume ')' and exit
             }
@@ -1060,7 +1060,7 @@ ArenaSpan<ExprAST*> parseArgList(TokenStream& stream, ParserContext& ctx) {
         } else {
             // Error already reported by parseExpr, try to recover
             ctx.error(stream, DiagCode::E1006, stream.peekValue());
-            synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::RPAREN});
+            synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RPAREN);
             if (stream.check(TokenType::COMMA)) {
                 stream.advance();
             } else if (stream.check(TokenType::RPAREN)) {
@@ -1097,7 +1097,7 @@ ArenaSpan<ExprAST*> parseArgList(TokenStream& stream, ParserContext& ctx) {
         } else {
             // Unexpected token
             ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or ')'");
-            synchronizeTo(stream, ctx, {TokenType::RPAREN});
+            synchronizeTo(stream, ctx, TokenType::RPAREN);
             if (stream.check(TokenType::RPAREN)) {
                 stream.advance(); // Consume ')' and exit
             }
@@ -1144,6 +1144,8 @@ ArenaSpan<ExprAST*> parseArgList(TokenStream& stream, ParserContext& ctx) {
  * - Empty parentheses `()` → void (empty return list)
  * - Missing type after comma → reports E1009
  * - Trailing comma `(int, )` → reports E1103
+ * - Multiple consecutive commas `(int,,,string)` → reports E1103 once
+ * - Only commas `(,,,)` → reports E1103, returns empty list
  * - Missing `)` at EOF → reports E1005
  * 
  * @param stream The token stream for the current file
@@ -1165,62 +1167,61 @@ ArenaSpan<TypeAST*> parseReturnList(TokenStream& stream, ParserContext& ctx) {
             return ctx.arena.makeBuilder<TypePtr>().build();
         }
         
-        // Parse types until we hit ')'
+        // ─── Parse types until we hit ')' ──────────────────────────────────
+        bool hasType = false;
+        
         while (!stream.isAtEnd()) {
+            // ─── Skip consecutive separators ────────────────────────────────
+            int separatorCount = 0;
+            while (stream.check(TokenType::COMMA)) {
+                separatorCount++;
+                stream.advance(); // Consume the separator
+            }
+            
+            if (separatorCount > 0) {
+                ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
+            }
+            
+            // ─── Check if we've reached a terminator ────────────────────────
+            if (stream.check(TokenType::RPAREN)) {
+                break; // End of return list
+            }
+            
+            if (stream.isAtEnd()) {
+                ctx.error(stream, DiagCode::E1005, ")", "return list", "<EOF>");
+                break;
+            }
+            
+            // Parse a type
             TypePtr type = parseType(stream, ctx);
             if (type) {
                 returnTypes.push_back(type);
+                hasType = true;
             } else {
                 // Error already reported by parseType, try to recover
                 ctx.error(stream, DiagCode::E1009, "type in return list", stream.peekValue());
-                synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::RPAREN});
+                synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RPAREN);
                 if (stream.check(TokenType::COMMA)) {
                     stream.advance();
+                    continue;
                 } else if (stream.check(TokenType::RPAREN)) {
                     stream.advance(); // Consume ')' and exit
                     break;
                 } else {
                     break;
                 }
-                continue;
-            }
-            
-            // Check for comma separator
-            if (stream.check(TokenType::COMMA)) {
-                stream.advance(); // Consume comma
-                
-                // Check for trailing comma: (int, string, )
-                if (stream.check(TokenType::RPAREN)) {
-                    ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
-                    stream.advance(); // Consume ')'
-                    break;
-                }
-                
-                // Check if we're at EOF after comma
-                if (stream.isAtEnd()) {
-                    ctx.error(stream, DiagCode::E1005, ")", "return list", "<EOF>");
-                    break;
-                }
-                
-                // Continue to parse next type
-            } else if (stream.check(TokenType::RPAREN)) {
-                // End of return list
-                stream.advance(); // Consume ')'
-                break;
-            } else {
-                // Unexpected token
-                ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or ')'");
-                synchronizeTo(stream, ctx, {TokenType::RPAREN});
-                if (stream.check(TokenType::RPAREN)) {
-                    stream.advance(); // Consume ')' and exit
-                }
-                break;
             }
         }
         
-        // ─── Check if we exited because of EOF ──────────────────────────
-        if (stream.isAtEnd()) {
-            ctx.error(stream, DiagCode::E1005, ")", "return list", "<EOF>");
+        // ─── Consume closing parenthesis ────────────────────────────────────
+        if (!stream.check(TokenType::RPAREN)) {
+            ctx.error(stream, DiagCode::E1005, ")", "return list", stream.peekValue());
+            synchronizeTo(stream, ctx, TokenType::RPAREN);
+            if (stream.check(TokenType::RPAREN)) {
+                stream.advance(); // Consume ')' to recover
+            }
+        } else {
+            stream.advance(); // Consume ')'
         }
         
     } else {
@@ -1313,7 +1314,7 @@ std::vector<InternedString> parseUsePath(TokenStream& stream, ParserContext& ctx
         // Error if no identifier was found after '.'
         if (!stream.check(TokenType::IDENTIFIER)) {
             ctx.error(stream, DiagCode::E1002, "identifier after '.'", stream.peekValue());
-            synchronizeTo(stream, ctx, {TokenType::AS, TokenType::SEMICOLON});
+            synchronizeTo(stream, ctx, TokenType::AS, TokenType::SEMICOLON);
             break;
         }
         
@@ -1512,14 +1513,14 @@ ExprPtr parseLvalue(TokenStream& stream, ParserContext& ctx) {
             ExprPtr index = parseExpr(stream, ctx);
             if (!index) {
                 ctx.error(stream.currentLoc(), "Expected index expression");
-                synchronizeTo(stream, ctx, {TokenType::RBRACKET});
+                synchronizeTo(stream, ctx, TokenType::RBRACKET);
                 stream.advance(); // Consume ']' to recover
                 break;
             }
             
             if (!stream.check(TokenType::RBRACKET)) {
                 ctx.error(stream.currentLoc(), "Expected ']' to close index");
-                synchronizeTo(stream, ctx, {TokenType::RBRACKET});
+                synchronizeTo(stream, ctx, TokenType::RBRACKET);
             } else {
                 stream.advance(); // Consume ']'
             }

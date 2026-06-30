@@ -633,6 +633,40 @@ FieldDeclPtr parseFieldDecl(TokenStream& stream, ParserContext& ctx) {
  * 
  * @note This function does NOT consume the terminating semicolon.
  *       The caller (parseDecl) consumes it.
+ *
+ * parseEnumDecl()
+ *    │
+ *    ├── Parse 'enum' keyword
+ *    ├── Parse enum name
+ *    ├── Parse backing type (optional)
+ *    │
+ *    ├── Parse enum body
+ *    │   │
+ *    │   ├── Check for empty body: `}` → return empty enum
+ *    │   │
+ *    │   └── while (!stream.isAtEnd()) {
+ *    │         │
+ *    │         ├── Skip consecutive commas
+ *    │         │   while (check(COMMA)) {
+ *    │         │       count++,
+ *    │         │       advance()
+ *    │         │   }
+ *    │         │
+ *    │         ├── If count > 0: report E1103 once
+ *    │         │
+ *    │         ├── Check for terminator
+ *    │         │   if (check(RBRACE)) → break
+ *    │         │   if (isAtEnd()) → error, break
+ *    │         │
+ *    │         ├── Parse variant
+ *    │         │
+ *    │         └── After variant: loop continues (handles separator in next iteration)
+ *    │         }
+ *    │
+ *    ├── Consume closing brace '}'
+ *    │
+ *    └── Build AST node
+ *    
  */
 EnumDeclAST* parseEnumDecl(TokenStream& stream, ParserContext& ctx) {
     SourceLocation loc = stream.currentLoc();
@@ -831,12 +865,53 @@ EnumVariantPtr parseEnumVariant(TokenStream& stream, ParserContext& ctx) {
  * 
  * @note This function does NOT consume the terminating semicolon.
  *       The caller (parseDecl) consumes it.
+ * 
+ * parseTraitDecl()
+ *     │
+ *     ├── Parse 'trait' keyword
+ *     ├── Parse trait name
+ *     ├── Parse generic parameters (optional)
+ *     │
+ *     ├── Parse trait body
+ *     │   │
+ *     │   ├── Check for empty body: `}` → return empty trait
+ *     │   │
+ *     │   └── while (!stream.isAtEnd()) {
+ *     │         │
+ *     │         ├── Skip consecutive separators (',' or ';')
+ *     │         │   while (check(COMMA) || check(SEMICOLON)) {
+ *     │         │       count++,
+ *     │         │       advance()
+ *     │         │   }
+ *     │         │
+ *     │         ├── If count > 0: report E1103 once
+ *     │         │
+ *     │         ├── Check for terminator
+ *     │         │   if (check(RBRACE)) → break
+ *     │         │   if (isAtEnd()) → error, break
+ *     │         │
+ *     │         ├── Parse trait field
+ *     │         │
+ *     │         └── After field: loop continues (handles separator in next iteration)
+ *     │         }
+ *     │
+ *     ├── Consume closing brace '}'
+ *     │
+ *     └── Build AST node
+ *     
  */
 TraitDeclAST* parseTraitDecl(TokenStream& stream, ParserContext& ctx) {
     SourceLocation loc = stream.currentLoc();
-    stream.consume(TokenType::TRAIT);
     
-    // Parse name
+    // ─── 1. Parse 'trait' keyword ──────────────────────────────────────
+    if (!stream.check(TokenType::TRAIT)) {
+        ctx.error(stream, DiagCode::E1001, "trait", stream.peekValue());
+        synchronize(stream, ctx);
+        return nullptr;
+    }
+    stream.advance(); // Consume 'trait'
+    
+    // ─── 2. Parse trait name ──────────────────────────────────────────────
     if (!stream.check(TokenType::IDENTIFIER)) {
         ctx.error(stream, DiagCode::E1002, "trait name", stream.peekValue());
         synchronize(stream, ctx);
@@ -845,13 +920,13 @@ TraitDeclAST* parseTraitDecl(TokenStream& stream, ParserContext& ctx) {
     Token nameTok = stream.advance();
     InternedString name = ctx.pool.intern(nameTok.value);
     
-    // Parse generic parameters (optional)
+    // ─── 3. Parse generic parameters (optional) ──────────────────────────
     ArenaSpan<GenericParamDeclPtr> genericParams;
     if (stream.check(TokenType::LESS)) {
         genericParams = parseGenericParamDecls(stream, ctx);
     }
     
-    // Parse fields
+    // ─── 4. Parse trait body ──────────────────────────────────────────────
     if (!stream.check(TokenType::LBRACE)) {
         ctx.error(stream, DiagCode::E1004, "{", "trait body", stream.peekValue());
         synchronize(stream, ctx);
@@ -860,35 +935,75 @@ TraitDeclAST* parseTraitDecl(TokenStream& stream, ParserContext& ctx) {
     stream.advance(); // Consume '{'
     
     std::vector<TraitFieldPtr> fields;
-    while (!stream.check(TokenType::RBRACE) && !stream.isAtEnd()) {
+    
+    // ─── 5. Check for empty body ─────────────────────────────────────────
+    if (stream.check(TokenType::RBRACE)) {
+        stream.advance(); // Consume '}'
+        // Empty trait body - skip to building AST
+        auto* traitDecl = ctx.arena.make<TraitDeclAST>();
+        traitDecl->loc = loc;
+        traitDecl->name = name;
+        traitDecl->genericParams = genericParams;
+        traitDecl->fields = ctx.arena.makeBuilder<TraitFieldPtr>().build();
+        
+        LOG_PARSER_DETAIL("Parsed empty trait declaration: ", ctx.toString(name));
+        return traitDecl;
+    }
+    
+    // ─── 6. Parse fields ──────────────────────────────────────────────────
+    while (!stream.isAtEnd()) {
+        // ─── Skip consecutive separators ────────────────────────────────
+        int separatorCount = 0;
+        while (stream.checkAny(TokenType::COMMA, TokenType::SEMICOLON)) {
+            separatorCount++;
+            stream.advance(); // Consume the separator
+        }
+        
+        if (separatorCount > 0) {
+            ctx.error(stream, DiagCode::E1103, stream.peekValue(), "trait field");
+        }
+        
+        // ─── Check if we've reached a terminator ──────────────────────────
+        if (stream.check(TokenType::RBRACE)) {
+            break; // End of fields
+        }
+        
+        if (stream.isAtEnd()) {
+            ctx.error(stream, DiagCode::E1005, "}", "trait body", "<EOF>");
+            break;
+        }
+        
+        // Parse a trait field
         TraitFieldPtr field = parseTraitField(stream, ctx);
         if (field) {
             fields.push_back(field);
         } else {
-            synchronizeTo(stream, ctx, {TokenType::COMMA, TokenType::RBRACE});
-            if (stream.check(TokenType::COMMA)) {
+            // Error already reported, try to recover
+            synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::SEMICOLON, TokenType::RBRACE);
+            if (stream.checkAny(TokenType::COMMA, TokenType::SEMICOLON)) {
                 stream.advance();
+                continue;
+            } else if (stream.check(TokenType::RBRACE)) {
+                break;
+            } else {
+                // No recovery token found - break to avoid infinite loop
+                break;
             }
-            continue;
-        }
-        
-        // Check for comma separator between fields
-        if (stream.check(TokenType::COMMA)) {
-            stream.advance();
-        } else if (!stream.check(TokenType::RBRACE)) {
-            ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or '}'");
-            synchronizeTo(stream, ctx, TokenType::RBRACE);
-            break;
         }
     }
     
+    // ─── 7. Consume closing brace ────────────────────────────────────────
     if (!stream.check(TokenType::RBRACE)) {
         ctx.error(stream, DiagCode::E1005, "}", "trait body", stream.peekValue());
         synchronizeTo(stream, ctx, TokenType::RBRACE);
+        if (stream.check(TokenType::RBRACE)) {
+            stream.advance(); // Consume '}' to recover
+        }
     } else {
         stream.advance(); // Consume '}'
     }
     
+    // ─── 8. Build the AST node ───────────────────────────────────────────
     auto* traitDecl = ctx.arena.make<TraitDeclAST>();
     traitDecl->loc = loc;
     traitDecl->name = name;
