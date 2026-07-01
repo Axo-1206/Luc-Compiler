@@ -28,12 +28,13 @@ std::string_view getMessage(DiagCode code) {
         case DiagCode::E1006: return "Expected expression, but found '%s'";
         case DiagCode::E1007: return "Expected token '%s', but found '%s'";
         case DiagCode::E1008: return "Unexpected token '%s', expected: %s";
-        // case DiagCode::E1009: return "Expected type %s, but found '%s'";
+        case DiagCode::E1009: return "Unexpected trailing '%s' in %s";
         case DiagCode::E1010: return "Invalid Context for %s. %s";
+        
 
         case DiagCode::E1101: return "Expected module path after keyword 'use', but found %s"; 
         case DiagCode::E1102: return "Expected name alias after keyword 'as', but found %s";
-        case DiagCode::E1103: return "Unexpected trailing '%s' in %s";
+        // case DiagCode::E1103: return "Unexpected trailing '%s' in %s";
         case DiagCode::E1104: return "Expected argument literal (string, integer, float, bool, or identifier), but found %s";
         case DiagCode::E1105: return "Expected anonymous function or function reference, but found %s";
         case DiagCode::E1106: return "Empty expression group '()'";

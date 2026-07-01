@@ -174,30 +174,7 @@ std::optional<DocComment> harvestDocComment(TokenStream& stream, ParserContext& 
  * | `@[deprecated("msg")]` | any declaration           | Language warning at use sites                  |
  * | `@[inline]`            | function declaration      | Hint to inline at call sites                   |
  * | `@[noinline]`          | function declaration      | Prevent inlining                               |
- * 
- * parseAttributes()
- *   │
- *   ├── Consumes '@'
- *   ├── Consumes '['
- *   │
- *   ├── while (not ']') {
- *   │     │
- *   │     └── parseAttribute()
- *   │           │
- *   │           ├── Parses name
- *   │           ├── if '(' then consumes '('
- *   │           │   │
- *   │           │   └── while (not ')') {
- *   │           │         ├── parseAttributeArgLiteral()
- *   │           │         └── if ',' then consumes ','
- *   │           │       }
- *   │           │
- *   │           └── Consumes ')'  (owned by parseAttribute)
- *   │
- *   │     if ',' then consumes ','  (owned by parseAttributes)
- *   │
- *   └── Consumes ']'  (owned by parseAttributes)
- * 
+ *
  * @param stream The token stream for the current file
  * @param ctx The parsing context
  * @return ArenaSpan<AttributePtr> The parsed attributes (empty if none)
@@ -232,14 +209,29 @@ ArenaSpan<AttributePtr> parseAttributes(TokenStream& stream, ParserContext& ctx)
     }
     stream.advance(); // Consume '['
     
-    // Check for empty attribute list: @[]
-    if (stream.check(TokenType::RBRACKET)) {
-        stream.advance(); // Consume ']'
-        return ctx.arena.makeBuilder<AttributePtr>().build();
-    }
-    
     // Parse attributes until we hit ']'
     while (!stream.isAtEnd()) {
+        // ─── Skip consecutive separators ────────────────────────────────
+        int separatorCount = 0;
+        while (stream.check(TokenType::COMMA)) {
+            separatorCount++;
+            stream.advance(); // Consume the separator
+        }
+        
+        if (separatorCount > 0) {
+            ctx.error(stream, DiagCode::E1009, ",", "attribute list"); // Unexpected trailing comma
+        }
+        
+        // ─── Check if we've reached a terminator ']' ─────────────────────
+        if (stream.check(TokenType::RBRACKET)) {
+            break; // End of attribute list
+        }
+        
+        if (stream.isAtEnd()) {
+            ctx.error(stream, DiagCode::E1005, "]", "attribute list", "<EOF>");
+            break;
+        }
+        
         // Parse a single attribute
         AttributePtr attr = parseAttribute(stream, ctx);
         if (attr) {
@@ -249,36 +241,24 @@ ArenaSpan<AttributePtr> parseAttributes(TokenStream& stream, ParserContext& ctx)
             synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RBRACKET);
             if (stream.check(TokenType::COMMA)) {
                 stream.advance();
-            }
-            continue;
-        }
-        
-        // Check for comma separator
-        if (stream.check(TokenType::COMMA)) {
-            stream.advance(); // Consume comma
-            
-            // Check for trailing comma: @[attr1, attr2, ]
-            if (stream.check(TokenType::RBRACKET)) {
-                ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
-                // Consume the ']' and break
-                stream.advance();
+                continue;
+            } else if (stream.check(TokenType::RBRACKET)) {
+                break;
+            } else {
                 break;
             }
-            
-            // Continue to parse next attribute
-        } else if (stream.check(TokenType::RBRACKET)) {
-            // End of attribute list
-            stream.advance(); // Consume ']'
-            break;
-        } else {
-            // Unexpected token
-            ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or ']'");
-            synchronizeTo(stream, ctx, TokenType::RBRACKET);
-            if (stream.check(TokenType::RBRACKET)) {
-                stream.advance();
-            }
-            break;
         }
+    }
+    
+    // ─── Consume closing bracket ────────────────────────────────────────
+    if (!stream.check(TokenType::RBRACKET)) {
+        ctx.error(stream, DiagCode::E1005, "]", "attribute list", stream.peekValue());
+        synchronizeTo(stream, ctx, TokenType::RBRACKET);
+        if (stream.check(TokenType::RBRACKET)) {
+            stream.advance(); // Consume ']' to recover
+        }
+    } else {
+        stream.advance(); // Consume ']'
     }
     
     // Build the ArenaSpan
@@ -332,51 +312,57 @@ AttributePtr parseAttribute(TokenStream& stream, ParserContext& ctx) {
     // Check for arguments
     std::vector<AttributeArgPtr> args;
     if (stream.match(TokenType::LPAREN)) {
-        // Check for empty arguments: @name()
-        if (stream.check(TokenType::RPAREN)) {
-            stream.advance(); // Consume ')'
-        } else {
-            // Parse arguments until we hit ')'
-            while (!stream.isAtEnd()) {
-                AttributeArgPtr arg = parseAttributeArgLiteral(stream, ctx);
-                if (arg) {
-                    args.push_back(arg);
-                } else {
-                    // Error already reported, try to recover
-                    synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RPAREN);
-                    if (stream.check(TokenType::COMMA)) {
-                        stream.advance();
-                    }
-                    continue;
-                }
-                
-                // Check for comma separator
+        // Parse arguments until we hit ')'
+        while (!stream.isAtEnd()) {
+            // ─── Skip consecutive separators ────────────────────────────────
+            int separatorCount = 0;
+            while (stream.check(TokenType::COMMA)) {
+                separatorCount++;
+                stream.advance(); // Consume the separator
+            }
+            
+            if (separatorCount > 0) {
+                ctx.error(stream, DiagCode::E1009, ",", "attribute arguments"); // Unexpected trailing comma
+            }
+            
+            // ─── Check if we've reached a terminator ')' ─────────────────────
+            if (stream.check(TokenType::RPAREN)) {
+                break; // End of arguments
+            }
+            
+            if (stream.isAtEnd()) {
+                ctx.error(stream, DiagCode::E1005, ")", "attribute arguments", "<EOF>");
+                break;
+            }
+            
+            // Parse an argument
+            AttributeArgPtr arg = parseAttributeArgLiteral(stream, ctx);
+            if (arg) {
+                args.push_back(arg);
+            } else {
+                // Error already reported, try to recover
+                synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RPAREN);
                 if (stream.check(TokenType::COMMA)) {
-                    stream.advance(); // Consume comma
-                    
-                    // Check for trailing comma: @name(arg1, )
-                    if (stream.check(TokenType::RPAREN)) {
-                        ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
-                        stream.advance(); // Consume ')'
-                        break;
-                    }
-                    
-                    // Continue to parse next argument
+                    stream.advance();
+                    continue;
                 } else if (stream.check(TokenType::RPAREN)) {
-                    // End of arguments
-                    stream.advance(); // Consume ')'
                     break;
                 } else {
-                    // Unexpected token
-                    ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or ')'");
-                    synchronizeTo(stream, ctx, TokenType::RPAREN);
-                    if (stream.check(TokenType::RPAREN)) {
-                        stream.advance();
-                    }
                     break;
                 }
             }
         }
+    }
+    
+    // ─── Consume closing parenthesis ────────────────────────────────────
+    if (!stream.check(TokenType::RPAREN)) {
+        ctx.error(stream, DiagCode::E1005, ")", "attribute arguments", stream.peekValue());
+        synchronizeTo(stream, ctx, TokenType::RPAREN);
+        if (stream.check(TokenType::RPAREN)) {
+            stream.advance(); // Consume ')' to recover
+        }
+    } else {
+        stream.advance(); // Consume ')'
     }
     
     // Build the args span
@@ -491,7 +477,7 @@ AttributeArgPtr parseAttributeArgLiteral(TokenStream& stream, ParserContext& ctx
  * ## Error Handling
  * 
  * - Empty list `<>` → reports E1003
- * - Trailing comma `<T, >` → reports E1103
+ * - Trailing comma `<T, >` → reports E1009
  * - Trailing plus `<T : Vector2 + >` → reports E1105
  * - Missing `>` at EOF → reports E1005
  * 
@@ -510,6 +496,8 @@ AttributeArgPtr parseAttributeArgLiteral(TokenStream& stream, ParserContext& ctx
  * @param stream The token stream for the current file
  * @param ctx The parsing context
  * @return ArenaSpan<GenericParamDeclPtr> The parsed generic parameters (empty on error)
+ *
+ * @note this function consume '>' the caller must not consume '>'
  */
 ArenaSpan<GenericParamDeclPtr> parseGenericParamDecls(TokenStream& stream, ParserContext& ctx) {
     LOG_PARSER_DETAIL("parseGenericParamDecls: parsing generic parameters");
@@ -558,7 +546,7 @@ ArenaSpan<GenericParamDeclPtr> parseGenericParamDecls(TokenStream& stream, Parse
             
             // Check for trailing comma: <T, U, >
             if (stream.check(TokenType::GREATER)) {
-                ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
+                ctx.error(stream, DiagCode::E1009, ",", "generic parameters"); // Unexpected trailing comma
                 stream.advance(); // Consume '>'
                 break;
             }
@@ -658,7 +646,7 @@ GenericParamDeclPtr parseGenericParamDecl(TokenStream& stream, ParserContext& ct
             if (stream.check(TokenType::PLUS)) {
                 if (!hasConstraint) {
                     // find '+' before any trait aka trailing plus error
-                    ctx.error(stream, DiagCode::E1103, '+', "generic constraints");
+                    ctx.error(stream, DiagCode::E1009, '+', "generic constraints");
                     stream.advance(); // Consume '+'
                     continue;
                 } else {
@@ -669,7 +657,7 @@ GenericParamDeclPtr parseGenericParamDecl(TokenStream& stream, ParserContext& ct
                     if (stream.isAtEnd()) {
                         break;
                     } else if (stream.checkAny(TokenType::GREATER, TokenType::COMMA, TokenType::SEMICOLON)) {
-                        ctx.error(stream, DiagCode::E1103, '+', "generic constraints");
+                        ctx.error(stream, DiagCode::E1009, '+', "generic constraints");
                         // IMPORTANT: We DO NOT consume '>' or ',' here.
                         // The caller (parseGenericParamDecls) will handle the closing '>'
                         // or the next parameter after ','.
@@ -731,7 +719,7 @@ GenericParamDeclPtr parseGenericParamDecl(TokenStream& stream, ParserContext& ct
  * ## Error Handling
  * 
  * - Empty list `<>` → reports E1003
- * - Trailing comma `<int, >` → reports E1103
+ * - Trailing comma `<int, >` → reports E1009
  * - Missing `>` at EOF → reports E1005
  * - Invalid argument → parseType handles the error
  * 
@@ -785,7 +773,7 @@ ArenaSpan<TypePtr> parseGenericArgs(TokenStream& stream, ParserContext& ctx) {
             
             // Check for trailing comma: <int, string, >
             if (stream.check(TokenType::GREATER)) {
-                ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
+                ctx.error(stream, DiagCode::E1009, ",", "generic arguments"); // Unexpected trailing comma
                 stream.advance(); // Consume '>'
                 break;
             }
@@ -860,7 +848,7 @@ ArenaSpan<TypePtr> parseGenericArgs(TokenStream& stream, ParserContext& ctx) {
  * 
  * - Empty parentheses `()` → valid, returns empty list
  * - Missing type after comma → reports E1003
- * - Trailing comma `(a, )` → reports E1103
+ * - Trailing comma `(a, )` → reports E1009
  * - Missing `)` at EOF → reports E1005
  * - Variadic not last → reports appropriate error
  * 
@@ -966,7 +954,7 @@ std::vector<ParamPtr> parseParamList(TokenStream& stream, ParserContext& ctx) {
             
             // Check for trailing comma: (a int, b int, )
             if (stream.check(TokenType::RPAREN)) {
-                ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
+                ctx.error(stream, DiagCode::E1009, ",", "parameter list"); // Unexpected trailing comma
                 stream.advance(); // Consume ')'
                 break;
             }
@@ -1009,51 +997,59 @@ std::vector<ParamPtr> parseParamList(TokenStream& stream, ParserContext& ctx) {
 
 /**
  * @brief Parse a list of arguments for a function call.
- * @note this function consume `)`, the caller must not consume `)`
  * 
  * Grammar: `'(' [ expr { ',' expr } ] ')'`
  * 
  * This function consumes the opening '(' and closing ')' parentheses.
  * 
- * ## Examples
- * 
- * ```lucid
- * add(1, 2, 3)                    → [1, 2, 3]
- * process("hello", 42, true)      → ["hello", 42, true]
- * foo()                           → [] (empty arguments)
- * ```
- * 
- * ## Error Handling
- * 
- * - Empty parentheses `()` → valid, returns empty list
- * - Missing expression after comma → reports E1006
- * - Trailing comma `(1, )` → reports E1103
- * - Missing `)` at EOF → reports E1005
- * 
- * @param stream The token stream for the current file
+ * @param stream The token stream
  * @param ctx The parsing context
  * @return ArenaSpan<ExprAST*> The parsed arguments (empty for no arguments)
+ *
+ * @note this function consume `)`, the caller must not consume `)`
  */
 ArenaSpan<ExprAST*> parseArgList(TokenStream& stream, ParserContext& ctx) {
     LOG_PARSER_DETAIL("parseArgList: parsing argument list");
     
     std::vector<ExprPtr> args;
     
-    // Expect '(' to start the argument list
+    // ─── 1. Expect '(' ────────────────────────────────────────────────────
     if (!stream.check(TokenType::LPAREN)) {
         ctx.error(stream, DiagCode::E1004, "(", "argument list", stream.peekValue());
         return ctx.arena.makeBuilder<ExprPtr>().build();
     }
     stream.advance(); // Consume '('
     
-    // Check for empty argument list: ()
+    // ─── 2. Check for empty argument list: () ────────────────────────────
     if (stream.check(TokenType::RPAREN)) {
         stream.advance(); // Consume ')'
         return ctx.arena.makeBuilder<ExprPtr>().build();
     }
     
-    // Parse arguments until we hit ')'
+    // ─── 3. Parse arguments until we hit ')' ─────────────────────────────
     while (!stream.isAtEnd()) {
+        // Skip consecutive separators
+        int separatorCount = 0;
+        while (stream.check(TokenType::COMMA)) {
+            separatorCount++;
+            stream.advance();
+        }
+        
+        if (separatorCount > 0) {
+            ctx.error(stream, DiagCode::E1009, ",", "argument list"); // Unexpected trailing comma
+        }
+        
+        // Check if we've reached the end
+        if (stream.check(TokenType::RPAREN)) {
+            break;
+        }
+        
+        if (stream.isAtEnd()) {
+            ctx.error(stream, DiagCode::E1005, ")", "argument list", "<EOF>");
+            break;
+        }
+        
+        // Parse an argument
         ExprPtr arg = parseExpr(stream, ctx);
         if (arg) {
             args.push_back(arg);
@@ -1063,51 +1059,46 @@ ArenaSpan<ExprAST*> parseArgList(TokenStream& stream, ParserContext& ctx) {
             synchronizeTo(stream, ctx, TokenType::COMMA, TokenType::RPAREN);
             if (stream.check(TokenType::COMMA)) {
                 stream.advance();
+                continue;
             } else if (stream.check(TokenType::RPAREN)) {
-                stream.advance(); // Consume ')' and exit
+                stream.advance();
                 break;
             } else {
                 break;
             }
-            continue;
         }
         
         // Check for comma separator
         if (stream.check(TokenType::COMMA)) {
-            stream.advance(); // Consume comma
-            
-            // Check for trailing comma: (1, 2, )
+            stream.advance();
+            // Check for trailing comma
             if (stream.check(TokenType::RPAREN)) {
-                ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
+                ctx.error(stream, DiagCode::E1009, ",", "argument list"); // Unexpected trailing comma
                 stream.advance(); // Consume ')'
                 break;
             }
-            
-            // Check if we're at EOF after comma
-            if (stream.isAtEnd()) {
-                ctx.error(stream, DiagCode::E1005, ")", "argument list", "<EOF>");
-                break;
-            }
-            
-            // Continue to parse next argument
+            // Continue to next argument
         } else if (stream.check(TokenType::RPAREN)) {
-            // End of argument list
-            stream.advance(); // Consume ')'
             break;
         } else {
-            // Unexpected token
             ctx.error(stream, DiagCode::E1008, stream.peekValue(), "',' or ')'");
             synchronizeTo(stream, ctx, TokenType::RPAREN);
             if (stream.check(TokenType::RPAREN)) {
-                stream.advance(); // Consume ')' and exit
+                stream.advance();
             }
             break;
         }
     }
     
-    // ─── Check if we exited because of EOF ──────────────────────────────
-    if (stream.isAtEnd()) {
-        ctx.error(stream, DiagCode::E1005, ")", "argument list", "<EOF>");
+    // ─── 4. Consume closing parenthesis ───────────────────────────────────
+    if (!stream.check(TokenType::RPAREN)) {
+        ctx.error(stream, DiagCode::E1005, ")", "argument list", stream.peekValue());
+        synchronizeTo(stream, ctx, TokenType::RPAREN);
+        if (stream.check(TokenType::RPAREN)) {
+            stream.advance(); // Consume ')' to recover
+        }
+    } else {
+        stream.advance(); // Consume ')'
     }
     
     // Build the ArenaSpan
@@ -1144,9 +1135,9 @@ ArenaSpan<ExprAST*> parseArgList(TokenStream& stream, ParserContext& ctx) {
  * - Empty parentheses `()` → void (empty return list)
  * - Missing type after comma → reports E1003 with "type in return list"
  * - Missing type after `->` → reports E1003 with "return type after '->'"
- * - Trailing comma `(int, )` → reports E1103
- * - Multiple consecutive commas `(int,,,string)` → reports E1103 once
- * - Only commas `(,,,)` → reports E1103, returns empty list
+ * - Trailing comma `(int, )` → reports E1009
+ * - Multiple consecutive commas `(int,,,string)` → reports E1009 once
+ * - Only commas `(,,,)` → reports E1009, returns empty list
  * - Missing `)` at EOF → reports E1005
  * 
  * @param stream The token stream for the current file
@@ -1178,7 +1169,7 @@ ArenaSpan<TypeAST*> parseReturnList(TokenStream& stream, ParserContext& ctx) {
             }
             
             if (separatorCount > 0) {
-                ctx.error(stream, DiagCode::E1103); // Unexpected trailing comma
+                ctx.error(stream, DiagCode::E1009); // Unexpected trailing comma
             }
             
             // ─── Check if we've reached a terminator ────────────────────────
@@ -1301,13 +1292,13 @@ std::vector<InternedString> parseUsePath(TokenStream& stream, ParserContext& ctx
         // If we see EOF, 'as', or something that can't start an identifier,
         // it's a trailing dot error
         if (stream.isAtEnd()) {
-            ctx.error(stream, DiagCode::E1103, ".", "path"); // Unexpected trailing '.'
+            ctx.error(stream, DiagCode::E1009, ".", "module path"); // Unexpected trailing '.'
             break;
         }
         
         // Check for 'as' after dot - this means trailing dot before alias
         if (stream.check(TokenType::AS)) {
-            ctx.error(stream, DiagCode::E1103, ".", "path"); // Unexpected trailing '.'
+            ctx.error(stream, DiagCode::E1009, ".", "module path"); // Unexpected trailing '.'
             // Don't consume 'as' - let the caller handle it
             break;
         }

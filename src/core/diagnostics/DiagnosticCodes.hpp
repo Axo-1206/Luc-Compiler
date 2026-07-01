@@ -26,13 +26,13 @@ enum class DiagCode : uint32_t {
     E1006,          ///< Expected expression after '='
     E1007,          ///< Expected token
     E1008,          ///< Unexpected token
-    // E1009,          ///< Expected type
+    E1009,          ///< Trailing tokens
     E1010,          ///< Invalid context
 
     // Speicalize codes
     E1101,          ///< Expected module path after keyword 'use'
     E1102,          ///< Expected name alias after keyword 'as'
-    E1103,          ///< Trailing tokens
+    // E1103,          ///< Trailing tokens
     E1104,          ///< Expected attribute argument literal
     E1105,          ///< Expected anon func or ref func
     E1106,          ///< Empty expression group

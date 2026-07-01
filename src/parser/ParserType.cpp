@@ -114,7 +114,7 @@ TypeAST* parseBaseType(TokenStream& stream, ParserContext& ctx) {
         
     //     TypePtr inner = parseType(stream, ctx);
     //     if (!inner) {
-    //         ctx.error(stream, DiagCode::E1009, "type", stream.peekValue());
+    //         ctx.error(stream, DiagCode::E1003, "type", stream.peekValue());
     //         synchronize(stream, ctx);
     //         return nullptr;
     //     }
@@ -135,7 +135,7 @@ TypeAST* parseBaseType(TokenStream& stream, ParserContext& ctx) {
     }
     
     // Unknown type
-    ctx.error(stream, DiagCode::E1009, "type", stream.peekValue());
+    ctx.error(stream, DiagCode::E1003, "type", stream.peekValue());
     synchronize(stream, ctx);
     return nullptr;
 }
@@ -158,7 +158,7 @@ TypeAST* parsePrimitiveType(TokenStream& stream, ParserContext& ctx) {
     
     // Use the new helper to check for primitive type
     if (!stream.isPrimitiveTypeToken(stream.peekType())) {
-        ctx.error(stream, DiagCode::E1009, "primitive type", stream.peekValue());
+        ctx.error(stream, DiagCode::E1003, "primitive type", stream.peekValue());
         synchronize(stream, ctx);
         return nullptr;
     }
@@ -190,7 +190,7 @@ TypeAST* parsePrimitiveType(TokenStream& stream, ParserContext& ctx) {
         case TokenType::TYPE_STRING: kind = PrimitiveKind::String; break;
         case TokenType::TYPE_CHAR:   kind = PrimitiveKind::Char; break;
         default:
-            ctx.error(stream, DiagCode::E1009, "primitive type", tok.value);
+            ctx.error(stream, DiagCode::E1003, "primitive type", tok.value);
             return nullptr;
     }
     
@@ -299,7 +299,7 @@ TypeAST* parseArrayType(TokenStream& stream, ParserContext& ctx) {
         size = std::stoull(sizeTok.value);
     }
     else {
-        ctx.error(stream, DiagCode::E1009, "array size specifier (*, _, or integer)", stream.peekValue());
+        ctx.error(stream, DiagCode::E1003, "array size specifier (*, _, or integer)", stream.peekValue());
         synchronizeTo(stream, ctx, TokenType::RBRACKET);
         stream.advance(); // Consume ']' to recover
         return nullptr;
@@ -318,7 +318,7 @@ TypeAST* parseArrayType(TokenStream& stream, ParserContext& ctx) {
     // Parse the element type
     TypePtr element = parseType(stream, ctx);
     if (!element) {
-        ctx.error(stream, DiagCode::E1009, "array element type", stream.peekValue());
+        ctx.error(stream, DiagCode::E1003, "array element type", stream.peekValue());
         synchronize(stream, ctx);
         return nullptr;
     }
@@ -359,7 +359,7 @@ TypeAST* parseRefType(TokenStream& stream, ParserContext& ctx) {
     
     TypePtr inner = parseType(stream, ctx);
     if (!inner) {
-        ctx.error(stream, DiagCode::E1009, "reference target type", stream.peekValue());
+        ctx.error(stream, DiagCode::E1003, "reference target type", stream.peekValue());
         synchronize(stream, ctx);
         return nullptr;
     }
@@ -401,7 +401,7 @@ TypeAST* parsePtrType(TokenStream& stream, ParserContext& ctx) {
     // Parse the inner type
     TypePtr inner = parseType(stream, ctx);
     if (!inner) {
-        ctx.error(stream, DiagCode::E1009, "pointer target type", stream.peekValue());
+        ctx.error(stream, DiagCode::E1003, "pointer target type", stream.peekValue());
         synchronize(stream, ctx);
         return nullptr;
     }

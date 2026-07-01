@@ -413,7 +413,7 @@ StructDeclAST* parseStructDecl(TokenStream& stream, ParserContext& ctx) {
                 }
                 
                 if (separatorCount > 0) {
-                    ctx.error(stream, DiagCode::E1103, stream.peekValue(), "struct traits");
+                    ctx.error(stream, DiagCode::E1009, stream.peekValue(), "struct traits");
                 }
                 
                 // ─── Check if we've reached a terminator ──────────────────
@@ -495,7 +495,7 @@ StructDeclAST* parseStructDecl(TokenStream& stream, ParserContext& ctx) {
         }
         
         if (separatorCount > 0) {
-            ctx.error(stream, DiagCode::E1103, stream.peekValue(), "field declaration");
+            ctx.error(stream, DiagCode::E1009, stream.peekValue(), "field declaration");
         }
         
         // ─── Check if we've reached a terminator ──────────────────────────
@@ -662,7 +662,7 @@ FieldDeclPtr parseFieldDecl(TokenStream& stream, ParserContext& ctx) {
  *    │         │       advance()
  *    │         │   }
  *    │         │
- *    │         ├── If count > 0: report E1103 once
+ *    │         ├── If count > 0: report E1009 once
  *    │         │
  *    │         ├── Check for terminator
  *    │         │   if (check(RBRACE)) → break
@@ -747,7 +747,7 @@ EnumDeclAST* parseEnumDecl(TokenStream& stream, ParserContext& ctx) {
         }
         
         if (separatorCount > 0) {
-            ctx.error(stream, DiagCode::E1103, stream.peekValue(), "enum variant");
+            ctx.error(stream, DiagCode::E1009, stream.peekValue(), "enum variant");
         }
         
         // ─── Check if we've reached a terminator ──────────────────────────
@@ -894,7 +894,7 @@ EnumVariantPtr parseEnumVariant(TokenStream& stream, ParserContext& ctx) {
  *     │         │       advance()
  *     │         │   }
  *     │         │
- *     │         ├── If count > 0: report E1103 once
+ *     │         ├── If count > 0: report E1009 once
  *     │         │
  *     │         ├── Check for terminator
  *     │         │   if (check(RBRACE)) → break
@@ -970,7 +970,7 @@ TraitDeclAST* parseTraitDecl(TokenStream& stream, ParserContext& ctx) {
         }
         
         if (separatorCount > 0) {
-            ctx.error(stream, DiagCode::E1103, stream.peekValue(), "trait field");
+            ctx.error(stream, DiagCode::E1009, stream.peekValue(), "trait field");
         }
         
         // ─── Check if we've reached a terminator ──────────────────────────
