@@ -40,6 +40,172 @@ not a relaxed or scripting subset of compiled Lucid. They are identical.
 
 ---
 
+## Implementation Notes
+
+This section documents the intended architecture of the Lucid language processor.
+It is not part of the language specification — source code that conforms to the
+grammar is valid Lucid regardless of how the processor implements it internally.
+This section exists to record design intent and guide the implementation.
+
+---
+
+### LLVM as the Shared Backend
+
+Both the interpreter (`lucid run`) and the future compiler (`lucid build`) are
+built on **LLVM**. The Lucid frontend — parser, type checker, and code lowering
+— produces LLVM IR. What happens to that IR is the only difference between the
+two modes:
+
+```
+[Lucid source]
+      │
+      ▼
+[Lucid frontend]
+  parser · type checker · IR lowering
+      │
+      ▼
+[LLVM IR]  ← single shared representation
+      │
+      ├─────────────────────┐
+      ▼                     ▼
+[LLVM AOT]             [LLVM ORC JIT]
+emit object file       compile in memory
+system linker          execute immediately
+`lucid build`          `lucid run`
+```
+
+This architecture means the frontend is written exactly once. The compiler and
+interpreter share every stage up to and including IR generation. The split at the
+bottom is small — roughly 100 lines each for the AOT emission path and the JIT
+execution path.
+
+---
+
+### Intrinsics — Written Once, Used by Both
+
+Every Lucid intrinsic (`#sqrt`, `#atomic_add`, `#memcpy`, etc.) maps directly to
+an LLVM intrinsic or LLVM IR instruction. The lowering is written once in the
+frontend and produces the same IR node regardless of whether the IR is later
+compiled AOT or executed by the JIT.
+
+```
+Lucid intrinsic  →  LLVM IR node
+─────────────────────────────────────────────────────
+#sqrt(x)         →  call @llvm.sqrt.f32(float %x)
+#abs(x)          →  call @llvm.fabs.f32(float %x)
+#fma(a, b, c)    →  call @llvm.fma.f32(float %a, %b, %c)
+#clz(x)          →  call @llvm.ctlz.i32(i32 %x, i1 false)
+#ctz(x)          →  call @llvm.cttz.i32(i32 %x, i1 false)
+#popcount(x)     →  call @llvm.ctpop.i32(i32 %x)
+#bswap(x)        →  call @llvm.bswap.i32(i32 %x)
+#memcpy(d,s,n)   →  call @llvm.memcpy(ptr %d, ptr %s, i64 %n, ...)
+#memmove(d,s,n)  →  call @llvm.memmove(ptr %d, ptr %s, i64 %n, ...)
+#memset(d,v,n)   →  call @llvm.memset(ptr %d, i8 %v, i64 %n, ...)
+#prefetch(ptr)   →  call @llvm.prefetch(ptr %p, i32 0, i32 3, i32 1)
+#fence(ord)      →  fence <ordering>
+#pause()         →  call @llvm.x86.sse2.pause()
+#likely(expr)    →  branch weight metadata on the conditional
+#unlikely(expr)  →  branch weight metadata on the conditional
+#atomic_load     →  load atomic <type> <ptr> <ordering>
+#atomic_store    →  store atomic <type> <val>, <ptr> <ordering>
+#atomic_add      →  atomicrmw add <ptr>, <val> <ordering>
+#atomic_sub      →  atomicrmw sub <ptr>, <val> <ordering>
+#atomic_and      →  atomicrmw and <ptr>, <val> <ordering>
+#atomic_or       →  atomicrmw or  <ptr>, <val> <ordering>
+#atomic_xor      →  atomicrmw xor <ptr>, <val> <ordering>
+#atomic_cas      →  cmpxchg <ptr>, <exp>, <val> <ordering>
+#simd_add        →  add <N x T> %a, %b
+#simd_mul        →  mul <N x T> %a, %b
+#simd_load       →  load <N x T>, ptr %p
+#simd_store      →  store <N x T> %v, ptr %p
+#sizeof(T)       →  getelementptr / DataLayout::getTypeAllocSize (compile-time)
+#alignof(T)      →  DataLayout::getABITypeAlignment (compile-time)
+#bitcast(T, x)   →  bitcast <src_type> %x to <dst_type>
+#addrof(x)       →  IR value's pointer (no extra instruction)
+#toRef(ptr)      →  non-null assertion + bitcast
+#toPtr(ref)      →  bitcast to pointer type
+#ptrOffset(p,n)  →  getelementptr inbounds <T>, ptr %p, i64 %n
+#ptrDiff(p1,p2)  →  sub (ptrtoint %p1), (ptrtoint %p2)
+```
+
+The intrinsic lowering code is a single module in the frontend — not split
+between the interpreter and compiler paths. Both paths inherit it by consuming
+the same IR.
+
+---
+
+### Foreign Function Resolution
+
+Foreign symbols declared with `@[foreign("C")]` are resolved differently in each
+mode, but both use LLVM's machinery:
+
+**Compiler mode (`lucid build`)** — the Lucid compiler emits object files and
+passes `@[link(...)]` names and paths directly to the system linker (`ld`, `lld`,
+`link.exe`). Foreign symbols are resolved at link time. Static (`.a`) and dynamic
+(`.so`/`.dylib`/`.dll`) libraries are both supported.
+
+**Interpreter mode (`lucid run`)** — the ORC JIT has a built-in dynamic linker.
+Foreign shared libraries named in `@[link(...)]` are loaded via `dlopen` (Linux/
+macOS) or `LoadLibrary` (Windows) at startup, and their symbols are registered
+with the JIT's symbol table. When the JIT encounters a call to a foreign function,
+it resolves the symbol from the registered libraries — the same resolution that
+the system linker would perform at compile time, but done in memory at runtime.
+
+The practical implication for `@[foreign("C")]` users:
+
+| Scenario                            | Compiler mode                    | Interpreter mode                       |
+| ----------------------------------- | -------------------------------- | -------------------------------------- |
+| System library (`"m"`, `"pthread"`) | `-lm` passed to linker           | `libm.so` loaded via `dlopen`          |
+| Source file (`"wrapper.c"`)         | compiled and linked by the build | must be pre-compiled to `.so`/`.dylib` |
+| Object file (`"wrapper.o"`)         | linked directly                  | must be wrapped in a shared library    |
+| Shared library (`"libfoo.so"`)      | linked dynamically               | loaded via `dlopen`                    |
+
+A C or C++ source file path in `@[link(...)]` works in compiler mode — the
+language processor compiles it as part of the build. In interpreter mode, source
+files cannot be compiled on the fly — they must be pre-compiled to a shared
+library and the path updated accordingly.
+
+---
+
+### Memory Model Implementation
+
+The three allocation strategies described in the language map to standard
+implementation patterns:
+
+**Scope arena** — implemented as a stack of bump-pointer arenas, one per block.
+On block entry the frontend emits an `alloca` aggregate (or a bump pointer
+advance) sized to hold all locals declared in that block. On block exit it emits
+the corresponding deallocation. LLVM's `alloca` instruction is already scope-
+lifetime by definition — the frontend's arena framing maps directly onto it with
+no additional runtime mechanism needed.
+
+**`#alloc` / `#free`** — implemented as calls to the system allocator (`malloc`/
+`free`) with an additional allocation registry (a hash map of live addresses)
+that the language processor maintains to catch double-free and null-free. The
+registry check is a single hash lookup on every `#free` call.
+
+**`#arena_create` / `#arena_alloc` / `#arena_free`** — implemented as a simple
+bump-pointer allocator over a `malloc`-ed region. `#arena_alloc` advances a
+pointer; `#arena_free` calls `free` on the original region. No per-slot tracking
+needed.
+
+**Nullable / fallible tagged slots** — the tag byte is a Lucid-level abstraction.
+The frontend lowers `T?` and `T!` declarations to a struct in IR:
+
+```llvm
+; T? lowers to:
+%nullable_int = type { i8, i32 }   ; tag byte + value
+
+; T?! lowers to:
+%combined_int = type { i8, i32 }   ; tag byte + value (tag encodes 0/1/2)
+```
+
+Tag reads and writes are ordinary IR load/store instructions on the first field.
+The language processor generates these at every nullable/fallible access point —
+no runtime library needed.
+
+---
+
 ## Notation (EBNF)
 
 ```ebnf
@@ -3295,6 +3461,26 @@ As a result, a reference (`&T`) can only exist in two places:
 
 This guarantees that a reference never outlives the owned variable it points to.
 
+> [!NOTE]
+> Rule 2 forbids `&T` as a stored array or slice **element type** — `[*]&T`
+> and `[]&T` are always rejected, with no exception. This does not affect
+> `for` loops: a `for` loop over an array or slice operates on the original
+> array, and mutating its element-binding variable inside the loop body
+> mutates the original array directly:
+>
+> ```lucid
+> let players [*]Player = loadPlayers()
+>
+> for _, plr Player in players {
+>     plr.health = plr.health - 10   -- mutates players in place
+> }
+> ```
+>
+> If `players` was declared `const`, the loop body cannot mutate `plr`, same
+> as any other `const` value — `const` is what governs mutability here, not
+> the reference rules above. There is no `[*]&T` array involved at any point;
+> the loop simply works on the array you already own.
+
 #### Modeling Complex Data Structures (Trees, Graphs, Links)
 
 Because references (`&T`) cannot be stored inside structs, building circular or linked data structures requires alternative approaches:
@@ -4090,57 +4276,298 @@ const f    float32 = #bitcast(float32, bits);    -- 1.0
 
 ## Foreign Function Interface
 
-Foreign functions are declared with `@[foreign("abi")]`. The body must be empty `{}` — the implementation is resolved by the linker. Multiple attributes can be combined into a single `@[...]` list.
+Lucid's execution model is a natural match for C: functions are plain symbols,
+calls are predictable, and all behaviour is visible at the call site. The only
+supported ABI string is `"C"` — there is no `@[foreign("C++")]`.
+
+C++ introduces mechanisms that violate this predictability:
+
+- **Constructors and destructors** — code runs invisibly on object creation and
+  destruction. Lucid has no scope-exit hooks; a C++ object whose destructor
+  Lucid fails to call silently corrupts state.
+- **Exceptions** — a `throw` unwinds the call stack invisibly. Lucid's runtime
+  has no C++ stack unwinding tables; an uncaught exception crossing the boundary
+  is undefined behaviour.
+- **Name mangling** — C++ encodes the full signature into the symbol name. Lucid
+  cannot predict the mangled name without running a C++ compiler. C symbols are
+  exactly what you write.
+- **Implicit `this` pointer** — C++ member functions take a hidden first argument
+  that does not appear in the source signature. Lucid requires every parameter to
+  be declared explicitly.
+- **Templates** — instantiated at compile time, producing mangled symbols that
+  depend on type arguments. There is no stable symbol name to link against.
+
+The solution is a thin `extern "C"` wrapper written in C++ that converts all of
+the above into a flat, predictable C surface. Once the wrapper exists, Lucid
+sees pure C and `@[foreign("C")]` works normally. The wrapper does not change how
+you use the library — it is a translation layer, not a reimplementation.
+
+```
+[C++ library] → [extern "C" wrapper] → [@[foreign("C")] declarations] → [Lucid]
+```
 
 > [!NOTE]
-> **Interpreter Mode:** In the current interpreter implementation, `@[foreign]`
-> functions are resolved through dynamic linking (dlopen/dlsym) at runtime.
-> The language backend will eventually resolve these at link time.
+> **Interpreter Mode:** `@[foreign]` functions are resolved through dynamic
+> linking (`dlopen`/`dlsym`) at runtime. The compiler resolves them at link time.
 
 ```ebnf
 foreign_decl    = '@[' foreign_attr { ',' link_attr } ']' func_decl
-                  (* func body must be empty '{}' *)
+                  (* func_body must be empty '{}' *)
 
-foreign_attr    = 'foreign' '(' STRING_LIT ')'              (* ABI: "C", "C++", etc. *)
+foreign_attr    = 'foreign' '(' '"C"' ')'
+                  (* only "C" is a valid ABI string — see C++ Interop below *)
+
 link_attr       = 'link' '(' STRING_LIT { ',' STRING_LIT } ')'
                   (* one or more library names or source file paths *)
 ```
 
+> [!NOTE]
+> `@[link(...)]` accepts one or more comma-separated strings. Each string is
+> either a library name (e.g. `"opengl"`, `"m"`) or a source/object file path
+> (e.g. `"vendor/lib/file.c"`). Bare names are passed as `-lname` to the linker;
+> paths are passed directly. The two forms can be mixed freely.
+
+> [!IMPORTANT]
+> Foreign functions **must not** return `&T`. The Downward Flow Rule forbids
+> reference returns from all functions including foreign ones. Return an owned
+> value or a raw `*T` and use `#toRef` on the Lucid side if needed.
+
+---
+
+### C Interop
+
 ```lucid
 -- standard C library function
 @[foreign("C")]
-const malloc (size uint64) -> ptr<byte>? = {}
+const malloc (size uint64) -> *uint8? = {}
 
 -- combine foreign + link in one attribute list
 @[foreign("C"), link("path/to/file.c")]
-const myAdd (a int, b int) -> int = {}
+const myAdd (a int32, b int32) -> int32 = {}
 
--- void return: omit the return type entirely
+-- no return value: omit the return type entirely
 @[foreign("C"), link("opengl")]
 const glClear (mask uint32) = {}
 
 -- nullable return — C function may return NULL
 @[foreign("C"), link("mylib")]
-const findNode (id int) -> ptr<Node>? = {}
+const findNode (id int32) -> *Node? = {}
 
--- multiple link targets in one attribute: paths and library names can be mixed
+-- multiple link targets: paths and library names can be mixed
 @[foreign("C"), link("vendor/math/fast_math.c", "vendor/math/lut.c", "m")]
-const fastSin (x float) -> float = {}
+const fastSin (x float32) -> float32 = {}
 ```
 
-> [!NOTE]
-> `@[link(...)]` accepts one or more comma-separated strings. Each string is
-> either a library name (e.g. `"opengl"`, `"m"`) or a file path (e.g.
-> `"vendor/lib/file.c"`). The two forms can be mixed freely in a single
-> `link(...)` call. Paths and names are distinguished by the presence of `/`
-> or a file extension — bare names are passed as `-lname` to the linker; paths
-> are passed directly. Platform-specific extensions (`.dll`, `.so`, `.dylib`)
-> in paths are the responsibility of the build system or conditional attributes.
+**Type mapping — C to Lucid:**
 
-> [!IMPORTANT]
-> Foreign functions **must not** return `&T`. The Downward Flow Rule forbids
-> reference returns from all functions, including foreign ones. Return an owned
-> value or a raw `ptr<T>` and use `#toRef` on the Lucid side if needed.
+| C type          | Lucid type | Notes                                                 |
+| --------------- | ---------- | ----------------------------------------------------- |
+| `int`           | `int32`    |                                                       |
+| `unsigned int`  | `uint32`   |                                                       |
+| `long`          | `int64`    | platform-dependent in C; treat as 64-bit              |
+| `size_t`        | `uint64`   |                                                       |
+| `float`         | `float32`  |                                                       |
+| `double`        | `float64`  |                                                       |
+| `char *`        | `*uint8`   | not a Lucid `string` — use `#str_from_ptr` to convert |
+| `void *`        | `*uint8`   | conventional untyped byte pointer                     |
+| `T *`           | `*T`       | raw pointer; nullable if C may return `NULL` → `*T?`  |
+| `void` (return) | omitted    | no return type in the Lucid declaration               |
+
+**Exporting Lucid functions to C:**
+
+```lucid
+@[export, foreign("C")]
+const add (a int32, b int32) -> int32 = {
+    return a + b;
+}
+```
+
+`@[export]` makes the symbol visible to the linker. `@[foreign("C")]` forces the
+C ABI on the call boundary. Both attributes are required when exposing a Lucid
+function to a C caller.
+
+---
+
+### C++ Interop
+
+C++ cannot be called directly from Lucid. Write a thin `extern "C"` wrapper in
+C++ that exposes a flat C surface, then declare that wrapper in Lucid using
+`@[foreign("C")]` as normal. The wrapper translates every C++ mechanism into
+something Lucid can see:
+
+- C++ class → opaque pointer passed as `*uint8`
+- Constructor/destructor → explicit `_create` / `_destroy` functions
+- Member functions → free functions with explicit `self *uint8` parameter
+- C++ exceptions → caught in the wrapper, converted to a nullable return
+
+```cpp
+// kernel_wrapper.cpp — thin C surface over a C++ kernel library
+#include "kernel.hpp"
+
+extern "C" {
+    Kernel* kernel_create(int config) {
+        try {
+            return new Kernel(config);
+        } catch (...) {
+            return nullptr;   // exceptions become NULL on the C side
+        }
+    }
+
+    void kernel_destroy(Kernel* self) {
+        delete self;
+    }
+
+    int kernel_run(Kernel* self, float* data, int len) {
+        try {
+            return self->run(data, len);
+        } catch (...) {
+            return -1;
+        }
+    }
+}
+```
+
+```lucid
+-- Lucid sees a flat C surface — no C++ anywhere in these declarations
+@[foreign("C"), link("kernel_wrapper.cpp", "kernel")]
+const kernel_create  (config int32) -> *uint8? = {}
+
+@[foreign("C"), link("kernel_wrapper.cpp", "kernel")]
+const kernel_destroy (self *uint8) = {}
+
+@[foreign("C"), link("kernel_wrapper.cpp", "kernel")]
+const kernel_run     (self *uint8, data *float32, len int32) -> int32 = {}
+
+-- usage: the C++ object is an opaque handle on the Lucid side
+const k *uint8? = kernel_create(42);
+if k == nil {
+    -- construction failed (exception was caught in wrapper)
+}
+const result int32 = kernel_run(k, dataPtr, 1024);
+kernel_destroy(k);
+```
+
+The wrapper scales linearly — one wrapper function per C++ method you need to
+expose. It is mechanical enough that it could be generated from C++ headers
+automatically. The full power of the C++ library is available; you are just
+accessing it through a stable, predictable door.
+
+> [!WARNING]
+> The C++ object is an opaque `*uint8` on the Lucid side. Lucid has no knowledge
+> of its layout, ownership, or lifetime. `kernel_destroy` must be called exactly
+> once, and `k` must not be used after that point. The language processor cannot
+> catch these violations.
+
+---
+
+### Memory Safety at the Foreign Boundary
+
+Lucid guarantees memory safety within its own code. That guarantee **ends at the
+foreign boundary**. A C or C++ function that receives a Lucid pointer can corrupt
+Lucid's memory in ways the language processor cannot detect or prevent:
+
+- **Premature free** — C calls `free(ptr)` on a pointer Lucid still owns,
+  producing a dangling pointer inside Lucid's scope arena or heap.
+- **Double free** — C frees a `#alloc`-ed pointer; Lucid later calls `#free` on
+  the same address. The language processor catches the second `#free`, but the
+  window between C's free and Lucid's attempted free is a dangling pointer.
+- **Buffer overrun** — C writes beyond the end of its allocation into adjacent
+  Lucid memory.
+
+These are not language bugs — they are the known cost of crossing into unmanaged
+territory. Lucid addresses them through three rules and one pattern:
+
+**Rule 1 — Never pass a scope arena address to foreign code that outlives the call**
+
+A scope arena pointer is only valid for the current scope's lifetime. If C stores
+the address and uses it after the call returns, it holds a dangling pointer into
+freed memory. Only `#alloc`-ed or `#arena_alloc`-ed pointers may be passed to
+foreign functions that need to hold the address past the call:
+
+```lucid
+-- WRONG: scope arena address passed to C that stores it
+let player Player = Player{ ... };
+c_register(#addrof(player));   -- ERROR: player lives on the scope arena;
+                                 -- if C holds this past the scope exit it
+                                 -- is a dangling pointer
+
+-- CORRECT: heap-allocated, stable address
+const player *Player = #alloc(Player, 1);
+c_register(player);            -- safe: #alloc lives until #free
+```
+
+**Rule 2 — Never mix allocators**
+
+If Lucid allocated it with `#alloc`, only `#free` may release it. If C needs to
+own the lifetime, allocate with C's `malloc` via a foreign declaration and free
+with C's `free`. Never call C's `free` on a `#alloc`-ed pointer or `#free` on a
+`malloc`-ed pointer:
+
+```lucid
+-- Lucid owns: allocated and freed by Lucid
+const buf *uint8 = #alloc(uint8, 1024);
+c_read_into(buf, 1024);   -- C reads/writes but does not free
+#free(buf);
+
+-- C owns: allocated and freed by C
+@[foreign("C")] const c_malloc (size uint64) -> *uint8? = {}
+@[foreign("C")] const c_free   (ptr *uint8) = {}
+
+const cbuf *uint8? = c_malloc(1024);
+c_process(cbuf);
+c_free(cbuf);             -- freed by C's allocator, not #free
+```
+
+**Rule 3 — Always pass buffer sizes explicitly**
+
+Every pointer passed to C that represents a buffer must be accompanied by its
+size. C has no way to know the buffer's extent:
+
+```lucid
+const buf *uint8 = #alloc(uint8, 1024);
+c_fill(buf, 1024);   -- size passed explicitly — C knows its bounds
+#free(buf);
+```
+
+**Pattern — Arena as a C sandbox**
+
+The safest pattern for giving C a region to work in is a named arena. Allocate a
+dedicated arena, hand it to C, and let C allocate from it freely. When C is done,
+Lucid frees the whole arena at once. C never touches Lucid's scope arena or heap,
+individual slot frees are impossible, and the lifetime is unambiguous:
+
+```lucid
+-- give C a dedicated sandbox arena
+const arena *Arena  = #arena_create(65536);
+const nodes *uint8  = #arena_alloc(arena, uint8, 4096);
+const edges *uint8  = #arena_alloc(arena, uint8, 8192);
+
+c_build_graph(nodes, edges, arena);   -- C works entirely within the arena
+                                       -- C may not call free() on arena memory
+
+#arena_free(arena);   -- Lucid frees everything at once when C is done
+```
+
+---
+
+### Nullability Contract
+
+C has no nullable type. The Lucid declaration is the **sole nullability contract**
+— Lucid does not parse C headers. The programmer declares the expected nullability
+and owns that promise.
+
+```lucid
+-- programmer promises this never returns NULL → declared non-nullable
+@[foreign("C")]
+const getGlobalState () -> *State = {}
+
+-- programmer knows this may return NULL → declared nullable
+@[foreign("C")]
+const findUser (id int32) -> *User? = {}
+```
+
+Unannotated pointer returns default to non-nullable (`*T`). Use `*T?` only when
+you know the foreign function may return `NULL`.
 
 ---
 

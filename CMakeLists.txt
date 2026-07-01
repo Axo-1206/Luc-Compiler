@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 
 # Set the vcpkg toolchain file before project()
-set(CMAKE_TOOLCHAIN_FILE "C:/Users/TaiAx/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg toolchain")
+set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg toolchain")
 
 project(LucCompiler LANGUAGES CXX)
 
@@ -14,8 +14,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Add BOTH LLVM and ZLIB paths to the prefix path
 list(APPEND CMAKE_PREFIX_PATH 
-    "C:/Users/TaiAx/vcpkg/installed/x64-windows/share/llvm"
-    "C:/Users/TaiAx/vcpkg/installed/x64-windows"
+    "C:/vcpkg/installed/x64-windows/share/llvm"
+    "C:/vcpkg/installed/x64-windows"
 )
 
 # This provides the ZLIB::ZLIB target that LLVMSupport needs

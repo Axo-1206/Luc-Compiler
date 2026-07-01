@@ -73,7 +73,7 @@ bool parseInternal(TokenStream& stream, ParserContext& ctx, std::vector<DeclPtr>
 DeclAST* parseDecl(TokenStream& stream, ParserContext& ctx);
 UseDeclAST* parseUseDecl(TokenStream& stream, ParserContext& ctx);
 VarDeclAST* parseVarDecl(TokenStream& stream, ParserContext& ctx);
-FuncDeclAST* parseFuncDecl(TokenStream& stream, ParserContext& ctx); // X
+FuncDeclAST* parseFuncDecl(TokenStream& stream, ParserContext& ctx);
 EnumDeclAST* parseEnumDecl(TokenStream& stream, ParserContext& ctx);
 TraitDeclAST* parseTraitDecl(TokenStream& stream, ParserContext& ctx);
 StructDeclAST* parseStructDecl(TokenStream& stream, ParserContext& ctx);
@@ -114,7 +114,6 @@ LiteralExprAST* parseLiteralExpr(TokenStream& stream, ParserContext& ctx);
 ArrayLiteralExprAST* parseArrayLiteralExpr(TokenStream& stream, ParserContext& ctx);
 StructLiteralExprAST* parseStructLiteralExpr(TokenStream& stream, ParserContext& ctx, InternedString typeName, ArenaSpan<TypeAST*> genericArgs);
 AnonFuncExprAST* parseAnonFuncExpr(TokenStream& stream, ParserContext& ctx);
-IntrinsicCallExprAST* parseIntrinsicCallExpr(TokenStream& stream, ParserContext& ctx);
 IfExprAST* parseIfExpr(TokenStream& stream, ParserContext& ctx);
 RangeExprAST* parseRangeExpr(TokenStream& stream, ParserContext& ctx, ExprPtr lo);
 
@@ -128,6 +127,7 @@ JoinStmtAST* parseJoinStmt(TokenStream& stream, ParserContext& ctx);
 // ─── Call & Index ────────────────────────────────────────────────────────── // X
 
 CallExprAST* parseCallExpr(TokenStream& stream, ParserContext& ctx, ExprPtr callee, ArenaSpan<TypeAST*> genericArgs);
+IntrinsicCallExprAST* parseIntrinsicCallExpr(TokenStream& stream, ParserContext& ctx);
 IndexExprAST* parseIndexExpr(TokenStream& stream, ParserContext& ctx, ExprPtr target);
 SliceExprAST* parseSliceExpr(TokenStream& stream, ParserContext& ctx, ExprPtr target);
 
